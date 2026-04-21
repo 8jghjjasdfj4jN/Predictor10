@@ -11,3 +11,8 @@
 - [x] Improve the approved logo sharpness and fidelity without changing its design.
 - [x] Preserve the current framed logo treatment while upgrading image clarity.
 - [x] Validate the sharper logo and sidebar layout in the live preview.
+- [ ] Design a more football-style favicon for Predictor10.
+- [ ] Generate updated repository favicon files for the app.
+- [ ] Verify the app is pointing at the updated favicon files.
+- [ ] Build and verify the favicon update.
+- [ ] Push the favicon update to GitHub for Render redeploy.
