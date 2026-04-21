@@ -1,37 +1,48 @@
+/*
+Brand reminder — Broadcast Noir Athletics:
+Top-level routing should feel like a premium football app shell with a persistent header,
+clear page structure, and confident dark-mode default.
+*/
+
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { AppShell } from "./components/predictor10/AppShell";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import CartPage from "./pages/CartPage";
+import FixturesPage from "./pages/FixturesPage";
+import HistoryPage from "./pages/HistoryPage";
 import Home from "./pages/Home";
-
+import LeaderboardPage from "./pages/LeaderboardPage";
+import LeaguesPage from "./pages/LeaguesPage";
+import RulesPage from "./pages/RulesPage";
 
 function Router() {
   return (
-    <Switch>
-      <Route path={"/"} component={Home} />
-      <Route path={"/404"} component={NotFound} />
-      {/* Final fallback route */}
-      <Route component={NotFound} />
-    </Switch>
+    <AppShell>
+      <Switch>
+        <Route path="/" component={Home} />
+        <Route path="/leagues" component={LeaguesPage} />
+        <Route path="/leaderboard" component={LeaderboardPage} />
+        <Route path="/history" component={HistoryPage} />
+        <Route path="/rules" component={RulesPage} />
+        <Route path="/fixtures" component={FixturesPage} />
+        <Route path="/cart" component={CartPage} />
+        <Route path="/404" component={NotFound} />
+        <Route component={NotFound} />
+      </Switch>
+    </AppShell>
   );
 }
-
-// NOTE: About Theme
-// - First choose a default theme according to your design style (dark or light bg), than change color palette in index.css
-//   to keep consistent foreground/background color across components
-// - If you want to make theme switchable, pass `switchable` ThemeProvider and use `useTheme` hook
 
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider
-        defaultTheme="light"
-        // switchable
-      >
+      <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
-          <Toaster />
+          <Toaster theme="dark" richColors position="top-center" />
           <Router />
         </TooltipProvider>
       </ThemeProvider>
