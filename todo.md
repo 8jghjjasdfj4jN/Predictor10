@@ -1,0 +1,13 @@
+- [x] Copy the user-approved original logo asset into the webdev static asset workflow.
+- [x] Replace the custom in-app wordmark/header branding with the approved original logo.
+- [x] Update the hero branding and any brand lockups to use the same approved logo asset.
+- [x] Regenerate or replace the favicon so it matches the approved original logo.
+- [x] Validate the updated branding in the live preview and deliver the corrected version.
+- [x] Remove the website-style top header so the product reads like an app.
+- [x] Rework the shell into a centred desktop-first app layout.
+- [x] Expand the approved logo to fill the mobile hero width.
+- [x] Keep navigation and framing app-like rather than website-like across key screens.
+- [x] Move desktop navigation into a left sidebar while keeping mobile navigation app-like.
+- [x] Improve the approved logo sharpness and fidelity without changing its design.
+- [x] Preserve the current framed logo treatment while upgrading image clarity.
+- [x] Validate the sharper logo and sidebar layout in the live preview.

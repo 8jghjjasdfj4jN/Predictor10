@@ -36,3 +36,17 @@ The header branding is now clearer because the compact mark explicitly spells ou
 Remaining refinement note:
 
 - The hero logo is now clearer, but if a future pass is needed for production polish, the hero lockup could be redrawn as a cleaner vector-based asset rather than relying solely on glyph composition.
+
+## Approved logo replacement validation
+
+The approved original artwork is now being used instead of the improvised in-app redraw. The header and hero both point to the correct selected asset family.
+
+Current refinement issue:
+
+The first direct image swap used the full presentation board, which was incorrect. After cropping, the app now shows the right logo source more clearly, but the crop still includes too much surrounding framing and cuts too tightly into the mark. A final tighter crop is needed so the frontend displays only the approved logo itself.
+
+## Desktop sidebar and sharper logo review
+
+The centred app stage now reads more clearly as a desktop application rather than a website. The desktop preview shows the left sidebar navigation working as intended, while the hero remains dominant in the main content area.
+
+The approved logo also appears materially sharper after switching to a denser high-resolution source while keeping the framed treatment intact. The composition remains the same approved design, but the rendered edges are cleaner and the logo holds up better at larger display size.

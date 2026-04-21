@@ -53,7 +53,7 @@ export default function Home() {
               <div className="space-y-4">
                 <div className="space-y-3">
                   <p className="max-w-xl text-base leading-7 text-white/72">
-                    A mobile-first football prediction app that feels closer to premium match coverage than a prototype — weekly rounds, polished score entry, and league competition built to plug into live data later.
+                    A desktop-led football prediction app that still scales cleanly to mobile — weekly rounds, polished score entry, and league competition built to plug into live data later.
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <ActionChip label="Save predictions" />

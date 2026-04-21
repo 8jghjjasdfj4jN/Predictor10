@@ -11,7 +11,7 @@ import type { FixtureState } from "@/lib/mockData";
 
 export function ScreenFrame({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <section className={cn("container space-y-5 py-5 sm:py-7", className)}>{children}</section>
+    <section className={cn("container mx-auto max-w-[1240px] space-y-5 px-4 py-5 sm:px-6 sm:py-7 lg:px-8 lg:py-8", className)}>{children}</section>
   );
 }
 

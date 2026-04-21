@@ -1,14 +1,12 @@
 /*
 Brand reminder — Broadcast Noir Athletics:
-Persistent premium header, dark studio surfaces, disciplined green highlights,
-mobile-first bottom navigation, and elegant placeholder future-account affordances.
+This shell should feel like a centred football app workstation, not a website.
+Desktop uses a left control rail; mobile keeps the app-style bottom navigation.
 */
 
 import { Link, useLocation } from "wouter";
-import { Bell, CircleUserRound, CreditCard, House, LayoutList, ScrollText, ShieldQuestion, Trophy } from "lucide-react";
-import { toast } from "sonner";
+import { CreditCard, House, LayoutList, ScrollText, ShieldQuestion, Trophy } from "lucide-react";
 import { BrandLogo } from "./BrandLogo";
-import { profilePlaceholders } from "@/lib/mockData";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -24,65 +22,98 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(46,204,113,0.16),transparent_30%),radial-gradient(circle_at_85%_10%,rgba(255,214,102,0.08),transparent_16%)]" />
-      <div className="pointer-events-none absolute inset-0 opacity-50 mix-blend-screen" style={{ backgroundImage: "url(https://d2xsxph8kpxj0f.cloudfront.net/310519663048135071/Hs9KYYBFCMZwearV4cmxdF/predictor10-pattern-surface-9crvNiZWEVeNZqnWS4Q7gX.webp)", backgroundSize: "cover", backgroundPosition: "center" }} />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(46,204,113,0.18),transparent_28%),radial-gradient(circle_at_85%_10%,rgba(255,214,102,0.08),transparent_16%),linear-gradient(180deg,rgba(4,10,8,1),rgba(7,17,12,1))]" />
+      <div
+        className="pointer-events-none absolute inset-0 opacity-50 mix-blend-screen"
+        style={{
+          backgroundImage:
+            "url(https://d2xsxph8kpxj0f.cloudfront.net/310519663048135071/Hs9KYYBFCMZwearV4cmxdF/predictor10-pattern-surface-9crvNiZWEVeNZqnWS4Q7gX.webp)",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+        }}
+      />
 
-      <header className="sticky top-0 z-30 border-b border-white/8 bg-[rgba(6,16,12,0.72)] backdrop-blur-2xl">
-        <div className="container flex items-center justify-between gap-4 py-4">
-          <Link href="/" className="min-w-0">
-            <BrandLogo compact className="max-w-full" />
-          </Link>
+      <div className="relative z-10 mx-auto flex min-h-screen max-w-[1520px] flex-col px-3 pb-28 pt-3 sm:px-5 sm:pb-32 sm:pt-5 lg:px-6 lg:pt-6">
+        <div className="relative flex-1 overflow-hidden rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))] shadow-[0_30px_120px_rgba(0,0,0,0.34)] backdrop-blur-xl lg:rounded-[2.4rem]">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(29,185,84,0.09),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(255,255,255,0.04),transparent_18%)]" />
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => toast.info("Notifications panel is a future-connected feature.")}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/6 text-white/80 transition hover:border-emerald-300/35 hover:bg-white/10 hover:text-white"
-              aria-label="Notifications"
-            >
-              <Bell className="h-5 w-5" />
-            </button>
+          <div className="relative z-10 lg:grid lg:min-h-[calc(100vh-3rem)] lg:grid-cols-[260px_minmax(0,1fr)]">
+            <aside className="hidden border-r border-white/8 bg-[linear-gradient(180deg,rgba(0,0,0,0.16),rgba(255,255,255,0.02))] lg:flex lg:flex-col lg:justify-between lg:px-5 lg:py-5">
+              <div className="space-y-5">
+                <Link href="/" className="block w-fit max-w-full">
+                  <BrandLogo compact className="max-w-full" />
+                </Link>
 
-            <button
-              type="button"
-              onClick={() =>
-                toast.info(`Planned account areas: ${profilePlaceholders.join(", ")}.`)
-              }
-              className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/6 text-white/80 transition hover:border-emerald-300/35 hover:bg-white/10 hover:text-white"
-              aria-label="Account"
-            >
-              <CircleUserRound className="h-5 w-5" />
-            </button>
+                <div className="space-y-2">
+                  <p className="px-2 font-['Manrope'] text-[0.62rem] font-semibold uppercase tracking-[0.3em] text-white/38">
+                    App navigation
+                  </p>
+                  <nav className="space-y-2">
+                    {navItems.map(({ href, label, icon: Icon }) => {
+                      const active = location === href;
+                      return (
+                        <Link
+                          key={href}
+                          href={href}
+                          className={cn(
+                            "flex items-center gap-3 rounded-[1.25rem] border border-transparent px-4 py-3 text-sm font-semibold tracking-[0.12em] text-white/58 transition",
+                            active
+                              ? "border-emerald-300/20 bg-emerald-400/10 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+                              : "hover:border-white/10 hover:bg-white/6 hover:text-white/82",
+                          )}
+                        >
+                          <Icon className={cn("h-4 w-4", active && "text-emerald-300")} />
+                          <span>{label}</span>
+                        </Link>
+                      );
+                    })}
+                  </nav>
+                </div>
+              </div>
+
+              <div className="rounded-[1.5rem] border border-white/10 bg-black/20 p-4">
+                <div className="flex items-center gap-3 text-white/80">
+                  <CreditCard className="h-4 w-4 text-emerald-300" />
+                  <p className="font-['Manrope'] text-[0.66rem] font-semibold uppercase tracking-[0.24em]">
+                    Ready for payments and auth later
+                  </p>
+                </div>
+              </div>
+            </aside>
+
+            <main className="min-w-0">{children}</main>
           </div>
         </div>
-      </header>
+      </div>
 
-      <main className="relative z-10 pb-28">{children}</main>
+      <div className="fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(env(safe-area-inset-bottom)+0.65rem)] pt-3 sm:px-5 lg:hidden">
+        <div className="mx-auto w-full max-w-[860px]">
+          <div className="mx-auto flex max-w-[920px] flex-col items-center gap-3">
+            <nav className="grid w-full grid-cols-5 gap-2 rounded-[1.7rem] border border-white/10 bg-[rgba(8,18,13,0.88)] p-2 shadow-[0_-10px_40px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
+              {navItems.map(({ href, label, icon: Icon }) => {
+                const active = location === href;
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    className={cn(
+                      "flex min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-[0.68rem] font-semibold tracking-[0.14em] text-white/56 transition sm:text-[0.72rem]",
+                      active &&
+                        "bg-emerald-400/12 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] ring-1 ring-emerald-300/20",
+                    )}
+                  >
+                    <Icon className={cn("h-4 w-4", active && "text-emerald-300")} />
+                    <span className="truncate">{label}</span>
+                  </Link>
+                );
+              })}
+            </nav>
 
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/8 bg-[rgba(5,13,10,0.84)] px-3 pb-[calc(env(safe-area-inset-bottom)+0.65rem)] pt-3 backdrop-blur-2xl">
-        <nav className="mx-auto grid max-w-xl grid-cols-5 gap-2 rounded-[1.7rem] border border-white/8 bg-white/6 p-2 shadow-[0_-10px_40px_rgba(0,0,0,0.35)]">
-          {navItems.map(({ href, label, icon: Icon }) => {
-            const active = location === href;
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={cn(
-                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-[0.7rem] font-semibold tracking-[0.14em] text-white/56 transition",
-                  active &&
-                    "bg-emerald-400/12 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] ring-1 ring-emerald-300/20",
-                )}
-              >
-                <Icon className={cn("h-4 w-4", active && "text-emerald-300")} />
-                <span>{label}</span>
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="mx-auto mt-3 flex max-w-xl items-center justify-center gap-2 text-[0.68rem] uppercase tracking-[0.28em] text-white/35">
-          <CreditCard className="h-3.5 w-3.5" />
-          Frontend MVP ready for payments and auth later
+            <div className="flex items-center justify-center gap-2 text-center text-[0.68rem] uppercase tracking-[0.28em] text-white/35">
+              <CreditCard className="h-3.5 w-3.5" />
+              Frontend MVP ready for payments and auth later
+            </div>
+          </div>
         </div>
       </div>
     </div>

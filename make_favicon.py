@@ -1,7 +1,7 @@
 from pathlib import Path
 from PIL import Image, ImageOps, ImageFilter, ImageEnhance, ImageDraw
 
-source = Path('/home/ubuntu/predictor10_logo_selected_refined.png')
+source = Path('/home/ubuntu/upload/pasted_file_xWsyac_image.png')
 out_dir = Path('/home/ubuntu/predictor10/client/public')
 out_dir.mkdir(parents=True, exist_ok=True)
 
