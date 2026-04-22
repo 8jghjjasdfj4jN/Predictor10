@@ -16,6 +16,8 @@ import RulesPage from "./pages/RulesPage";
 import LoginPage from "./pages/LoginPage";
 import Dashboard from "./pages/Dashboard";
 
+// Public app — original screens, always accessible.
+// AppShell now receives isLoggedIn so it can show Sign In / avatar in the nav.
 function PublicRouter() {
   return (
     <AppShell>
@@ -36,15 +38,21 @@ function PublicRouter() {
 
 function Router() {
   const { isLoggedIn } = useAuth();
-  if (!isLoggedIn) {
-    return (
-      <Switch>
-        <Route path="/login" component={LoginPage} />
-        <Route component={LoginPage} />
-      </Switch>
-    );
-  }
-  return <Dashboard />;
+
+  // Dedicated login route — accessible whether logged in or not
+  // (logged-in users who hit /login just get redirected to dashboard)
+  return (
+    <Switch>
+      <Route path="/login">
+        {isLoggedIn ? <Dashboard /> : <LoginPage />}
+      </Route>
+
+      {/* All other routes: logged-in → Dashboard, logged-out → public app */}
+      <Route>
+        {isLoggedIn ? <Dashboard /> : <PublicRouter />}
+      </Route>
+    </Switch>
+  );
 }
 
 function App() {
