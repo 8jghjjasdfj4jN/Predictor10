@@ -1,15 +1,18 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  ALL_SEASON_FIXTURES,
   ALL_LEAGUES,
   LEAGUE_ACCENT,
   PAYMENTS,
   ROUNDS,
   generateLeaderboard,
-  getFixturesByRoundGrouped,
-  type SeasonFixture,
 } from "@/lib/mockDataExtended";
+import {
+  fetchAllFixtures,
+  fdMatchToFixture,
+  matchdayToRound,
+  type FDMatch,
+} from "@/lib/footballService";
 
 // ─── COLOURS ─────────────────────────────────────────────────────────────────
 const C = {
@@ -142,15 +145,75 @@ function HomeTab({ activeLeagueId, setActiveLeagueId }: { activeLeagueId: string
 }
 
 // ─── PREDICT TAB ──────────────────────────────────────────────────────────────
-function PredictTab() {
-  const CURRENT_ROUND = 3;
-  const [openRounds, setOpenRounds] = useState<Set<number>>(new Set([CURRENT_ROUND]));
-  const [predictions, setPredictions] = useState<Record<string, { h: number | null; a: number | null }>>(() => {
-    const map: Record<string, { h: number | null; a: number | null }> = {};
-    ALL_SEASON_FIXTURES.forEach(f => { map[f.id] = { h: f.homePredicted, a: f.awayPredicted }; });
-    return map;
+// Fetches real Premier League fixtures from /api/fixtures (football-data.org
+// proxied through our backend with 1-hour caching).
+// Falls back to empty state with a clear error message if the API is unavailable.
+
+type LiveFixture = ReturnType<typeof fdMatchToFixture>;
+
+function groupByRoundAndGW(fixtures: LiveFixture[]) {
+  const byRound = new Map<number, Map<number, LiveFixture[]>>();
+  fixtures.forEach(f => {
+    if (!byRound.has(f.round)) byRound.set(f.round, new Map());
+    const byGW = byRound.get(f.round)!;
+    if (!byGW.has(f.gameweek)) byGW.set(f.gameweek, []);
+    byGW.get(f.gameweek)!.push(f);
   });
+  return byRound;
+}
+
+function detectCurrentRound(fixtures: LiveFixture[]): number {
+  // Current round = lowest round that has any non-completed fixtures
+  const rounds = [...new Set(fixtures.map(f => f.round))].sort((a, b) => a - b);
+  for (const r of rounds) {
+    const rFixtures = fixtures.filter(f => f.round === r);
+    const hasOpen = rFixtures.some(f => f.state !== "Completed" && f.state !== "Void");
+    if (hasOpen) return r;
+  }
+  return rounds[rounds.length - 1] ?? 3;
+}
+
+function PredictTab() {
+  const [fixtures, setFixtures] = useState<LiveFixture[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [predictions, setPredictions] = useState<Record<string, { h: number | null; a: number | null }>>({});
+  const [openRounds, setOpenRounds] = useState<Set<number>>(new Set());
   const [saved, setSaved] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    fetchAllFixtures()
+      .then(data => {
+        if (cancelled) return;
+        const matches: FDMatch[] = (data as any).matches ?? [];
+        const mapped = matches.map(m => fdMatchToFixture(m));
+        setFixtures(mapped);
+
+        // Init predictions map from mapped fixtures
+        const predMap: Record<string, { h: number | null; a: number | null }> = {};
+        mapped.forEach(f => { predMap[f.id] = { h: f.homePredicted, a: f.awayPredicted }; });
+        setPredictions(predMap);
+
+        // Auto-open current round
+        const current = detectCurrentRound(mapped);
+        setOpenRounds(new Set([current]));
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.error("Fixtures fetch failed:", err);
+        setError("Could not load fixtures. Please refresh.");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
+  }, []);
+
+  const grouped = useMemo(() => groupByRoundAndGW(fixtures), [fixtures]);
+  const currentRound = useMemo(() => detectCurrentRound(fixtures), [fixtures]);
 
   const toggleRound = (r: number) => {
     setOpenRounds(prev => {
@@ -179,65 +242,92 @@ function PredictTab() {
     return <span style={{ fontSize: "0.68rem", fontWeight: 800, color, background: bg, borderRadius: 999, padding: "0.15rem 0.5rem", letterSpacing: "0.1em" }}>{label}</span>;
   };
 
+  if (loading) {
+    return (
+      <div style={{ padding: "2rem 1rem", textAlign: "center" }}>
+        <div style={{ fontSize: "0.8rem", color: C.dim }}>Loading fixtures…</div>
+        <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+          {[1,2,3,4,5].map(i => (
+            <div key={i} style={{ height: 64, borderRadius: "1rem", background: "rgba(255,255,255,0.04)", animation: "pulse 1.5s ease-in-out infinite", animationDelay: `${i * 0.1}s` }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ padding: "2rem 1rem", textAlign: "center" }}>
+        <div style={{ fontSize: "0.85rem", color: "#fca5a5", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "1rem", padding: "1rem" }}>
+          {error}
+        </div>
+      </div>
+    );
+  }
+
+  // Build round list from actual data
+  const roundIds = [...new Set(fixtures.map(f => f.round))].sort((a, b) => a - b);
+
   return (
     <div style={{ padding: "1rem" }}>
+      <style>{`@keyframes pulse { 0%,100%{opacity:0.5} 50%{opacity:1} }`}</style>
       <div style={{ marginBottom: "1rem" }}>
-        <div style={{ fontSize: "0.6rem", fontWeight: 700, letterSpacing: "0.26em", textTransform: "uppercase", color: C.em, marginBottom: "0.2rem" }}>2025/26 Season</div>
+        <div style={{ fontSize: "0.6rem", fontWeight: 700, letterSpacing: "0.26em", textTransform: "uppercase", color: C.em, marginBottom: "0.2rem" }}>2025/26 Season · Live Data</div>
         <div style={{ fontSize: "0.75rem", color: C.dim }}>All 9 rounds · Predictions close the day before each kickoff</div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
         {ROUNDS.map(round => {
           const isOpen = openRounds.has(round.id);
-          const isCurrent = round.id === CURRENT_ROUND;
-          const fixtures = getFixturesByRoundGrouped(round.id);
-          const gwNums = Array.from(fixtures.keys()).sort((a, b) => a - b);
-          const roundFixtures = Array.from(fixtures.values()).flat();
-          const roundPts = round.status === "Completed" ? round.totalPoints : null;
+          const isCurrent = round.id === currentRound;
+          const gwMap = grouped.get(round.id) ?? new Map();
+          const gwNums = Array.from(gwMap.keys()).sort((a, b) => a - b);
+          const totalFixtures = Array.from(gwMap.values()).flat().length;
+          const roundStatus = round.status;
+          const roundPts = roundStatus === "Completed" ? round.totalPoints : null;
 
           return (
             <div key={round.id} style={{ background: C.card, border: isCurrent ? `1px solid ${C.emBdr}` : `1px solid ${C.bdr}`, borderRadius: "1.1rem", overflow: "hidden" }}>
-              {/* Round header — always visible, tap to expand */}
               <button
                 onClick={() => toggleRound(round.id)}
                 style={{ width: "100%", padding: "0.9rem 1rem", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                  <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                      <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, fontSize: "1rem", color: "#fff", letterSpacing: "0.04em" }}>{round.label}</span>
-                      {isCurrent && <span style={{ fontSize: "0.6rem", fontWeight: 700, color: C.em, background: "rgba(52,211,119,0.12)", borderRadius: 999, padding: "0.15rem 0.5rem", letterSpacing: "0.14em", textTransform: "uppercase" }}>Current</span>}
-                    </div>
-                    <div style={{ fontSize: "0.7rem", color: C.dim, marginTop: "0.1rem" }}>{round.gameweeks} · {roundFixtures.length} fixtures</div>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, fontSize: "1rem", color: "#fff", letterSpacing: "0.04em" }}>{round.label}</span>
+                    {isCurrent && <span style={{ fontSize: "0.6rem", fontWeight: 700, color: C.em, background: "rgba(52,211,119,0.12)", borderRadius: 999, padding: "0.15rem 0.5rem", letterSpacing: "0.14em", textTransform: "uppercase" }}>Current</span>}
+                  </div>
+                  <div style={{ fontSize: "0.7rem", color: C.dim, marginTop: "0.1rem" }}>
+                    {round.gameweeks} · {totalFixtures > 0 ? `${totalFixtures} fixtures` : "Fixtures TBC"}
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                  {round.status === "Completed" && roundPts !== null && (
+                  {roundStatus === "Completed" && roundPts !== null && (
                     <div style={{ textAlign: "right" }}>
                       <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, fontSize: "1.2rem", color: C.em, lineHeight: 1 }}>{roundPts}pts</div>
-                      <div style={{ fontSize: "0.6rem", color: C.dim, letterSpacing: "0.1em" }}>Rank #{round.rank}</div>
+                      <div style={{ fontSize: "0.6rem", color: C.dim }}>Rank #{round.rank}</div>
                     </div>
                   )}
-                  {round.status === "Upcoming" && (
+                  {roundStatus === "Upcoming" && totalFixtures === 0 && (
                     <span style={{ fontSize: "0.65rem", fontWeight: 700, color: C.dim, letterSpacing: "0.14em", textTransform: "uppercase" }}>Upcoming</span>
                   )}
                   <span style={{ color: C.dim, fontSize: "1rem", transform: isOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s", display: "inline-block" }}>▾</span>
                 </div>
               </button>
 
-              {/* Expanded fixture list */}
               {isOpen && (
                 <div style={{ borderTop: `1px solid ${C.bdr}` }}>
-                  {gwNums.map(gw => {
-                    const gwFixtures = fixtures.get(gw) || [];
+                  {gwNums.length === 0 ? (
+                    <div style={{ padding: "1rem", fontSize: "0.8rem", color: C.dim, textAlign: "center" }}>
+                      Fixtures not yet scheduled
+                    </div>
+                  ) : gwNums.map(gw => {
+                    const gwFixtures = gwMap.get(gw) || [];
                     return (
                       <div key={gw}>
-                        {/* GW label */}
                         <div style={{ padding: "0.5rem 1rem 0.25rem", fontSize: "0.6rem", fontWeight: 700, letterSpacing: "0.22em", textTransform: "uppercase", color: C.dim, background: "rgba(0,0,0,0.15)" }}>
                           Gameweek {gw}
                         </div>
-
-                        {/* Fixtures */}
                         {gwFixtures.map(f => {
                           const pred = predictions[f.id];
                           const editable = f.state === "Open";
@@ -256,20 +346,16 @@ function PredictTab() {
                               <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "0.4rem" }}>
                                 <span style={{ fontSize: "0.82rem", fontWeight: 700, color: C.txt, textAlign: "right" }}>{f.homeTeam}</span>
 
-                                {/* Score display / inputs */}
                                 <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
                                   {f.state === "Completed" ? (
-                                    // Actual result + user prediction below
                                     <div style={{ textAlign: "center" }}>
                                       <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
-                                        <span style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.08)", borderRadius: "0.5rem", fontSize: "1rem", fontWeight: 800, color: "#fff" }}>{f.actualHome}</span>
+                                        <span style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.08)", borderRadius: "0.5rem", fontSize: "1rem", fontWeight: 800, color: "#fff" }}>{f.actualHome ?? "–"}</span>
                                         <span style={{ color: C.dim, fontWeight: 700 }}>–</span>
-                                        <span style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.08)", borderRadius: "0.5rem", fontSize: "1rem", fontWeight: 800, color: "#fff" }}>{f.actualAway}</span>
+                                        <span style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.08)", borderRadius: "0.5rem", fontSize: "1rem", fontWeight: 800, color: "#fff" }}>{f.actualAway ?? "–"}</span>
                                       </div>
-                                      {pred?.h !== null && pred?.a !== null && (
-                                        <div style={{ fontSize: "0.6rem", color: C.dim, textAlign: "center", marginTop: "0.2rem" }}>
-                                          pred: {pred.h}–{pred.a}
-                                        </div>
+                                      {pred?.h != null && pred?.a != null && (
+                                        <div style={{ fontSize: "0.6rem", color: C.dim, textAlign: "center", marginTop: "0.2rem" }}>pred: {pred.h}–{pred.a}</div>
                                       )}
                                     </div>
                                   ) : editable ? (
@@ -296,9 +382,9 @@ function PredictTab() {
                                     </>
                                   ) : (
                                     <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                                      <span style={{ width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.06)", borderRadius: "0.55rem", fontSize: "1rem", fontWeight: 800, color: pred?.h !== null ? "#fff" : C.dim }}>{pred?.h ?? "–"}</span>
+                                      <span style={{ width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.06)", borderRadius: "0.55rem", fontSize: "1rem", fontWeight: 800, color: pred?.h != null ? "#fff" : C.dim }}>{pred?.h ?? "–"}</span>
                                       <span style={{ color: C.dim, fontWeight: 700 }}>–</span>
-                                      <span style={{ width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.06)", borderRadius: "0.55rem", fontSize: "1rem", fontWeight: 800, color: pred?.a !== null ? "#fff" : C.dim }}>{pred?.a ?? "–"}</span>
+                                      <span style={{ width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.06)", borderRadius: "0.55rem", fontSize: "1rem", fontWeight: 800, color: pred?.a != null ? "#fff" : C.dim }}>{pred?.a ?? "–"}</span>
                                     </div>
                                   )}
                                 </div>
@@ -312,8 +398,7 @@ function PredictTab() {
                     );
                   })}
 
-                  {/* Save button for active rounds */}
-                  {round.status !== "Completed" && (
+                  {roundStatus !== "Completed" && gwNums.length > 0 && (
                     <div style={{ padding: "0.75rem 1rem" }}>
                       <button
                         onClick={() => handleSave(round.id)}
