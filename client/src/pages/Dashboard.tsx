@@ -550,7 +550,9 @@ export default function Dashboard() {
   const [activeLeagueId, setActiveLeagueId] = useState("premier-ten");
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: C.bg, fontFamily: "'Manrope', system-ui, sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: "'Manrope', system-ui, sans-serif" }}>
+      {/* Centred column — 480px max on desktop */}
+      <div style={{ maxWidth: 480, margin: "0 auto", display: "flex", flexDirection: "column", minHeight: "100vh", position: "relative", borderLeft: "1px solid rgba(255,255,255,0.04)", borderRight: "1px solid rgba(255,255,255,0.04)" }}>
       {/* Top bar */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.8rem 1rem 0.65rem", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0, background: "rgba(7,15,9,0.95)", backdropFilter: "blur(12px)", position: "sticky", top: 0, zIndex: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -579,8 +581,8 @@ export default function Dashboard() {
       </div>
 
       {/* Bottom nav */}
-      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 20, padding: "0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom))", background: "rgba(7,15,9,0.96)", backdropFilter: "blur(16px)", borderTop: "1px solid rgba(255,255,255,0.07)" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "0.25rem", maxWidth: 480, margin: "0 auto" }}>
+      <div style={{ position: "sticky", bottom: 0, zIndex: 20, padding: "0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom))", background: "rgba(7,15,9,0.96)", backdropFilter: "blur(16px)", borderTop: "1px solid rgba(255,255,255,0.07)", marginTop: "auto" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "0.25rem" }}>
           {NAV.map(({ id, label, Icon }) => {
             const active = tab === id;
             return (
@@ -591,6 +593,7 @@ export default function Dashboard() {
             );
           })}
         </div>
+      </div>
       </div>
     </div>
   );
