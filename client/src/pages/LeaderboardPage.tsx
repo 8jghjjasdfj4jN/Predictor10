@@ -39,8 +39,8 @@ export default function LeaderboardPage() {
           ))}
         </div>
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_260px]">
-          <div className="rounded-[1.5rem] border border-white/10 bg-black/20 p-4">
+        <div className="mt-5 grid min-w-0 gap-3 lg:grid-cols-[1fr_260px]">
+          <div className="min-w-0 rounded-[1.5rem] border border-white/10 bg-black/20 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/8 pb-4">
               <div>
                 <p className="text-[0.68rem] uppercase tracking-[0.24em] text-white/40">League</p>
@@ -55,12 +55,12 @@ export default function LeaderboardPage() {
             </div>
 
             <div className="mt-4 overflow-hidden rounded-[1.3rem] border border-white/8">
-              <div className="grid grid-cols-[60px_1.4fr_80px_80px_80px] bg-white/8 px-4 py-3 text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-white/45">
+              <div className="grid grid-cols-[40px_1fr_56px_56px] sm:grid-cols-[60px_1.4fr_80px_80px_80px] bg-white/8 px-3 py-3 text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-white/45">
                 <span>Pos</span>
                 <span>Player</span>
-                <span>Results</span>
+                <span className="hidden sm:block">Results</span>
                 <span>Scores</span>
-                <span>Points</span>
+                <span>Pts</span>
               </div>
               <div className="divide-y divide-white/8">
                 {leaderboardEntries.map((entry) => {
@@ -69,35 +69,35 @@ export default function LeaderboardPage() {
                     <Link
                       href="/history"
                       key={entry.name}
-                      className={`grid grid-cols-[60px_1.4fr_80px_80px_80px] items-center px-4 py-4 transition ${
+                      className={`grid grid-cols-[40px_1fr_56px_56px] sm:grid-cols-[60px_1.4fr_80px_80px_80px] items-center px-3 py-3 sm:px-4 sm:py-4 transition ${
                         isTopThree ? "bg-white/[0.05] hover:bg-white/[0.08]" : "bg-black/10 hover:bg-white/[0.04]"
                       }`}
                     >
-                      <div className="flex items-center gap-2">
-                        <span className={`font-['Barlow_Condensed'] text-3xl font-bold ${isTopThree ? "text-white" : "text-white/78"}`}>
+                      <div className="flex items-center gap-1">
+                        <span className={`font-['Barlow_Condensed'] text-2xl sm:text-3xl font-bold ${isTopThree ? "text-white" : "text-white/78"}`}>
                           {entry.position}
                         </span>
-                        {entry.position === 1 ? <Trophy className="h-4 w-4 text-amber-200" /> : null}
+                        {entry.position === 1 ? <Trophy className="h-3.5 w-3.5 text-amber-200" /> : null}
                       </div>
 
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="font-semibold text-white">{entry.name}</p>
-                          <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5 text-[0.65rem] uppercase tracking-[0.2em] text-white/55">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <p className="truncate font-semibold text-white text-sm sm:text-base">{entry.name}</p>
+                          <span className="hidden sm:inline-block shrink-0 rounded-full border border-white/10 bg-white/6 px-2 py-0.5 text-[0.65rem] uppercase tracking-[0.2em] text-white/55">
                             {entry.streak}
                           </span>
                         </div>
-                        <div className="mt-1 flex items-center gap-2 text-sm text-white/45">
-                          {entry.movement > 0 ? <ArrowUp className="h-3.5 w-3.5 text-emerald-300" /> : null}
-                          {entry.movement < 0 ? <ArrowDown className="h-3.5 w-3.5 text-rose-300" /> : null}
-                          {entry.movement === 0 ? <Minus className="h-3.5 w-3.5 text-white/35" /> : null}
-                          {entry.movement === 0 ? "No movement" : `${Math.abs(entry.movement)} places`}
+                        <div className="mt-0.5 flex items-center gap-1 text-xs text-white/45">
+                          {entry.movement > 0 ? <ArrowUp className="h-3 w-3 text-emerald-300" /> : null}
+                          {entry.movement < 0 ? <ArrowDown className="h-3 w-3 text-rose-300" /> : null}
+                          {entry.movement === 0 ? <Minus className="h-3 w-3 text-white/35" /> : null}
+                          <span className="hidden sm:inline">{entry.movement === 0 ? "No movement" : `${Math.abs(entry.movement)} places`}</span>
                         </div>
                       </div>
 
-                      <span className="text-sm font-semibold text-white/86">{entry.correctResults}</span>
+                      <span className="hidden sm:block text-sm font-semibold text-white/86">{entry.correctResults}</span>
                       <span className="text-sm font-semibold text-white/86">{entry.correctScores}</span>
-                      <span className="font-['Barlow_Condensed'] text-3xl font-bold text-white">{entry.totalPoints}</span>
+                      <span className="font-['Barlow_Condensed'] text-2xl sm:text-3xl font-bold text-white">{entry.totalPoints}</span>
                     </Link>
                   );
                 })}
