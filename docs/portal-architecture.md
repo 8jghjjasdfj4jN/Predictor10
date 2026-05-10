@@ -157,21 +157,27 @@ After +7 days, the pool is closed. UI shows "Round 1 closed — Round 2 opens [d
 ## 7. Page hierarchy
 
 ```
-/                              Home (state-aware)
-/predict                       List of open entries
-/predict/:entryId              Make/edit predictions for one entry
+/                                       Home (live entries shortcuts + available tiers)
+/predict                                Open entries — deep-links to pool screens
+/pools                                  Competition picker landing
+/pools/:competitionSlug                 Open pools for one competition
+/pools/:competitionSlug/:poolId         Combined Pool detail + Predict (canonical)
+/pools/:competitionSlug/:poolId/table   Live or final league table for that pool
 
-/pools                         Competition picker landing
-/pools/:competitionSlug        Open pools for one competition
-/pools/:competitionSlug/:poolId    Pool detail (fixtures · entries · my entry)
+/account                                Profile + summary
+/account/payments                       Payment history (mock + live unified)
+/account/history                        Archive — settled pools, your final results
+/account/responsible-gambling           Deposit limits, time-outs, self-exclusion, GAMSTOP
+/account/settings                       Email prefs, password, marketing consent
 
-/account                       Profile + summary
-/account/payments              Payment history (mock + live unified view)
-/account/responsible-gambling  Deposit limits, time-outs, self-exclusion, GAMSTOP
-/account/settings              Email prefs, password, marketing consent
-
-/login, /register, /verify-email   Auth pages (no AppShell, no nav)
+/login, /register, /verify-email        Auth pages (no AppShell, no nav)
 ```
+
+The Pool detail and Predict screens are unified — one URL, one layout, state changes by entry status:
+- **Pre-entry**: shows fixtures grouped by GW, empty score boxes, "Enter — £X" CTA at bottom
+- **Post-entry**: same screen, score boxes editable (auto-save), no big CTA, "Auto-saving" footer
+- **Round in progress**: locked matches show FT score + your prediction + points pill; future matches still editable
+- **Round settled**: read-only mode; banner at top "Final results — view league table"; pool moves to `/account/history` archive after a few days
 
 ---
 
@@ -179,59 +185,60 @@ After +7 days, the pool is closed. UI shows "Round 1 closed — Round 2 opens [d
 
 ### 8.1 Home (`/`)
 
-State-aware hero card + secondary content. Hero swaps based on user's current state across all competitions.
+The Home tab unifies "your live entries in this round" with "tiers still available to enter" into one continuous view. State emerges from data, not a discrete state machine.
 
-| State | Trigger | Hero card content | Secondary |
-|---|---|---|---|
-| **A. New** | 0 entries lifetime | "Welcome — Pick your first Tier" + 5 tier cards from the next open round (PL or Championship) | How scoring works (5 / 2 / 0), upcoming fixtures preview |
-| **B. Pending** | Has open entries with no predictions saved | "Round X closes Fri 18:00 — Make your predictions" + Predict CTA, deadline countdown | Live now strip if any matches in-play, recent form |
-| **C. Live** | Predictions submitted, matches in-play | Live position card: "You're 8th of 24 · 6 pts so far" + match-by-match live ticker showing prediction vs current score | Other entries summary, leaderboard preview |
-| **D. Settled** | Round complete, new round not yet open | "Round X settled — you scored 14, finished 8th of 24" + see full leaderboard | Recent form, payment summary |
-| **E. Between** | All settled, next round not yet open | "Round X+1 opens Mon 12:00" + your form line | Upcoming fixtures, "Re-enter Tenner" shortcut |
-
-**State detection** (one helper):
-
-```ts
-type HomeState = 'new' | 'pending' | 'live' | 'settled' | 'between';
-
-function deriveHomeState(
-  entries: UserEntry[],
-  now: Date
-): HomeState {
-  if (entries.length === 0) return 'new';
-  const open = entries.filter(e => !e.allPredictionsSubmitted && e.lockAt > now);
-  if (open.length > 0) return 'pending';
-  const live = entries.filter(e => e.hasMatchesInPlay);
-  if (live.length > 0) return 'live';
-  const justSettled = entries.filter(e => e.settledAt && (now - e.settledAt < 48h));
-  if (justSettled.length > 0) return 'settled';
-  return 'between';
-}
+```
+┌─────────────────────────────────┐
+│ Round 1 · Premier League        │
+│ GWs 1-4 · Closes Sat 29 Aug     │
+├─────────────────────────────────┤
+│ YOUR LIVE ENTRIES               │
+│ ┌─────────────────────────────┐ │
+│ │ PL · The Tenner             │ │
+│ │ 12/40 saved · in play       │ │
+│ │ [Predictions]    [Table]    │ │
+│ └─────────────────────────────┘ │
+├─────────────────────────────────┤
+│ AVAILABLE TIERS                 │
+│ The Pound      £1   24 entries  │
+│ The Fiver      £5   18 entries  │
+│ The Pony      £25    4 entries  │
+│ The Big One   £50    1 entry    │
+└─────────────────────────────────┘
 ```
 
-When user has entries across multiple competitions, hero shows the most-pressing single state (priority: live > pending > settled > between > new).
+Two sections, each can be empty:
+- **Your live entries** — one card per pool the user is in for the current round. Two CTAs per card: jump to predictions, jump to live league table.
+- **Available tiers** — tiers in the current round the user has NOT yet entered. New users see all 5.
+
+Empty-state combinations:
+- 0 live entries + N available = new or returning user (welcome copy + "Pick your first Tier")
+- N live entries + 0 available = "All tiers entered for Round 1 · Round 2 opens [date]"
+- 0 + 0 = no current open round (show next round's expected open date)
+
+Home shows the **current round only**. Settled rounds live in `/account/history` (Section 8.8).
 
 ### 8.2 Predict (`/predict`)
 
-Lists every open entry the user holds, grouped by close time.
+Lists every open entry the user holds, grouped by close time. Each card is a deep-link into the canonical combined Pool / Predict screen (Section 8.5) for that entry's pool.
 
 ```
 ┌─────────────────────────────────┐
 │ CLOSING SOON                    │
 │ ┌─────────────────────────────┐ │
 │ │ Championship · Big One      │ │
-│ │ Round 38 · 12 matches       │ │
-│ │ ⏱ Closes in 2h 14m          │ │
-│ │ 0/12 predictions made       │ │
-│ │ [   Make Predictions   ]    │ │
+│ │ Round 1 · 60 matches        │ │
+│ │ ⏱ Late entry closes 2h 14m  │ │
+│ │ 12/60 predictions saved     │ │
+│ │ [   Continue   ]            │ │
 │ └─────────────────────────────┘ │
 │                                  │
-│ THIS WEEK                       │
+│ THIS ROUND                      │
 │ ┌─────────────────────────────┐ │
-│ │ Premier League · Tenner     │ │
-│ │ Round 12 · 10 matches       │ │
-│ │ ⏱ Closes Fri 18:00          │ │
-│ │ 7/10 predictions saved      │ │
+│ │ PL · The Tenner             │ │
+│ │ Round 1 · 40 matches        │ │
+│ │ Round closes Sat 19 Sep     │ │
+│ │ 24/40 predictions saved     │ │
 │ │ [   Continue   ]            │ │
 │ └─────────────────────────────┘ │
 └─────────────────────────────────┘
@@ -239,33 +246,9 @@ Lists every open entry the user holds, grouped by close time.
 
 Empty state: "No open entries. Browse pools →" linking to `/pools`.
 
-### 8.3 Predict detail (`/predict/:entryId`)
+Tapping a card routes to `/pools/:competitionSlug/:poolId` — the same URL as the Pool detail / Predict screen.
 
-The prediction-entry screen. One screen, all matches in the round.
-
-```
-┌─────────────────────────────────┐
-│ ← Premier League · Tenner R12   │
-│   Closes Fri 18:00 · 2h 14m     │
-├─────────────────────────────────┤
-│ Liverpool   [2] - [1]   Arsenal │
-│ Sat 15:00 · Anfield             │
-├─────────────────────────────────┤
-│ Chelsea     [1] - [1]   Spurs   │
-│ Sat 17:30 · Stamford Bridge     │
-├─────────────────────────────────┤
-│ ... (8 more)                    │
-├─────────────────────────────────┤
-│ 7/10 saved · [ Save & Submit ]  │
-└─────────────────────────────────┘
-```
-
-- Auto-save on each input change (debounced 800ms) → `PUT /api/predictions/:id`
-- "Save & Submit" sets all predictions for this entry to final
-- Server enforces `predictionLockAt` per match; refuses any prediction posted after lock
-- After lock, screen flips to read-only "Watch" mode (live scores beside predictions)
-
-### 8.4 Pools landing (`/pools`)
+### 8.3 Pools landing (`/pools`)
 
 Competition picker at top. Body shows currently-relevant pools across all competitions.
 
@@ -284,7 +267,7 @@ Competition picker at top. Body shows currently-relevant pools across all compet
 └─────────────────────────────────┘
 ```
 
-### 8.5 Pools by competition (`/pools/:competitionSlug`)
+### 8.4 Pools by competition (`/pools/:competitionSlug`)
 
 ```
 ┌─────────────────────────────────┐
@@ -309,26 +292,87 @@ Competition picker at top. Body shows currently-relevant pools across all compet
 
 Tier rows show entry-fee, current entry count, prize pool. Tap → pool detail.
 
-### 8.6 Pool detail (`/pools/:competitionSlug/:poolId`)
+### 8.5 Pool detail / Predict (`/pools/:competitionSlug/:poolId`) — CANONICAL
+
+This is the single most important screen in the product. Pre-entry browsing AND post-entry predicting use the same URL and the same layout, with state changes by entry status. Top-tab GW navigation (Variant B refined). See Decided Rule #12 for the locked-in design choices.
 
 ```
 ┌─────────────────────────────────┐
-│ ← Premier League · Tenner R12   │
-│ Entry £10 · Prize pool £180     │
-│ Closes Fri 18:00 · 18 entries   │
+│ ← Pools                         │
+│ PL · The Tenner · Round 1       │
+│ 36 pts total · Rank 8 of 50     │
 ├─────────────────────────────────┤
-│ [ Fixtures ] [ Entries ] [ Me ] │
+│ [GW1 ✓ 24pts][GW2 5/10][GW3][GW4]│
 ├─────────────────────────────────┤
-│ (tab content)                   │
+│ Sat 29 Aug                      │
+│ Man City  [3]-[1]  Wolves       │
+│   12:30 · FT  · You: 2-1  +2pts │
+│ Liverpool [2]-[0]  Brighton     │
+│   15:00 · FT  · You: 2-0  +5pts │
+│ ... (more matches in GW2)       │
+│ Sun 30 Aug                      │
+│ Newcastle [1]-[0]  C. Palace    │
+│   14:00 · KO 22h · Saved        │
+│ Bournemouth [_]-[_]  Forest     │
+│   14:00 · Tap to predict        │
+│ ... (more matches)              │
 ├─────────────────────────────────┤
-│ [    Enter — £10    ]           │
+│ ✓ Auto-saving · Last saved 2s   │
 └─────────────────────────────────┘
 ```
 
-- **Fixtures tab**: 10 matches in this round with kickoff times
-- **Entries tab**: list of who's entered (display name only — never reveal predictions before lock)
-- **Me tab**: empty if not entered, else shows my predictions + live status
-- **CTA**: "Enter — £10" → mock payment flow (Section 4)
+**State transitions:**
+
+| State | Top section | Match rows | Bottom |
+|---|---|---|---|
+| Pre-entry (browsing) | Pool meta + entry stats (entry £X · N entrants) | Empty score boxes, "Tap to predict" hint | `[ Enter — £X ]` CTA |
+| Post-entry, round not started | "0/40 saved" | Editable boxes | Auto-save indicator |
+| Post-entry, round in progress | "X pts total · Rank Y of Z" | Mix of finished + live + locked + editable | Auto-save indicator |
+| Round settled | "Final: X pts · Y of Z · view table" banner | Read-only: FT scores, your predictions, points pills | "View league table" link |
+
+**Match row variants:**
+- **Finished**: muted background, FT score in solid boxes, your prediction pill + points pill (`+5 pts` emerald, `+2 pts` amber, `0 pts` red)
+- **Saved & locked** (kickoff in <1hr): "Saved" emerald tag, no input, prediction read-only
+- **Half-saved**: amber "Half-saved" tag, one box filled
+- **Editable**: empty boxes, "Tap to predict" hint
+- **Live (in-play)**: live-score badge, current score, your prediction shown, "Predictions locked" tag
+
+**GW tabs:**
+- Past GWs: total pts earned, checkmark icon, slightly muted (`GW1 24 pts ✓`)
+- Active GW (default open): emerald highlight, save progress (`GW2 5/10`)
+- Future GWs: neutral, save progress (`GW3 0/10`)
+
+**Day groupers** within a GW (`Sat 29 Aug`, `Sun 30 Aug`, `Mon 31 Aug`) — chronological dividers since GWs span multiple days.
+
+**Auto-save** debounces to 800ms after the last input change; PUTs to `/api/predictions/:id`. Server validates against `predictionLockAt`; rejects with 403 if past lock. Footer shows "Auto-saving · Last saved 2s ago".
+
+### 8.6 League table (`/pools/:competitionSlug/:poolId/table`)
+
+Pool leaderboard. Live during round (rank updates as matches finish), final after settlement.
+
+```
+┌─────────────────────────────────┐
+│ ← PL · The Tenner R1            │
+│ 18 entries · Round in progress  │
+├─────────────────────────────────┤
+│ # │ Player    │ Exact│ Res │ Pts│
+│ 1 │ Mike P.   │ 14   │ 22  │114 │
+│ 2 │ Sarah K.  │ 12   │ 19  │ 98 │
+│ 3 │ James W.  │  9   │ 23  │ 91 │
+│ 4 │ You       │ 11   │ 21  │ 87 │ ← highlighted
+│ 5 │ Tom B.    │  8   │ 22  │ 84 │
+│ 6 │ Priya R.  │  9   │ 19  │ 83 │
+│ ...                             │
+├─────────────────────────────────┤
+│ Tie-break: pts → exact → result │
+└─────────────────────────────────┘
+```
+
+- Top 3 highlighted (gold rank numbers, prize-tag badges if/when payouts finalised)
+- User row highlighted in emerald wherever it sits in the table
+- Footer explains tie-breaker (Decided Rule #10)
+- During round: status pill ("Round in progress · GW2 of 4")
+- After settlement: status pill ("Final · Settled Sun 20 Sep") + "View results" link → Pool detail in read-only mode
 
 ### 8.7 Account (`/account`)
 
@@ -338,6 +382,7 @@ Tier rows show entry-fee, current entry count, prize pool. Tap → pool detail.
 │ steve@example.com               │
 │ Member since May 2026           │
 ├─────────────────────────────────┤
+│ → History (settled rounds)      │
 │ → Payment history               │
 │ → Responsible gambling          │
 │ → Settings                      │
@@ -345,7 +390,38 @@ Tier rows show entry-fee, current entry count, prize pool. Tap → pool detail.
 └─────────────────────────────────┘
 ```
 
-### 8.8 Responsible gambling (`/account/responsible-gambling`)
+### 8.8 History — settled rounds archive (`/account/history`)
+
+When a Round settles, its pools disappear from Home and Pools (active surfaces). They land here. Per-user archive: every pool the user ever entered, with their final stats and a link back to the read-only Pool detail and League Table for that pool.
+
+```
+┌─────────────────────────────────┐
+│ ← Account                       │
+│ History                         │
+│ 12 settled rounds · 7 cashes    │
+├─────────────────────────────────┤
+│ ROUND 1 · Sep 2026              │
+│ ┌─────────────────────────────┐ │
+│ │ PL · The Tenner             │ │
+│ │ 87 pts · 4 of 18 · No prize │ │
+│ │ [Results →]  [Table →]      │ │
+│ └─────────────────────────────┘ │
+│ ┌─────────────────────────────┐ │
+│ │ PL · The Fiver              │ │
+│ │ 82 pts · 2 of 12 · 2nd      │ │
+│ │ [Results →]  [Table →]      │ │
+│ └─────────────────────────────┘ │
+│ ROUND 2 · Oct 2026              │
+│ ...                             │
+└─────────────────────────────────┘
+```
+
+- Grouped by Round, newest first
+- Each card shows: pool name, final pts, final rank, prize received (or "No prize")
+- Two CTAs: Results (the read-only Pool detail screen with FT scores + your predictions + points) and Table (read-only League Table)
+- Empty state: "No settled rounds yet. Your first results will appear here when Round 1 settles."
+
+### 8.9 Responsible gambling (`/account/responsible-gambling`)
 
 Required page from day one (LCCP foundation). UI fully built; backend writes to `licensed.ts` tables that exist dormant. On licence flip, the same UI starts enforcing real limits.
 
@@ -493,8 +569,10 @@ These resolve previously-open questions. They flow into build:
 6. **Round structure.** A Round is a multi-gameweek tournament block. PL: 9 Rounds (4-4-4-4-4-4-4-5-5 GWs). Champ: 9 Rounds (5-5-5-5-5-5-5-5-6 MDs). See Section 3 for the full schedule. **Entry fee covers the whole Round** — one stake, all matches in the Round.
 7. **Per-match prediction lock.** Each match's predictions lock 1 hour before its individual kickoff. A user can edit predictions for un-kicked-off matches at any time. Predictions for already-played matches are never accepted — server enforces by rejecting with HTTP 403. Prevents cheating via late entry seeing results.
 8. **Late-entry window.** Pool entry stays open for **exactly 7 days after the Round's first match kicks off**. Late entrants must confirm a warning modal explaining the handicap (forfeited matches = 0 pts) before payment. After +7 days, pool is closed; server rejects new entries.
-9. **Prize structure.** Top 3 per pool win money, paid as a percentage of total stake collected (sum of all entries × tier fee). Splits: **1st = 25% / 2nd = 15% / 3rd = 10%** of total stake. Remaining **50% = operator commission**. Splits stored in `pools.prizeStructure` jsonb so they can be tuned per-tier or per-promotion later. **Test mode behaviour:** all transactions recorded as `payments.mode = 'mock'` — no real money charged, no real money paid. Prize calculations and "winners" still compute and display in UI for end-to-end testing of the settlement engine. At licence flip, the same code path becomes real: charges via Stripe, payouts via configured rail, commission posted to operator account.
+9. **Prize structure — TBD.** Top 3 per pool win money; specific splits and operator commission are not yet decided and will be finalised before public launch. Splits stored in `pools.prizeStructure` jsonb so they can be tuned per-tier or per-promotion later. **Test mode behaviour:** all transactions recorded as `payments.mode = 'mock'` — no real money charged, no real money paid. Prize calculations and "winners" still compute and display in UI for end-to-end testing of the settlement engine. At licence flip, the same code path becomes real: charges via Stripe, payouts via configured rail, commission posted to operator account.
 10. **Tie-breaker.** Order of comparison when entries are tied on points: (1) **Total exact-score predictions** (5pt entries) — more wins. (2) **Total correct-result predictions** (2pt entries) — more wins. (3) Still tied → split prize evenly between tied entries.
+11. **Settled rounds → archive.** Once a Round settles, its pools no longer appear in the active Pools tab or Home tab. They move to `/account/history` — a per-user archive of every pool the user entered, with their final rank, points, and any payout. The Pool detail URL stays accessible in read-only mode so users can deep-link to old results, but discoverability is via the archive, not the active surfaces.
+12. **Predict screen design — locked.** Combined Pool detail + Predict on a single URL (`/pools/:competitionSlug/:poolId`). Top tabs for each Gameweek in the Round (e.g. `GW1 24 pts ✓ | GW2 5/10 | GW3 0/10 | GW4 0/10`). Default tab on load = the current Gameweek (the first GW that hasn't fully completed). All matches in the selected GW shown in full — no "+N more" truncation. Day groupers within a GW for chronology (Sat/Sun/Mon). Match rows render four states: **finished** (FT score + your prediction + points pill), **saved & locked** (kickoff <1hr away, no edits), **half-saved** (one score entered), **editable** (empty boxes, "tap to predict"). Auto-save on every input change (debounced ~800ms) with a footer indicator confirming persistence. No manual "Save" button.
 
 ---
 
