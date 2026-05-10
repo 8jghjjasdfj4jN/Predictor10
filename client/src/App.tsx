@@ -14,10 +14,10 @@ import LeaderboardPage from "./pages/LeaderboardPage";
 import LeaguesPage from "./pages/LeaguesPage";
 import RulesPage from "./pages/RulesPage";
 import LoginPage from "./pages/LoginPage";
+import RegisterPage from "./pages/RegisterPage";
 import Dashboard from "./pages/Dashboard";
 
-// Public app — original screens, always accessible.
-// AppShell now receives isLoggedIn so it can show Sign In / avatar in the nav.
+// Public app — original screens, always accessible to logged-out users.
 function PublicRouter() {
   return (
     <AppShell>
@@ -39,15 +39,17 @@ function PublicRouter() {
 function Router() {
   const { isLoggedIn } = useAuth();
 
-  // Dedicated login route — accessible whether logged in or not
-  // (logged-in users who hit /login just get redirected to dashboard)
   return (
     <Switch>
+      {/* Auth pages — full-page, no AppShell. Redirect to dashboard if already signed in. */}
       <Route path="/login">
         {isLoggedIn ? <Dashboard /> : <LoginPage />}
       </Route>
+      <Route path="/register">
+        {isLoggedIn ? <Dashboard /> : <RegisterPage />}
+      </Route>
 
-      {/* All other routes: logged-in → Dashboard, logged-out → public app */}
+      {/* Everything else: logged-in → Dashboard, logged-out → public marketing app */}
       <Route>
         {isLoggedIn ? <Dashboard /> : <PublicRouter />}
       </Route>

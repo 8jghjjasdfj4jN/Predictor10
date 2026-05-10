@@ -5,13 +5,25 @@ export type User = {
   name: string;
   email: string;
   avatar: string;
+  dateOfBirth?: string;
+  country?: string;
+  marketingConsent?: boolean;
+};
+
+export type RegisterPayload = {
+  email: string;
+  password: string;
+  displayName: string;
+  dateOfBirth: string;  // YYYY-MM-DD
+  country: string;
+  marketingConsent: boolean;
 };
 
 type AuthContextType = {
   user: User | null;
   isLoggedIn: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<void>;
+  register: (payload: RegisterPayload) => Promise<void>;
   logout: () => void;
   updateName: (name: string) => void;
 };
@@ -32,13 +44,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const register = async (name: string, email: string, _password: string) => {
+  const register = async (payload: RegisterPayload) => {
+    // Frontend mock — replace with real API call later
     await new Promise((r) => setTimeout(r, 800));
     setUser({
       id: "usr_001",
-      name,
-      email,
-      avatar: name.slice(0, 2).toUpperCase(),
+      name: payload.displayName,
+      email: payload.email,
+      avatar: payload.displayName.slice(0, 2).toUpperCase(),
+      dateOfBirth: payload.dateOfBirth,
+      country: payload.country,
+      marketingConsent: payload.marketingConsent,
     });
   };
 
@@ -50,7 +66,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoggedIn: !!user, login, register, logout, updateName }}>
+    <AuthContext.Provider
+      value={{ user, isLoggedIn: !!user, login, register, logout, updateName }}
+    >
       {children}
     </AuthContext.Provider>
   );
