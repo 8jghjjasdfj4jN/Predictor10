@@ -2,7 +2,7 @@
 
 Written: May 2026.
 Owner: solo developer.
-Target launch: **Round 1 of Premier League 2026/27 — Saturday 22 August 2026** (closed test, invited users only). **Round 2 — Saturday 29 August 2026** (public launch, mock-money). Build window: ~15 weeks from start.
+Target launch: **No hard date.** Earliest-possible: Round 1 of PL 2026/27 (Sat 22 Aug → ~Sat 19 Sep 2026) as closed test, then public launch at start of Round 2 (~Sat 26 Sep 2026). Both slide if not ready. Build window: 15+ weeks available from May 2026; pace dictated by readiness, not deadline.
 
 ---
 
@@ -220,32 +220,34 @@ The dormant tables in `licensed.ts` get their UI and write paths. Enforcement po
 
 ---
 
-## Round 1 — Saturday 22 August 2026 (CLOSED TEST)
+## Round 1 — Earliest target Sat 22 Aug → ~Sat 19 Sep 2026 (CLOSED TEST · 4 weeks)
 
-**Soft launch with invited users.**
+**Closed test with invited users across PL Round 1 (GWs 1-4).** Slides if build isn't ready.
 
-- Invite-only access, ~50–100 users.
-- PL Round 1 + Championship Round ~3 active (Championship season starts before PL).
-- Live monitoring of settlement, prediction lock enforcement, payment-mock flow, audit log volume.
-- Sun night / Mon morning: post-Round 1 retro.
+- Invite-only access, ~50–100 users. Late-entry window stays open 7 days from first kickoff (Sat 29 Aug).
+- PL Round 1 = ~40 matches across 4 GWs. Championship Round 1 also runs in parallel (GWs 1-5 of Championship season — different round windows).
+- Live monitoring throughout the 4 weeks: settlement engine, per-match prediction lock enforcement, payment-mock flow, audit log volume, late-entry warning flow.
+- Mid-Round and end-of-Round retros to capture issues for fixing before Round 2.
+- ~Fri 18 Sep: final round-end checklist before public launch.
 
 ---
 
-## Week of August 23-29 — Settlement and remediation
+## Week of Sep 20-26 — Settlement and remediation
 
-- Round 1 settles automatically.
-- Fix anything broken from beta cohort feedback.
-- Public registration opens.
+- Round 1 settles automatically when last GW4 match goes full-time (~Sun 20 Sep).
+- Fix anything surfaced during the 4-week test.
+- Public registration opens publicly.
 - Marketing campaign goes live.
+- Round 2 pool generation cron tested.
 
 ---
 
-## Round 2 — Saturday 29 August 2026 (PUBLIC LAUNCH)
+## Round 2 — Earliest target ~Sat 26 Sep 2026 (PUBLIC LAUNCH)
 
-**Mock-money product live to the public.**
+**Mock-money product live to the public — PL Round 2 = GWs 5-8.** Launch only when the build is ready and the operator is ready; this is an earliest-possible target, not a deadline.
 
 - Public open. Anyone can sign up and enter pools.
-- PL Round 2 + Championship Round ~4 active.
+- PL Round 2 + corresponding Championship round both active.
 - Marketing site fully active.
 - Press / community announcements.
 - Resist feature additions during the first month unless they fix something broken.
@@ -321,4 +323,4 @@ Three things, none of them coding:
 
 1. **Provision Render Postgres.** Smallest paid tier. Get `DATABASE_URL` into Render env.
 2. **Sign up for Resend.** Free tier. Get API key into Render env.
-3. **Confirm launch dates locked.** Round 1 = Sat 22 Aug 2026 (PL kickoff, closed test). Round 2 = Sat 29 Aug 2026 (public launch, mock-money). 15 weeks of build window. Compliance work fills Weeks 5-8.
+3. **Note launch targets (not deadlines).** Earliest-possible: Round 1 = Sat 22 Aug → ~Sat 19 Sep 2026 (PL GWs 1-4, closed test). Round 2 = ~Sat 26 Sep 2026 (public launch, mock-money). Both slide if not ready. 15+ weeks of build window available from May 2026.

@@ -22,7 +22,8 @@ This doc describes the post-login user portal: navigation, pages, data, and the 
 |---|---|---|---|
 | Football competition | `competitions` | **Competition** | Premier League, Championship |
 | Price/skill band | `leagues` | **Tier** | The Pound (£1), Tenner (£10), Big One (£50) |
-| Stage of a competition | `stages` | **Round** | Round 12, Round 13 |
+| Stage of a competition | `stages` | **Round** | A 4-5 gameweek block (PL R1 = GW1-4) |
+| A weekend of fixtures within a round | (no table — derived from `events.kickoffAt`) | **Gameweek** (PL) / **Matchday** (Champ) | GW1, GW2, MD3 |
 | Specific buy-in instance | `pools` | **Pool** | "Premier League · Tenner · Round 12" |
 | User's stake in a pool | `pool_entries` | **Entry** | "My Tenner R12 entry" |
 | User's score guess for one match | `predictions` | **Prediction** | Liverpool 2-1 Arsenal |
@@ -40,6 +41,29 @@ This doc describes the post-login user portal: navigation, pages, data, and the 
 | EFL Championship | `ELC` | ✅ Free tier | Add alongside PL. |
 
 Free-tier rate limit: 10 req/min. Existing 1-hour cache (`TTL` in `server/index.ts`) keeps usage well under budget. Live cache is 60s.
+
+### Round structure — Premier League (38 GWs, 9 Rounds)
+
+| Round | Gameweeks | # GWs | ~Match count |
+|---|---|---|---|
+| 1 | 1-4 | 4 | ~40 |
+| 2 | 5-8 | 4 | ~40 |
+| 3 | 9-12 | 4 | ~40 |
+| 4 | 13-16 | 4 | ~40 |
+| 5 | 17-20 | 4 | ~40 |
+| 6 | 21-24 | 4 | ~40 |
+| 7 | 25-28 | 4 | ~40 |
+| 8 | 29-33 | 5 | ~50 |
+| 9 | 34-38 | 5 | ~50 |
+
+### Round structure — EFL Championship (46 MDs, 9 Rounds)
+
+| Round | Matchdays | # MDs | ~Match count |
+|---|---|---|---|
+| 1-8 | varies | 5 each | ~60 each |
+| 9 | last 6 MDs | 6 | ~72 |
+
+A user enters a Round once (one stake) and predicts every match across all GWs / MDs in that Round.
 
 ---
 
@@ -76,6 +100,32 @@ User makes predictions for matches in that round, submits before lock
 ```
 
 The frontend never knows the difference. Same buttons, same screens, same redirects. Only `payments.mode` changes.
+
+### Late-entry rule
+
+A Round's pool stays open for **7 days after the Round's first match kicks off**. After that, no new entries.
+
+If a user attempts to enter during the late-entry window (between first kickoff and +7 days), they must confirm a warning modal before payment proceeds:
+
+```
+┌──────────────────────────────────────┐
+│ Late entry — you'll be behind        │
+│                                       │
+│ Round 1 has been live for 3 days.    │
+│ • 12 matches have already finished.  │
+│ • You can't predict matches that     │
+│   have already kicked off — you'll   │
+│   score 0 on those.                  │
+│ • Existing entrants are ahead of     │
+│   you on points.                     │
+│                                       │
+│ Continue with late entry?            │
+│                                       │
+│ [ Cancel ]    [ I understand · £10 ] │
+└──────────────────────────────────────┘
+```
+
+After +7 days, the pool is closed. UI shows "Round 1 closed — Round 2 opens [date]". No payment endpoint accepts new entries; server enforces.
 
 ---
 
@@ -436,10 +486,15 @@ Each step ships independently and is testable in isolation.
 These resolve previously-open questions. They flow into build:
 
 1. **Settlement timing.** A pool settles automatically when **all** its matches have full-time scores from football-data.org. Implementation: settlement cron polls every 5 minutes, finds pools where every match status is `FINISHED` and `event_outcomes` rows exist, computes ranks, writes mock payouts, marks pool `settled`. Idempotent — re-running must not double-pay.
-2. **Multi-entry rule.** A user may hold concurrent entries across multiple Tiers and multiple Competitions. **Cap: one entry per Pool per user.** Since Pool = Competition × Tier × Round, this means a user can simultaneously hold (PL · Pound · R12) + (PL · Tenner · R12) + (Champ · Tenner · R38) — three pools, three entries — but never two entries in the same pool.
+2. **Multi-entry rule.** A user may hold concurrent entries across multiple Tiers and multiple Competitions. **Cap: one entry per Pool per user.** Since Pool = Competition × Tier × Round, this means a user can simultaneously hold (PL · Pound · R1) + (PL · Tenner · R1) + (Champ · Tenner · R1) — three pools, three entries — but never two entries in the same pool.
 3. **Tier visibility.** All 5 tiers (Pound, Fiver, Tenner, Pony, Big One) are visible to every user from day one. No progressive unlock. The £1 Pound is the natural starter tier; choice is the user's.
 4. **Competitions in MVP.** Premier League and EFL Championship only. World Cup dropped from scope. League One deferred (no provider coverage on free tier).
-5. **Launch plan.** Round 1 of PL 2026/27 (Sat 22 Aug 2026) = closed test, ~50–100 invited users. Round 2 (Sat 29 Aug 2026) = public launch (mock-money). 15-week build window from May 2026, with UKGC compliance scaffolding built in Weeks 5-8 (see `roadmap.md`).
+5. **Launch plan.** No hard launch date — public launch happens when the build is ready and the operator is ready. Earliest-possible target: Round 1 of PL 2026/27 (Sat 22 Aug → ~Sat 19 Sep 2026) as a closed test for invited users; public launch (mock-money) at the start of Round 2 (~Sat 26 Sep 2026). Both dates slide if not ready. See `roadmap.md` for the build phases that gate readiness.
+6. **Round structure.** A Round is a multi-gameweek tournament block. PL: 9 Rounds (4-4-4-4-4-4-4-5-5 GWs). Champ: 9 Rounds (5-5-5-5-5-5-5-5-6 MDs). See Section 3 for the full schedule. **Entry fee covers the whole Round** — one stake, all matches in the Round.
+7. **Per-match prediction lock.** Each match's predictions lock 1 hour before its individual kickoff. A user can edit predictions for un-kicked-off matches at any time. Predictions for already-played matches are never accepted — server enforces by rejecting with HTTP 403. Prevents cheating via late entry seeing results.
+8. **Late-entry window.** Pool entry stays open for **exactly 7 days after the Round's first match kicks off**. Late entrants must confirm a warning modal explaining the handicap (forfeited matches = 0 pts) before payment. After +7 days, pool is closed; server rejects new entries.
+9. **Prize structure.** Top 3 per pool win money, paid as a percentage of total stake collected (sum of all entries × tier fee). Splits: **1st = 25% / 2nd = 15% / 3rd = 10%** of total stake. Remaining **50% = operator commission**. Splits stored in `pools.prizeStructure` jsonb so they can be tuned per-tier or per-promotion later. **Test mode behaviour:** all transactions recorded as `payments.mode = 'mock'` — no real money charged, no real money paid. Prize calculations and "winners" still compute and display in UI for end-to-end testing of the settlement engine. At licence flip, the same code path becomes real: charges via Stripe, payouts via configured rail, commission posted to operator account.
+10. **Tie-breaker.** Order of comparison when entries are tied on points: (1) **Total exact-score predictions** (5pt entries) — more wins. (2) **Total correct-result predictions** (2pt entries) — more wins. (3) Still tied → split prize evenly between tied entries.
 
 ---
 
