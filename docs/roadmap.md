@@ -4,6 +4,8 @@ Written: May 2026.
 Owner: solo developer.
 Target launch: **No hard date.** Earliest-possible: Round 1 of PL 2026/27 (Sat 22 Aug → ~Sat 19 Sep 2026) as closed test, then public launch at start of Round 2 (~Sat 26 Sep 2026). Both slide if not ready. Build window: 15+ weeks available from May 2026; pace dictated by readiness, not deadline.
 
+> **Companion doc:** `docs/portal-architecture.md` is the design canon — terminology, page layouts, decided rules, deferred decisions. This roadmap is the build plan; the architecture doc is the spec. When they drift, the architecture doc wins.
+
 ---
 
 ## Guiding principles
@@ -11,7 +13,9 @@ Target launch: **No hard date.** Earliest-possible: Round 1 of PL 2026/27 (Sat 2
 1. **Build the real flow, mock the money.** Every screen, endpoint and ledger entry behaves as if real money is moving. Behind the scenes, payments are recorded with `mode = "mock"` and never hit a PSP. When the UKGC licence lands, the same code paths flip to `mode = "live"`.
 2. **Compliance-ready schema from day one — no structural migrations at licence flip.** All tables a licensed operator needs (KYC, AML, withdrawals, customer interactions, GAMSTOP, payment provider events) are in the schema from the first migration. They sit dormant during V1; the licensed work populates them rather than creating them.
 3. **Simplest viable architecture.** Single repo. Render hosting. Postgres + Drizzle. No Redis, no queue infrastructure — Render Cron Jobs handle settlement. The existing `football-data.org` feed stays untouched.
-4. **One product, one scoring rule.** Match-by-match score prediction. 5 points for exact score, 2 for correct result, 0 otherwise. Five league tiers from £1 to £50.
+4. **One product, one scoring rule.** Match-by-match score prediction. 5 points for exact score, 2 for correct result, 0 otherwise. Five tiers from £1 to £50, named The Pound / The Fiver / The Tenner / The Pony / The Big One.
+5. **Round = multi-gameweek tournament block.** PL: 9 Rounds of 4-5 GWs each (38 GWs total). Champ: 9 Rounds of 5-6 MDs each (46 MDs total). One stake per Round; user predicts every match across all GWs in that Round. See architecture doc Section 3.
+6. **Anti-cheat by design.** Predictions for matches already kicked off are never accepted. Late entry is allowed up to 7 days into a Round but with explicit warning that already-played matches score 0. Lock = kickoff minus 1 hour, server-enforced.
 
 ---
 
@@ -98,39 +102,40 @@ That's the test. If at licence-grant we have to rebuild a major subsystem, the p
 
 ## Week 2 — May 17 to 24
 
-**Leagues, pools, payments, predictions.**
+**Tiers, pools, payments, predictions.**
 
-- Seed the `leagues` table with the five tiers.
-- Sync Premier League and EFL Championship competitions, stages, events from the existing `football-data.org` integration.
-- Compute `predictionLockAt` for each event = kickoff minus 30 minutes.
-- Create one pool per (league × stage) for each active competition.
-- Endpoints:
-  - `GET /api/leagues` — list active leagues.
-  - `GET /api/pools` — list pools (joined and joinable for current user).
-  - `GET /api/pools/:id` — pool detail with events and the user's picks.
-  - `POST /api/pools/:id/enter` — creates a debit `payments` row (mock mode, auto-succeeded), creates a `pool_entry`. Refuses if user is self-excluded, account is suspended, or `closesAt` has passed.
-  - `GET /api/pools/:id/predictions` — user's picks.
-  - `POST /api/pools/:id/predictions` — bulk upsert. Server-side per-event lock check rejects late picks with 403.
-  - `GET /api/pools/:id/leaderboard` — current standings.
-- Lock enforcement is server-side. The UI's locked state is cosmetic; backend always re-checks.
+- Seed the `leagues` table with the five tiers (The Pound £1 / The Fiver £5 / The Tenner £10 / The Pony £25 / The Big One £50).
+- Sync Premier League (38 GWs) and EFL Championship (46 MDs) competitions and events from the existing `football-data.org` integration.
+- Generate `stages` rows per portal-architecture Section 3 — PL: 9 Rounds (4-4-4-4-4-4-4-5-5 GWs). Champ: 9 Rounds (5-5-5-5-5-5-5-5-6 MDs).
+- Compute `predictionLockAt` for each event = **kickoff minus 1 hour** (Decided Rule #7).
+- Pool generation cron: creates 5 tier pools per Round per Competition when a Round becomes available (~10 pools per round across both competitions, far fewer rows than per-GW would have been).
+- Endpoints (see portal-architecture Section 11 for full list):
+  - `GET /api/competitions` — list active competitions.
+  - `GET /api/tiers` — list of 5 tiers.
+  - `GET /api/pools` — list open pools.
+  - `GET /api/pools/:id` — pool detail (matches grouped by GW, user's predictions, entries count).
+  - `POST /api/pools/:id/enter` — creates a debit `payments` row (mock mode, auto-succeeded), creates a `pool_entry`. Late-entry warning modal logic enforced server-side: refuses entry if Round has been live > 7 days (Decided Rule #8). Refuses if user is self-excluded or suspended.
+  - `PUT /api/predictions/:id` — auto-save single prediction. Server validates `predictionLockAt`; rejects with 403 if past lock or for matches already played.
+  - `GET /api/pools/:id/table` — current league table standings.
+- Lock enforcement is server-side. The UI's locked state is cosmetic; backend always re-checks. Anti-cheat: server rejects predictions for any match whose kickoff has passed (Decided Rule #7).
 
-**Definition of done:** A logged-in user can enter a Premier League round at the £5 tier (mock), set scorelines, see them persist. Late picks return 403.
+**Definition of done:** A logged-in user can enter Round 1 of PL at the £10 Tenner tier (mock payment), set scorelines for all 40 matches across GWs 1-4, see them auto-save. Predictions for matches already kicked off return 403. Late entry past day 7 returns 403.
 
 ---
 
 ## Week 3 — May 24 to 31
 
-**UI rebuild — the post-login experience.**
+**UI rebuild — the post-login experience.** Implements the canonical screens from `portal-architecture.md` Section 8.
 
-- Rebuild `client/src/pages/Dashboard.tsx`. Replace leaderboard-as-landing with a proper home: welcome block, active pools, recent activity, leaderboard preview below.
-- Split into components in `client/src/components/predictor10/`: `DashboardHome`, `ActivePoolCard`, `MakePicksScreen`, `LeagueEntryModal`, `PoolLeaderboard`. shadcn primitives, no inline `style={}`.
-- Pool entry flow: tile → modal "Enter Round 12 — Tenner for £10?" → confirm → API call → "You're in" state with link to make picks.
-- Predictions UI: per-event card with score inputs. Saved/Locked/Open states reflect server truth.
-- Pool leaderboard view: real data, your row highlighted, top N visible.
+- Rebuild `client/src/pages/Dashboard.tsx`. Replace leaderboard-as-landing with the Home design from arch Section 8.1: Live entries (shortcuts to entered tiers) + Available tiers (not-yet-entered tiers in the current round).
+- Build the canonical Pool detail / Predict screen (arch Section 8.5, Decided Rule #12): top tabs per GW, default to current GW, all matches shown without truncation, four match-row states (finished / saved-locked / half-saved / editable), day groupers within GWs, auto-save footer, no manual save button. Late-entry warning modal when a user attempts to enter mid-round.
+- Build the League Table page (arch Section 8.6) with top-3 highlighting, user-row highlighting, tie-breaker explainer.
+- Build the History archive page (arch Section 8.8) — settled pools grouped by Round, newest first.
+- Components in `client/src/components/predictor10/`: `Home`, `LiveEntryCard`, `AvailableTierRow`, `PoolPredictScreen`, `GwTabs`, `MatchRow`, `LateEntryModal`, `LeagueTable`, `HistoryArchive`. shadcn primitives, no inline `style={}`.
 - Code-split routes with `React.lazy()` so logged-out homepage doesn't ship the dashboard bundle.
-- Account page: display name, email (with verified badge), sign out. Stub the rest.
+- Account page: display name, email (with verified badge), sign out, History link. Stub the rest.
 
-**Definition of done:** Full loop works in UI — sign up, browse leagues, enter one, make picks, see leaderboard. No mock data on authenticated screens.
+**Definition of done:** Full loop works in UI — sign up, browse pools, enter a tier, predict across 4 GWs (auto-save on each input), see matches lock 1hr before kickoff, watch live league table during round, view final results in archive once settled. No mock data on authenticated screens.
 
 ---
 
@@ -138,21 +143,21 @@ That's the test. If at licence-grant we have to rebuild a major subsystem, the p
 
 **Settlement, responsible-play scaffolding, polish.**
 
-- Settlement worker, deployed as a Render Cron Job hitting `POST /api/admin/settle` every 10 minutes:
+- Settlement worker, deployed as a Render Cron Job hitting `POST /api/admin/settle` every 5 minutes (Decided Rule #1):
   - Find finished events without `event_outcomes` rows.
   - Pull final scores from `football-data.org`.
   - Insert `event_outcomes`, mark event `finished`.
   - Score every prediction: 5 exact, 2 result, 0 wrong. Write `points_awarded`, `is_exact`, `is_correct_result`.
-  - When all events in a pool are finished, compute `final_rank` per entry, generate credit-direction `payments` (mock) for winners per `prize_structure`, mark pool `settled`.
+  - When **all** events in a pool are finished (i.e. last match of last GW in the Round goes FT — typically 4-5 GWs / 40-50 matches per pool), compute `final_rank` per entry using tie-breaker order (Decided Rule #10): pts → exact-score count → correct-result count → split. Generate credit-direction `payments` (mock) for top 3 per pool per `prize_structure`. Mark pool `settled`. Move pool from active surfaces to archive (Decided Rule #11).
   - Idempotent — re-running must not double-pay.
 - Responsible play scaffolding:
-  - `/account/limits` — set daily/weekly/monthly spend limits. Decrease immediate, increase pending 24h.
-  - `/account/self-exclude` — pick duration, confirm, lock account.
+  - `/account/responsible-gambling` (limits) — set daily/weekly/monthly spend limits. Decrease immediate, increase pending 24h.
+  - `/account/responsible-gambling` (self-exclude) — pick duration (6mo / 12mo / 5yr), confirm, lock account.
   - "Take a break" link in footer.
-- Email templates: verification, welcome, pool-entered, pool-settled, password-reset.
+- Email templates: verification, welcome, pool-entered, pool-settled, password-reset, late-entry-confirmation.
 - Sentry for client and server.
 
-**Definition of done:** When a fixture finishes, predictions get scored within 10 minutes. Winners see mock payouts. Self-exclusion form closes the account.
+**Definition of done:** When the last match of a Round goes FT, predictions get scored within 5 minutes. Top 3 see mock payouts. Pool moves to `/account/history` archive. Self-exclusion form closes the account.
 
 ---
 

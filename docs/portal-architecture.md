@@ -346,6 +346,33 @@ This is the single most important screen in the product. Pre-entry browsing AND 
 
 **Auto-save** debounces to 800ms after the last input change; PUTs to `/api/predictions/:id`. Server validates against `predictionLockAt`; rejects with 403 if past lock. Footer shows "Auto-saving · Last saved 2s ago".
 
+#### Settled state (Round complete)
+
+Same screen, but every match is read-only. Tabs all show checkmarks and per-GW totals; default tab on load = GW1 (chronological start). Banner at top links to the league table. Auto-save footer is replaced with a "Settled · Read-only" lock indicator.
+
+```
+┌─────────────────────────────────┐
+│ ← History                       │
+│ PL · The Tenner · Round 1       │
+│ Final · Settled 20 Sep · 87 pts │
+│ Rank 4/18                       │
+├─────────────────────────────────┤
+│ Round complete · view table  →  │  banner
+├─────────────────────────────────┤
+│ [GW1 ✓ 29pt][GW2 ✓ 12pt]        │  all green / done
+│ [GW3 ✓ 26pt][GW4 ✓ 20pt]        │
+├─────────────────────────────────┤
+│ Sat 22 Aug                      │
+│ Man City  [2]-[0]  Wolves       │
+│   12:30 · FT  · You: 2-0  +5pts │
+│ ... (all matches read-only)     │
+├─────────────────────────────────┤
+│ 🔒 Settled · Read-only          │
+└─────────────────────────────────┘
+```
+
+Routing: settled pools remain accessible at the same URL but are reached primarily via `/account/history` (Section 8.8) since they no longer surface on Home or Pools.
+
 ### 8.6 League table (`/pools/:competitionSlug/:poolId/table`)
 
 Pool leaderboard. Live during round (rank updates as matches finish), final after settlement.
@@ -398,28 +425,37 @@ When a Round settles, its pools disappear from Home and Pools (active surfaces).
 ┌─────────────────────────────────┐
 │ ← Account                       │
 │ History                         │
-│ 12 settled rounds · 7 cashes    │
+│ All settled rounds              │
 ├─────────────────────────────────┤
+│ [12]      [7]       [2nd]       │  stat summary
+│ Rounds    Cashes    Best rank   │
+├─────────────────────────────────┤
+│ ROUND 2 · Oct 2026              │
+│ ┌─────────────────────────────┐ │
+│ │ PL · The Tenner    🏆 1st   │ │  ← amber tint
+│ │ 95 pts · 1 of 22 · Cashed   │ │
+│ │ [Results →]  [Table →]      │ │
+│ └─────────────────────────────┘ │
+│ ┌─────────────────────────────┐ │
+│ │ Champ · The Pound · No prize│ │
+│ │ 64 pts · 5 of 30            │ │
+│ │ [Results →]  [Table →]      │ │
+│ └─────────────────────────────┘ │
 │ ROUND 1 · Sep 2026              │
 │ ┌─────────────────────────────┐ │
 │ │ PL · The Tenner             │ │
 │ │ 87 pts · 4 of 18 · No prize │ │
 │ │ [Results →]  [Table →]      │ │
 │ └─────────────────────────────┘ │
-│ ┌─────────────────────────────┐ │
-│ │ PL · The Fiver              │ │
-│ │ 82 pts · 2 of 12 · 2nd      │ │
-│ │ [Results →]  [Table →]      │ │
-│ └─────────────────────────────┘ │
-│ ROUND 2 · Oct 2026              │
-│ ...                             │
 └─────────────────────────────────┘
 ```
 
-- Grouped by Round, newest first
-- Each card shows: pool name, final pts, final rank, prize received (or "No prize")
-- Two CTAs: Results (the read-only Pool detail screen with FT scores + your predictions + points) and Table (read-only League Table)
-- Empty state: "No settled rounds yet. Your first results will appear here when Round 1 settles."
+- **Header stat summary** — three cells: total settled rounds played, total cashes (any podium finish), best-ever rank. Stat copy/labels are still under review (see Section 14).
+- **Grouped by Round, newest first.** Round headers show round number + month/year.
+- **Per-pool card** — pool name (competition · tier), final stats (pts, rank, prize/no-prize), two CTAs: Results (read-only Pool detail with FT scores + your predictions + points) and Table (read-only League Table).
+- **Cashed pools** (1st/2nd/3rd) get an amber-tinted card + trophy badge with rank label. "No prize" pools stay neutral.
+- **Empty state**: "No settled rounds yet. Your first results will appear here when Round 1 settles."
+- **Settlement → archive timing**: a pool moves to the archive immediately on settlement. The Pool detail URL stays valid but discoverability is via the archive (decided rule #11).
 
 ### 8.9 Responsible gambling (`/account/responsible-gambling`)
 
@@ -576,6 +612,25 @@ These resolve previously-open questions. They flow into build:
 
 ---
 
-## 14. Open questions
+## 14. Open questions and deferred decisions
 
-1. **Push/email notifications** — round-opens, predictions-due-soon, results-in. Out of scope for portal architecture but noted for Week 5+.
+### Deferred until pre-launch (gating public launch)
+
+1. **Prize splits and operator commission.** Top 3 paid (Decided #9), but exact percentages TBD. Affects test-mode display copy and post-licence go-live calculations. Decision needed before Round 2 public launch.
+2. **Default tab on settled-state Pool/Predict screen.** Currently defaults to GW1 (chronological start). Alternatives: last-viewed (sticky), highest-scoring GW (lead with user's best), or most recent GW (last week's matches still in memory).
+3. **Archive header stats.** Currently shows `Rounds played · Cashes · Best rank`. Alternatives: best round (pts), highest tier won, longest cashing streak. Three-cell space available, copy and metrics under review.
+4. **"Cashed" copy** on archive cards. Used while payouts are TBD; once operator commission and prize amounts are decided, may switch to specific amount or "1st place · £X" format.
+5. **Settlement → archive timing.** Currently moves immediately on settlement. Consider a 24-48hr "fresh results" grace period where settled pools stay on Home with a "Round X complete" hero, then move to archive. Improves engagement on settlement day.
+
+### Deferred to post-launch / Week 5+ build
+
+6. **Push and email notifications.** Round-opens, late-entry-window-closing, predictions-due-soon (per-match lock approaching), results-in. Out of scope for portal architecture; spec needed in Week 5+ build.
+7. **Multi-competition Home behaviour.** When a user has live entries in PL Round 1 AND Champ Round 1 simultaneously, how does Home present them? Options: tabbed by competition, both visible stacked, default to whichever has more pressing deadline. Defer until we have multi-comp users to learn from.
+8. **Live scores polling cadence.** Currently 60s server cache, 30s client refresh on visible pages. May tighten during in-play windows. Decision after first round operations.
+
+### Deferred to Q4 2026 (post-licence)
+
+9. **GAMSTOP integration cadence.** Current scaffolding runs nightly sync; UKGC may require more frequent checks during sessions. Confirm with compliance counsel.
+10. **AML rule thresholds.** Velocity, single-transaction size, deposit-to-stake ratios — specific numbers tuned during licence application review.
+11. **KYC provider selection.** Onfido / Veriff / GBG / Jumio. Decision after sandbox evaluations in Weeks 9-11.
+12. **Per-user `real_money_enabled` rollout strategy.** Big-bang on licence day, or gradual cohort-by-cohort. Probably gradual for risk control.
