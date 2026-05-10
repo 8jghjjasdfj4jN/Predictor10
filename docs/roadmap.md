@@ -2,7 +2,7 @@
 
 Written: May 2026.
 Owner: solo developer.
-Target launch: World Cup kickoff, 11 June 2026 (32 days from start).
+Target launch: **Round 1 of Premier League 2026/27 — Saturday 22 August 2026** (closed test, invited users only). **Round 2 — Saturday 29 August 2026** (public launch, mock-money). Build window: ~15 weeks from start.
 
 ---
 
@@ -101,9 +101,9 @@ That's the test. If at licence-grant we have to rebuild a major subsystem, the p
 **Leagues, pools, payments, predictions.**
 
 - Seed the `leagues` table with the five tiers.
-- Sync World Cup competition, stages, events from the existing `football-data.org` integration. (Confirm in week 1 that your tier covers it — upgrade if needed.)
+- Sync Premier League and EFL Championship competitions, stages, events from the existing `football-data.org` integration.
 - Compute `predictionLockAt` for each event = kickoff minus 30 minutes.
-- Create one pool per (league × stage) for the World Cup.
+- Create one pool per (league × stage) for each active competition.
 - Endpoints:
   - `GET /api/leagues` — list active leagues.
   - `GET /api/pools` — list pools (joined and joinable for current user).
@@ -114,7 +114,7 @@ That's the test. If at licence-grant we have to rebuild a major subsystem, the p
   - `GET /api/pools/:id/leaderboard` — current standings.
 - Lock enforcement is server-side. The UI's locked state is cosmetic; backend always re-checks.
 
-**Definition of done:** A logged-in user can enter Matchday Five for £5 (mock), set scorelines, see them persist. Late picks return 403.
+**Definition of done:** A logged-in user can enter a Premier League round at the £5 tier (mock), set scorelines, see them persist. Late picks return 403.
 
 ---
 
@@ -124,7 +124,7 @@ That's the test. If at licence-grant we have to rebuild a major subsystem, the p
 
 - Rebuild `client/src/pages/Dashboard.tsx`. Replace leaderboard-as-landing with a proper home: welcome block, active pools, recent activity, leaderboard preview below.
 - Split into components in `client/src/components/predictor10/`: `DashboardHome`, `ActivePoolCard`, `MakePicksScreen`, `LeagueEntryModal`, `PoolLeaderboard`. shadcn primitives, no inline `style={}`.
-- League entry flow: tile → modal "Enter Matchday Five for £5?" → confirm → API call → "You're in" state with link to make picks.
+- Pool entry flow: tile → modal "Enter Round 12 — Tenner for £10?" → confirm → API call → "You're in" state with link to make picks.
 - Predictions UI: per-event card with score inputs. Saved/Locked/Open states reflect server truth.
 - Pool leaderboard view: real data, your row highlighted, top N visible.
 - Code-split routes with `React.lazy()` so logged-out homepage doesn't ship the dashboard bundle.
@@ -156,34 +156,111 @@ That's the test. If at licence-grant we have to rebuild a major subsystem, the p
 
 ---
 
-## Pre-launch — June 7 to 11
+## Weeks 5-8 — June 7 to July 5
 
-**Soft launch, bug bash.**
+**UKGC compliance build-out.**
 
-- Friends-and-family invite, ~20 users. Watch settlement edge cases, prediction lock race conditions, email deliverability, mobile layout.
-- Public registration opens. Marketing homepage already live.
-- Final pass on copy, accessibility, mobile responsiveness.
+The dormant tables in `licensed.ts` get their UI and write paths. Enforcement points to mock payments — flipping to live at licence is then code-only, not screen-design.
+
+- **Deposit limits** (`/account/limits`): daily / weekly / monthly. Decrease takes immediate effect; increase queued for 24h cooling-off.
+- **Self-exclusion** (`/account/self-exclude`): 6mo / 12mo / 5yr. Locks account, redirects to landing with confirmation.
+- **Reality checks**: configurable interval (30 / 60 min). Modal mid-session showing time spent + net spend, with continue / take-break / log-out options.
+- **GAMSTOP integration scaffolding**: stub client + nightly sync job returns empty result; ready to swap for real API on registration.
+- **AML monitoring**: rule engine reads `payments`, writes flags to `aml_reviews`. Threshold-based (velocity, single-transaction size, deposit-to-stake ratios).
+- **Customer interactions log**: admin tool writes to `customer_interactions`. SR Code 3.4.
+- **KYC document upload UI**: `/account/verify-identity`. Stores to `kyc_documents`; awaits provider integration.
+- **Audit log review tool**: read-only admin dashboard.
+- **Policy documents**: T&Cs, Privacy, Responsible Gambling, AML — drafted to UKGC standards. These are documents you produce, not buy.
+
+**Definition of done:** Every regulated function has a working UI and writes to its compliance table. Schema-to-feature mapping documented for licence application.
 
 ---
 
-## World Cup window — June 11 to July 19
+## Weeks 9-11 — July 5 to July 26
 
-**Operate, observe, fix.**
+**Polish, integration prep, edge cases.**
 
-- Daily checks: settlement worker clean, leaderboard updates, payment-mock records, audit log volume.
-- 104 matches over 39 days is your stress test for the settlement engine.
+- Email templates finalised (verification, welcome, pool-entered, pool-settled, password-reset, RG limit-set, self-exclusion confirmation).
+- Mobile responsiveness pass on every screen.
+- Accessibility audit — WCAG 2.1 AA basics (keyboard nav, focus rings, alt text, contrast).
+- Edge case testing: postponed fixtures, voided fixtures, late corrections from `football-data.org`, settlement double-run safety.
+- Sentry deployed and tuned for client + server.
+- Performance: connection pool size, cache headers, bundle size analysis.
+- Stripe Checkout integration in staging (off-by-default flag — dormant until licence flip).
+- KYC provider sandbox setup (Onfido / Veriff conversation started).
+
+**Definition of done:** Product runs cleanly with Sentry quiet for 7 consecutive days under simulated load.
+
+---
+
+## Weeks 12-13 — July 26 to August 9
+
+**Closed beta.**
+
+- Invite 10–20 friends and family.
+- Real predictions on pre-season friendlies + manually-loaded staging fixtures.
+- Bug bash, fix, repeat.
+- Final UI polish based on feedback.
+
+**Definition of done:** Beta cohort completes a full sign-up → enter pool → predict → settle loop without intervention.
+
+---
+
+## Weeks 14-15 — August 9 to August 22
+
+**Pre-launch lockdown.**
+
+- Code freeze except critical bug fixes.
+- Premier League fixtures synced (released Fri 19 June 2026).
+- EFL Championship fixtures synced (released Thu 25 June 2026).
+- Pool generation cron tested for Round 1 + Round 2 of both competitions.
+- Championship Round 1 (~early-mid August) used as a private internal QA round before public-facing test.
+- Final manual QA: every flow, every edge case.
+- Marketing site polish, FAQ ready, support inbox ready.
+
+---
+
+## Round 1 — Saturday 22 August 2026 (CLOSED TEST)
+
+**Soft launch with invited users.**
+
+- Invite-only access, ~50–100 users.
+- PL Round 1 + Championship Round ~3 active (Championship season starts before PL).
+- Live monitoring of settlement, prediction lock enforcement, payment-mock flow, audit log volume.
+- Sun night / Mon morning: post-Round 1 retro.
+
+---
+
+## Week of August 23-29 — Settlement and remediation
+
+- Round 1 settles automatically.
+- Fix anything broken from beta cohort feedback.
+- Public registration opens.
+- Marketing campaign goes live.
+
+---
+
+## Round 2 — Saturday 29 August 2026 (PUBLIC LAUNCH)
+
+**Mock-money product live to the public.**
+
+- Public open. Anyone can sign up and enter pools.
+- PL Round 2 + Championship Round ~4 active.
+- Marketing site fully active.
+- Press / community announcements.
+- Resist feature additions during the first month unless they fix something broken.
+- 380 PL matches + 552 Championship matches over the season is the real stress test for the settlement engine.
 - User support: hello@predictor10.com goes to a real inbox.
-- Resist feature additions during this window unless they fix something broken.
 
 ---
 
-## Post-tournament — July 20 onwards
+## Post-launch — first 30 days
 
-**Retrospective, Premier League, licence application.**
+**Retrospective, expansion, licence application.**
 
 - Retro: what broke, what scaled poorly, what users actually used.
-- Premier League season starts mid-August. Add Premier League pools using the same model — one-day job if architecture held up.
-- UKGC licence application active. Application asks for tech architecture, AML policy, RG policy, terms — documents you produce, not buy. Six to sixteen weeks turnaround typical.
+- Settlement worker watched closely through the first full PL + Championship matchweek cycle.
+- UKGC licence application submitted. Application asks for tech architecture, AML policy, RG policy, terms — all documents already drafted in Weeks 5-8. Six to sixteen weeks turnaround typical.
 - Real-money plumbing prep, in priority order:
   1. PSP integration (Stripe default; Worldpay / Trustly worth comparing for gambling rails).
   2. KYC provider integration — Onfido / Veriff / GBG / Jumio.
@@ -214,25 +291,27 @@ That's the test. If at licence-grant we have to rebuild a major subsystem, the p
 ## What's NOT in V1 (and why)
 
 - **Bracket pools, survivor pools, top-scorer side markets.** Skill-and-feature creep. One product type means less to test, less to break, less to explain.
-- **Premier League pools.** Season starts in August — World Cup is the launch, PL is the post-launch retention story.
+- **World Cup pools.** Dropped from MVP scope.
+- **EFL League One.** Not covered by `football-data.org` free tier; deferred until a second provider integration is justified.
 - **Bonuses, referrals, social features, friend-leagues.** Earnable with growth later.
 - **Mobile app.** Web app is mobile-responsive; native app is V3+.
 - **Real-time updates via websockets.** Polling on user action plus 30-second auto-refresh on visible pages is sufficient.
 - **Multi-currency, internationalisation.** UK-only, GBP-only, English-only.
-- **Real KYC, real payments, real AML monitoring, real GAMSTOP.** All deferred to post-licence by design — but the schema is ready for them.
+- **Real KYC, real payments, real AML monitoring, live GAMSTOP enforcement.** All deferred to post-licence by design — but the UI, schema, and scaffolding ship in V1 (Weeks 5-8) so the licence flip is code-only.
 
 ---
 
 ## Risk callouts
 
-- **4 weeks solo is genuinely tight.** If any week slips:
-  1. First to drop: RG limit-setting and self-exclusion UI (model exists, post-launch is fine — UKGC won't ask before licence).
-  2. Second to drop: email verification (allow unverified users with a "verify your email" banner).
-  3. Third to drop: Sentry (can wait until day after launch).
-- **Settlement worker is the riskiest piece.** Idempotency, edge cases (postponed fixtures, voided fixtures, late corrections from `football-data.org`). Test heavily in week 4. Have a manual override endpoint.
-- **`football-data.org` World Cup coverage** — confirm in week 1 that your existing tier covers the tournament.
-- **Email deliverability** — Resend's free tier shared IP is fine for hundreds of emails; thousands need an upgrade.
-- **Render tier limits** — check Postgres connection pool, web service cold starts. Bump to a paid tier in week 4.
+- **15 weeks solo is comfortable but not infinite.** Slippage risk is highest in Weeks 5-8 (compliance build) where scope is broad. If those weeks slip:
+  1. First to drop: AML monitoring rule engine (logging only, no auto-flagging — manual review at first).
+  2. Second to drop: KYC document upload UI (can use email/manual submission until provider integration).
+  3. Third to drop: GAMSTOP scaffolding (UKGC won't ask for live integration before licence — registration application is what matters).
+  Core RG features (deposit limits + self-exclusion) are non-negotiable and ship in Weeks 5-6.
+- **Settlement worker is the riskiest technical piece.** Idempotency, edge cases (postponed fixtures, voided fixtures, late corrections from `football-data.org`). Test heavily Weeks 9-11. Have a manual override endpoint from Week 4.
+- **Pre-season fixture data is sparse.** football-data.org may not have PL/Championship pre-season friendlies. Beta in Weeks 12-13 may need staging-only fixtures rather than real ones.
+- **Email deliverability** — Resend's free tier shared IP is fine for hundreds of emails; thousands need an upgrade. Plan upgrade for Week 11.
+- **Render tier limits** — check Postgres connection pool, web service cold starts. Bump to a paid tier by Week 8.
 
 ---
 
@@ -242,4 +321,4 @@ Three things, none of them coding:
 
 1. **Provision Render Postgres.** Smallest paid tier. Get `DATABASE_URL` into Render env.
 2. **Sign up for Resend.** Free tier. Get API key into Render env.
-3. **Confirm `football-data.org` covers the World Cup on your current tier.** Test endpoint with your existing key. If empty, upgrade — better to know now than week 2.
+3. **Confirm launch dates locked.** Round 1 = Sat 22 Aug 2026 (PL kickoff, closed test). Round 2 = Sat 29 Aug 2026 (public launch, mock-money). 15 weeks of build window. Compliance work fills Weeks 5-8.
