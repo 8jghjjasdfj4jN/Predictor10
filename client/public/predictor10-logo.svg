@@ -1,0 +1,48 @@
+<svg viewBox="0 0 1000 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Predictor10">
+  <title>Predictor10</title>
+  <defs>
+    <linearGradient id="pillFrame" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e6eaee"/>
+      <stop offset="48%" stop-color="#7d858b"/>
+      <stop offset="52%" stop-color="#7d858b"/>
+      <stop offset="100%" stop-color="#e6eaee"/>
+    </linearGradient>
+    <radialGradient id="pillBg" cx="50%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#1a8a4e" stop-opacity="0.95"/>
+      <stop offset="55%" stop-color="#0a3a1f"/>
+      <stop offset="100%" stop-color="#050d08"/>
+    </radialGradient>
+    <symbol id="footballMark" viewBox="-40 -40 80 80">
+      <circle r="34" fill="#ffffff" stroke="#0a1f10" stroke-width="2"/>
+      <polygon points="0,-13 12.4,-4 7.6,10.5 -7.6,10.5 -12.4,-4" fill="#0a1f10"/>
+      <line x1="0" y1="-13" x2="0" y2="-32" stroke="#0a1f10" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="12.4" y1="-4" x2="30.4" y2="-10.5" stroke="#0a1f10" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="7.6" y1="10.5" x2="18.8" y2="25.9" stroke="#0a1f10" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="-7.6" y1="10.5" x2="-18.8" y2="25.9" stroke="#0a1f10" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="-12.4" y1="-4" x2="-30.4" y2="-10.5" stroke="#0a1f10" stroke-width="2.5" stroke-linecap="round"/>
+    </symbol>
+  </defs>
+
+  <rect x="8" y="8" width="984" height="204" rx="102"
+        fill="url(#pillBg)"
+        stroke="url(#pillFrame)"
+        stroke-width="3"/>
+
+  <text x="555" y="156" text-anchor="end"
+        font-family="'Barlow Condensed', 'Oswald', 'Anton', 'DejaVu Sans Condensed', sans-serif"
+        font-weight="800"
+        font-size="142"
+        font-style="italic"
+        fill="#ffffff">Predict</text>
+
+  <use href="#footballMark" x="555" y="58" width="104" height="104"/>
+
+  <text x="675" y="156" text-anchor="start"
+        font-family="'Barlow Condensed', 'Oswald', 'Anton', 'DejaVu Sans Condensed', sans-serif"
+        font-weight="800"
+        font-size="142"
+        font-style="italic"
+        fill="#ffffff">r1</text>
+
+  <use href="#footballMark" x="800" y="58" width="104" height="104"/>
+</svg>

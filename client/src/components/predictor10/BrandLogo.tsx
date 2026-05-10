@@ -6,7 +6,7 @@ The hero logo should dominate the mobile width and still sit cleanly in a centre
 
 import { cn } from "@/lib/utils";
 
-const APPROVED_LOGO_URL = "/predictor10-logo.png";
+const APPROVED_LOGO_URL = "/predictor10-logo.svg";
 
 type BrandLogoProps = {
   compact?: boolean;
