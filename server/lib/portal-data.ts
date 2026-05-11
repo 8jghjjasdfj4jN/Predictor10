@@ -64,6 +64,9 @@ export type UserEntryDto = {
   competitionShortName: string;
   poolName: string;
   tierName: string;
+  roundName: string;
+  closesAt: string; // ISO — pool's late-entry close (opens + 7 days)
+  roundEndDate: string | null; // YYYY-MM-DD — last match date in the Round
   enteredAt: string;
   predictionsTotal: number;
   predictionsMade: number;
@@ -221,12 +224,15 @@ export async function getUserOpenEntries(userId: string): Promise<UserEntryDto[]
       entryId: poolEntries.id,
       poolId: pools.id,
       poolName: pools.name,
+      poolClosesAt: pools.closesAt,
       enteredAt: poolEntries.enteredAt,
       competitionId: competitions.id,
       competitionSlug: competitions.slug,
       competitionShortName: competitions.shortName,
       tierName: leagues.name,
       stageId: stages.id,
+      stageName: stages.name,
+      stageEndDate: stages.endDate,
     })
     .from(poolEntries)
     .innerJoin(pools, eq(poolEntries.poolId, pools.id))
@@ -234,7 +240,7 @@ export async function getUserOpenEntries(userId: string): Promise<UserEntryDto[]
     .innerJoin(leagues, eq(pools.leagueId, leagues.id))
     .innerJoin(stages, eq(pools.stageId, stages.id))
     .where(and(eq(poolEntries.userId, userId), isNull(poolEntries.settledAt)))
-    .orderBy(asc(pools.opensAt));
+    .orderBy(asc(pools.closesAt));
 
   if (rows.length === 0) return [];
 
@@ -270,6 +276,9 @@ export async function getUserOpenEntries(userId: string): Promise<UserEntryDto[]
     competitionShortName: r.competitionShortName ?? "",
     poolName: r.poolName,
     tierName: r.tierName,
+    roundName: r.stageName,
+    closesAt: r.poolClosesAt.toISOString(),
+    roundEndDate: r.stageEndDate,
     enteredAt: r.enteredAt.toISOString(),
     predictionsTotal: totalByStage.get(r.stageId) ?? 0,
     predictionsMade: madeByEntry.get(r.entryId) ?? 0,

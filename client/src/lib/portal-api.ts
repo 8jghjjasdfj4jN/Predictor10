@@ -51,6 +51,9 @@ export type UserEntry = {
   competitionShortName: string;
   poolName: string;
   tierName: string;
+  roundName: string;
+  closesAt: string;
+  roundEndDate: string | null;
   enteredAt: string;
   predictionsTotal: number;
   predictionsMade: number;
