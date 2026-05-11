@@ -10,17 +10,20 @@ States rendered (4 of 5 per Decided Rule #12):
   - Locked                          — predictionLockAt has passed; inputs
                                       read-only. If a prediction exists,
                                       show it; otherwise show "Missed".
+  - Finished (NEW step 2i)          — match has an outcome row. Show FT
+                                      score in solid emerald boxes, then a
+                                      meta line with prediction recap and a
+                                      points pill (+5 emerald / +2 amber /
+                                      0 rose). "Missed" when no prediction.
 
-Auto-save:
+Auto-save (editable rows only):
   - 800ms debounce after the last keystroke on this row.
   - Fires only when BOTH scores parse as 0-99 ints AND differ from the
     currently-saved values.
-  - In-flight rejection (403 EVENT_LOCKED) bubbles via onError so the parent
-    can refetch and re-render this row as locked. The local input state
-    snaps back to the saved values on the next prop refresh.
+  - 403 EVENT_LOCKED → bubbles via onError so the parent refetches; the
+    row then snaps to its read-only locked/finished state.
 
-The "Finished" state (FT score + points pill) and "Live (in-play)" state
-live behind settlement / live-sync — step 2g+.
+The "Live (in-play)" state lives behind live-sync — step 2j+.
 */
 
 import { useEffect, useRef, useState } from "react";
@@ -57,8 +60,17 @@ function parseScore(text: string): number | null {
   return n;
 }
 
+function pointsTone(points: number): "emerald" | "amber" | "rose" {
+  if (points >= 5) return "emerald";
+  if (points >= 2) return "amber";
+  return "rose";
+}
+
 export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
-  // Initial input values mirror the saved prediction (if any).
+  // For finished matches we render a static "FT" view — auto-save is bypassed.
+  // For editable + locked-no-outcome rows we track input state as before.
+  const isFinished = match.outcome !== null;
+
   const initialHome = match.prediction ? String(match.prediction.homeScore) : "";
   const initialAway = match.prediction ? String(match.prediction.awayScore) : "";
 
@@ -67,7 +79,8 @@ export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
   const [saving, setSaving] = useState(false);
 
   // Reset local state when the underlying match (or its saved prediction)
-  // changes — e.g. after a parent refetch following a lock-rejection.
+  // changes — e.g. after a parent refetch following a lock-rejection or
+  // outcome sync.
   const savedSnapshotRef = useRef({
     eventId: match.eventId,
     home: match.prediction?.homeScore ?? null,
@@ -87,16 +100,16 @@ export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
     }
   }, [match.eventId, match.prediction?.homeScore, match.prediction?.awayScore]);
 
-  // Debounced auto-save. Skipped entirely when locked.
+  // Debounced auto-save. Skipped for locked OR finished rows.
   useEffect(() => {
-    if (match.isLocked) return;
+    if (match.isLocked || isFinished) return;
     const home = parseScore(homeText);
     const away = parseScore(awayText);
-    if (home === null || away === null) return; // half-saved or invalid
+    if (home === null || away === null) return;
 
     const savedHome = match.prediction?.homeScore ?? null;
     const savedAway = match.prediction?.awayScore ?? null;
-    if (home === savedHome && away === savedAway) return; // no change
+    if (home === savedHome && away === savedAway) return;
 
     const timer = setTimeout(async () => {
       setSaving(true);
@@ -118,6 +131,7 @@ export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
     homeText,
     awayText,
     match.isLocked,
+    isFinished,
     match.eventId,
     match.prediction?.homeScore,
     match.prediction?.awayScore,
@@ -126,7 +140,127 @@ export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
     onError,
   ]);
 
-  // ─── Derived UI state ──────────────────────────────────────────────────
+  // ─── Render dispatch ───────────────────────────────────────────────────
+
+  if (isFinished) {
+    return <FinishedView match={match} />;
+  }
+  return (
+    <EditableOrLockedView
+      match={match}
+      homeText={homeText}
+      awayText={awayText}
+      onHome={setHomeText}
+      onAway={setAwayText}
+      saving={saving}
+    />
+  );
+}
+
+// ─── Finished view ───────────────────────────────────────────────────────
+
+function FinishedView({ match }: { match: EntryMatch }) {
+  // outcome is guaranteed non-null by caller.
+  const out = match.outcome!;
+  const pred = match.prediction;
+  const points = pred?.points ?? 0;
+  const tone = pred ? pointsTone(points) : "muted";
+
+  return (
+    <div
+      className={cn(
+        "rounded-2xl border px-3.5 py-3 transition",
+        "border-emerald-400/25 bg-emerald-400/[0.05]",
+      )}
+    >
+      <div className="flex items-center gap-2.5">
+        <div className="flex flex-1 items-center justify-end gap-2 min-w-0">
+          <span className="truncate font-['Barlow_Condensed'] text-[0.95rem] font-bold uppercase tracking-[0.04em] text-right text-white">
+            {match.homeTeamShort ?? match.homeTeam}
+          </span>
+        </div>
+
+        <FtScoreBox value={out.homeScore} />
+        <span aria-hidden className="font-['Barlow_Condensed'] text-[1.1rem] font-extrabold text-emerald-300/60">
+          –
+        </span>
+        <FtScoreBox value={out.awayScore} />
+
+        <div className="flex flex-1 items-center gap-2 min-w-0">
+          <span className="truncate font-['Barlow_Condensed'] text-[0.95rem] font-bold uppercase tracking-[0.04em] text-white">
+            {match.awayTeamShort ?? match.awayTeam}
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-['Manrope'] text-[0.7rem] text-white/55">
+        <span className="font-semibold text-emerald-300/85">FT</span>
+        <span aria-hidden className="text-white/20">·</span>
+        {pred ? (
+          <>
+            <span>
+              You: {pred.homeScore}-{pred.awayScore}
+            </span>
+            <span aria-hidden className="text-white/20">·</span>
+            <PointsPill points={points} tone={tone === "muted" ? "rose" : tone} />
+          </>
+        ) : (
+          <span className="text-white/45">Missed — 0 pts</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FtScoreBox({ value }: { value: number }) {
+  return (
+    <div
+      className={cn(
+        "flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg",
+        "border border-emerald-400/40 bg-emerald-500/20",
+        "font-['Barlow_Condensed'] text-[1.3rem] font-extrabold leading-none text-white",
+      )}
+      aria-label={`Full-time score ${value}`}
+    >
+      {value}
+    </div>
+  );
+}
+
+function PointsPill({ points, tone }: { points: number; tone: "emerald" | "amber" | "rose" }) {
+  const label = points > 0 ? `+${points} pts` : `0 pts`;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5",
+        "font-['Manrope'] text-[0.66rem] font-semibold",
+        tone === "emerald" && "bg-emerald-400/15 text-emerald-200",
+        tone === "amber" && "bg-amber-400/15 text-amber-200",
+        tone === "rose" && "bg-rose-400/10 text-rose-200/80",
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+// ─── Editable / Locked view (no outcome yet) ─────────────────────────────
+
+function EditableOrLockedView({
+  match,
+  homeText,
+  awayText,
+  onHome,
+  onAway,
+  saving,
+}: {
+  match: EntryMatch;
+  homeText: string;
+  awayText: string;
+  onHome: (v: string) => void;
+  onAway: (v: string) => void;
+  saving: boolean;
+}) {
   const homeNum = parseScore(homeText);
   const awayNum = parseScore(awayText);
   const halfSaved =
@@ -139,7 +273,6 @@ export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
     (homeNum !== (match.prediction?.homeScore ?? null) ||
       awayNum !== (match.prediction?.awayScore ?? null));
 
-  // Status copy in the meta line.
   let metaTag: { label: string; tone: "neutral" | "emerald" | "amber" | "muted" } | null = null;
   if (match.isLocked) {
     metaTag = hasSavedPrediction
@@ -156,12 +289,8 @@ export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
   }
 
   const inputDisabled = match.isLocked;
-
-  // ─── Render ────────────────────────────────────────────────────────────
-  const displayHome =
-    match.isLocked && !hasSavedPrediction ? "" : homeText;
-  const displayAway =
-    match.isLocked && !hasSavedPrediction ? "" : awayText;
+  const displayHome = match.isLocked && !hasSavedPrediction ? "" : homeText;
+  const displayAway = match.isLocked && !hasSavedPrediction ? "" : awayText;
 
   return (
     <div
@@ -192,7 +321,7 @@ export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
           ariaLabel={`${match.homeTeam} score`}
           value={displayHome}
           disabled={inputDisabled}
-          onChange={setHomeText}
+          onChange={onHome}
         />
         <span aria-hidden className="font-['Barlow_Condensed'] text-[1.1rem] font-extrabold text-white/40">
           –
@@ -201,7 +330,7 @@ export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
           ariaLabel={`${match.awayTeam} score`}
           value={displayAway}
           disabled={inputDisabled}
-          onChange={setAwayText}
+          onChange={onAway}
         />
 
         <div className="flex flex-1 items-center gap-2 min-w-0">
@@ -261,7 +390,6 @@ function ScoreInput({
       value={value}
       disabled={disabled}
       onChange={(e) => {
-        // Strip non-digits as the user types so paste / autofill don't blow up.
         const cleaned = e.target.value.replace(/\D+/g, "").slice(0, 2);
         onChange(cleaned);
       }}

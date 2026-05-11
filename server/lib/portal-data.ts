@@ -11,7 +11,7 @@ route handlers.
 
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
-import { competitions, stages, events } from "../db/schema/sports";
+import { competitions, stages, events, eventOutcomes } from "../db/schema/sports";
 import { leagues } from "../db/schema/leagues";
 import { pools, poolEntries, predictions } from "../db/schema/pools";
 import { payments } from "../db/schema/payments";
@@ -553,6 +553,16 @@ export type EntryMatchPredictionDto = {
   homeScore: number;
   awayScore: number;
   updatedAt: string;
+  // Scored fields — null until the outcome sync runs for this match (step 2i).
+  points: number | null;
+  isExact: boolean | null;
+  isCorrectResult: boolean | null;
+};
+
+export type EntryMatchOutcomeDto = {
+  homeScore: number;
+  awayScore: number;
+  finishedAt: string;
 };
 
 export type EntryMatchDto = {
@@ -567,6 +577,7 @@ export type EntryMatchDto = {
   isLocked: boolean; // predictionLockAt <= now
   status: "scheduled" | "live" | "finished" | "postponed" | "cancelled" | "void";
   prediction: EntryMatchPredictionDto | null;
+  outcome: EntryMatchOutcomeDto | null;
 };
 
 export type EntryGameweekDto = {
@@ -575,6 +586,8 @@ export type EntryGameweekDto = {
   matchCount: number;
   predictionCount: number;
   lockedCount: number;
+  finishedCount: number; // matches with status='finished'
+  pointsTotal: number; // sum of pointsAwarded for the user's predictions in this GW
 };
 
 export type EntryDetailDto = {
@@ -601,6 +614,7 @@ export type EntryDetailDto = {
   // Top-level totals (sum across all GWs).
   matchesTotal: number;
   predictionsMade: number;
+  pointsTotal: number; // sum of pointsAwarded across all the user's predictions
   // Per-GW summary for the tab strip — ordered by matchday ascending.
   gameweeks: EntryGameweekDto[];
   // Flat list of all matches in the Round, ordered by kickoff. Client groups
@@ -671,7 +685,9 @@ export async function getEntryDetail(
 
   if (!row || row.entryUserId !== userId) return null;
 
-  // All events in the Round, ordered by kickoff.
+  // All events in the Round, ordered by kickoff. LEFT JOIN event_outcomes so
+  // finished matches return their FT score alongside (null when not yet
+  // synced / not finished).
   const eventRows = await db
     .select({
       id: events.id,
@@ -683,29 +699,40 @@ export async function getEntryDetail(
       kickoffAt: events.kickoffAt,
       predictionLockAt: events.predictionLockAt,
       status: events.status,
+      outcomeHome: eventOutcomes.homeScore,
+      outcomeAway: eventOutcomes.awayScore,
+      outcomeFinishedAt: eventOutcomes.finishedAt,
     })
     .from(events)
+    .leftJoin(eventOutcomes, eq(eventOutcomes.eventId, events.id))
     .where(eq(events.stageId, row.stageId))
     .orderBy(asc(events.kickoffAt));
 
-  // Predictions for this entry only.
+  // Predictions for this entry only — including the scored fields populated
+  // by the outcome-sync (step 2i).
   const predictionRows = await db
     .select({
       eventId: predictions.eventId,
       homeScore: predictions.homeScorePredicted,
       awayScore: predictions.awayScorePredicted,
       updatedAt: predictions.updatedAt,
+      pointsAwarded: predictions.pointsAwarded,
+      isExact: predictions.isExact,
+      isCorrectResult: predictions.isCorrectResult,
     })
     .from(predictions)
     .where(eq(predictions.poolEntryId, entryId));
 
-  const predByEventId = new Map(
+  const predByEventId = new Map<string, EntryMatchPredictionDto>(
     predictionRows.map((p) => [
       p.eventId,
       {
         homeScore: p.homeScore,
         awayScore: p.awayScore,
         updatedAt: p.updatedAt.toISOString(),
+        points: p.pointsAwarded,
+        isExact: p.isExact,
+        isCorrectResult: p.isCorrectResult,
       },
     ]),
   );
@@ -723,6 +750,14 @@ export async function getEntryDetail(
     isLocked: e.predictionLockAt.getTime() <= now,
     status: e.status,
     prediction: predByEventId.get(e.id) ?? null,
+    outcome:
+      e.outcomeHome != null && e.outcomeAway != null && e.outcomeFinishedAt
+        ? {
+            homeScore: e.outcomeHome,
+            awayScore: e.outcomeAway,
+            finishedAt: e.outcomeFinishedAt.toISOString(),
+          }
+        : null,
   }));
 
   // GW tab summary — group by matchday (null → -1 "Unscheduled" bucket).
@@ -744,6 +779,11 @@ export async function getEntryDetail(
       matchCount: group.length,
       predictionCount: group.filter((m) => m.prediction !== null).length,
       lockedCount: group.filter((m) => m.isLocked).length,
+      finishedCount: group.filter((m) => m.status === "finished" && m.outcome !== null).length,
+      pointsTotal: group.reduce(
+        (sum, m) => sum + (m.prediction?.points ?? 0),
+        0,
+      ),
     }));
 
   const matchdays =
@@ -753,6 +793,7 @@ export async function getEntryDetail(
 
   const predictionsMade = predictionRows.length;
   const matchesTotal = eventRows.length;
+  const pointsTotal = predictionRows.reduce((sum, p) => sum + (p.pointsAwarded ?? 0), 0);
 
   return {
     id: row.entryId,
@@ -790,6 +831,7 @@ export async function getEntryDetail(
     },
     matchesTotal,
     predictionsMade,
+    pointsTotal,
     gameweeks,
     matches,
   };
@@ -892,6 +934,9 @@ export async function upsertPrediction(opts: {
       homeScore: predictions.homeScorePredicted,
       awayScore: predictions.awayScorePredicted,
       updatedAt: predictions.updatedAt,
+      pointsAwarded: predictions.pointsAwarded,
+      isExact: predictions.isExact,
+      isCorrectResult: predictions.isCorrectResult,
     });
 
   return {
@@ -901,6 +946,13 @@ export async function upsertPrediction(opts: {
       homeScore: pred.homeScore,
       awayScore: pred.awayScore,
       updatedAt: pred.updatedAt.toISOString(),
+      // null for fresh / unscored predictions; non-null only if the user
+      // somehow edited a prediction whose match has already been scored
+      // (shouldn't happen — server rejects on EVENT_LOCKED first — but
+      // the type contract permits it for completeness).
+      points: pred.pointsAwarded,
+      isExact: pred.isExact,
+      isCorrectResult: pred.isCorrectResult,
     },
   };
 }

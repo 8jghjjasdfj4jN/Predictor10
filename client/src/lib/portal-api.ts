@@ -92,6 +92,16 @@ export type EntryMatchPrediction = {
   homeScore: number;
   awayScore: number;
   updatedAt: string;
+  // null until the outcome sync runs for this match.
+  points: number | null;
+  isExact: boolean | null;
+  isCorrectResult: boolean | null;
+};
+
+export type EntryMatchOutcome = {
+  homeScore: number;
+  awayScore: number;
+  finishedAt: string;
 };
 
 export type EntryMatch = {
@@ -106,6 +116,7 @@ export type EntryMatch = {
   isLocked: boolean;
   status: "scheduled" | "live" | "finished" | "postponed" | "cancelled" | "void";
   prediction: EntryMatchPrediction | null;
+  outcome: EntryMatchOutcome | null;
 };
 
 export type EntryGameweek = {
@@ -114,6 +125,8 @@ export type EntryGameweek = {
   matchCount: number;
   predictionCount: number;
   lockedCount: number;
+  finishedCount: number;
+  pointsTotal: number;
 };
 
 export type EntryDetail = {
@@ -139,6 +152,7 @@ export type EntryDetail = {
   currentRound: CurrentRound;
   matchesTotal: number;
   predictionsMade: number;
+  pointsTotal: number;
   gameweeks: EntryGameweek[];
   matches: EntryMatch[];
 };
