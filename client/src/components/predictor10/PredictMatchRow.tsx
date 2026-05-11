@@ -60,6 +60,16 @@ function parseScore(text: string): number | null {
   return n;
 }
 
+/**
+ * Strip football-data's trailing " FC" / " AFC" so team names read cleanly.
+ * "Liverpool FC" → "Liverpool", "AFC Bournemouth" → "AFC Bournemouth" (leading
+ * AFC is part of the brand and stays). Truncate handles anything still too
+ * long for the column.
+ */
+function displayTeamName(name: string): string {
+  return name.replace(/\s+FC$/, "").replace(/\s+AFC$/, "");
+}
+
 function pointsTone(points: number): "emerald" | "amber" | "rose" {
   if (points >= 5) return "emerald";
   if (points >= 2) return "amber";
@@ -176,7 +186,7 @@ function FinishedView({ match }: { match: EntryMatch }) {
       <div className="flex items-center gap-2.5">
         <div className="flex flex-1 items-center justify-end gap-2 min-w-0">
           <span className="truncate font-['Barlow_Condensed'] text-[0.95rem] font-bold uppercase tracking-[0.04em] text-right text-white">
-            {match.homeTeamShort ?? match.homeTeam}
+            {displayTeamName(match.homeTeam)}
           </span>
         </div>
 
@@ -188,7 +198,7 @@ function FinishedView({ match }: { match: EntryMatch }) {
 
         <div className="flex flex-1 items-center gap-2 min-w-0">
           <span className="truncate font-['Barlow_Condensed'] text-[0.95rem] font-bold uppercase tracking-[0.04em] text-white">
-            {match.awayTeamShort ?? match.awayTeam}
+            {displayTeamName(match.awayTeam)}
           </span>
         </div>
       </div>
@@ -313,7 +323,7 @@ function EditableOrLockedView({
               match.isLocked ? "text-white/55" : "text-white",
             )}
           >
-            {match.homeTeamShort ?? match.homeTeam}
+            {displayTeamName(match.homeTeam)}
           </span>
         </div>
 
@@ -340,7 +350,7 @@ function EditableOrLockedView({
               match.isLocked ? "text-white/55" : "text-white",
             )}
           >
-            {match.awayTeamShort ?? match.awayTeam}
+            {displayTeamName(match.awayTeam)}
           </span>
         </div>
       </div>
