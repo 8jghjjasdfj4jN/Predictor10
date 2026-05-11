@@ -23,7 +23,7 @@ the 10 req/min free-tier ceiling.
 */
 
 import "dotenv/config";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { sports, competitions, stages, events } from "../db/schema/sports";
 import { leagues } from "../db/schema/leagues";
@@ -176,7 +176,8 @@ type StageInfo = {
   round: number;
   startDate: Date | null;
   endDate: Date | null;
-  hasFutureKickoffs: boolean;
+  totalMatchesCount: number;
+  futureMatchesCount: number;
 };
 
 function isoDate(d: Date): string {
@@ -216,7 +217,8 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
       const kickoffs = matches.map((m) => new Date(m.utcDate)).sort((a, b) => a.getTime() - b.getTime());
       const startDate = kickoffs[0] ?? null;
       const endDate = kickoffs[kickoffs.length - 1] ?? null;
-      const hasFutureKickoffs = kickoffs.some((k) => k.getTime() > now.getTime());
+      const totalMatchesCount = matches.length;
+      const futureMatchesCount = kickoffs.filter((k) => k.getTime() > now.getTime()).length;
 
       // Upsert stage by (competitionId, ordinal). No unique constraint exists,
       // so check-then-insert/update manually.
@@ -292,9 +294,14 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
           });
       }
 
-      compStages.push({ stageId, round: r.round, startDate, endDate, hasFutureKickoffs });
-      const tag = hasFutureKickoffs ? "" : " (all kicked off)";
-      log(`    Round ${r.round}: ${matches.length} matches${tag}`);
+      compStages.push({ stageId, round: r.round, startDate, endDate, totalMatchesCount, futureMatchesCount });
+      const tag =
+        futureMatchesCount === 0
+          ? " (all kicked off)"
+          : futureMatchesCount === totalMatchesCount
+            ? " (none kicked off yet)"
+            : ` (${futureMatchesCount} still to play)`;
+      log(`    Round ${r.round}: ${totalMatchesCount} matches${tag}`);
     }
 
     result.set(def.code, compStages);
@@ -305,20 +312,58 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
 
 // ─── Phase 5 — pools for the current Round ────────────────────────────────
 
+/**
+ * The current Round is the one most users would meaningfully want to enter
+ * today. Two filters and a sort:
+ *
+ *   1) Substantive future: at least MIN_FUTURE_MATCHES still to play.
+ *      Filters out Rounds whose only "future" matches are postponed
+ *      stragglers — Round 8 PL in May 2026 with 1 rescheduled fixture isn't
+ *      a Round anyone should be entering.
+ *
+ *   2) Prefer the most-recently-started Round (closest in time, but already
+ *      underway). If none have started yet (pre-season), pick the one that
+ *      starts soonest.
+ *
+ * Returns null if no Round qualifies — typically a competition whose season
+ * has fully completed.
+ */
+const MIN_FUTURE_MATCHES = 5;
+
+function pickCurrentRound(stagesForComp: StageInfo[], now: Date): StageInfo | null {
+  const candidates = stagesForComp.filter(
+    (s) => s.startDate !== null && s.futureMatchesCount >= MIN_FUTURE_MATCHES,
+  );
+  if (candidates.length === 0) return null;
+
+  const nowMs = now.getTime();
+  const started = candidates.filter((s) => s.startDate!.getTime() <= nowMs);
+  if (started.length > 0) {
+    // Most-recently-started among ongoing candidates.
+    return started.reduce((best, s) =>
+      s.startDate!.getTime() > best.startDate!.getTime() ? s : best,
+    );
+  }
+  // All candidates are upcoming. Pick the one that starts soonest.
+  return candidates.reduce((best, s) =>
+    s.startDate!.getTime() < best.startDate!.getTime() ? s : best,
+  );
+}
+
 async function seedPoolsForCurrentRound(
   competitionsByCode: Map<string, string>,
   stagesByCode: Map<string, StageInfo[]>,
   tiersBySlug: Map<string, string>,
 ): Promise<void> {
   log("pools for current Round only…");
+  const now = new Date();
 
   for (const def of COMPETITIONS) {
     const compId = competitionsByCode.get(def.code);
     if (!compId) continue;
     const compStages = stagesByCode.get(def.code) ?? [];
 
-    // Current Round = lowest-ordinal Round still containing future kickoffs.
-    const currentStage = [...compStages].sort((a, b) => a.round - b.round).find((s) => s.hasFutureKickoffs);
+    const currentStage = pickCurrentRound(compStages, now);
     if (!currentStage) {
       log(`  ${def.name}: no current Round (season complete?) — skipping pools`);
       continue;
@@ -328,10 +373,34 @@ async function seedPoolsForCurrentRound(
       continue;
     }
 
+    // Clean up stale 'open' pools for this competition that aren't for the
+    // current Round and have no entries yet. Safe — only touches abandoned
+    // pools (e.g. created when this script's selection algorithm was wrong,
+    // or from a previous season cycle before settlement).
+    const stalePools = await db
+      .select({ id: pools.id, name: pools.name, stageId: pools.stageId })
+      .from(pools)
+      .where(and(eq(pools.competitionId, compId), eq(pools.status, "open")));
+
+    let cleaned = 0;
+    for (const p of stalePools) {
+      if (p.stageId === currentStage.stageId) continue;
+      // Check for any pool entries — never delete pools with user data.
+      const entryCheck = await db.execute<{ count: number }>(
+        sql`SELECT COUNT(*)::int AS count FROM pool_entries WHERE pool_id = ${p.id}`,
+      );
+      const entryCount = Number(entryCheck.at(0)?.count ?? 0);
+      if (entryCount > 0) continue;
+      await db.delete(pools).where(eq(pools.id, p.id));
+      log(`    cleaned stale pool: ${p.name}`);
+      cleaned++;
+    }
+    if (cleaned === 0) log(`  ${def.name}: no stale pools to clean`);
+
     const opensAt = currentStage.startDate;
     // Late-entry window per arch §4: 7 days after the Round's first kickoff.
     const closesAt = new Date(currentStage.startDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-    log(`  ${def.name}: current = Round ${currentStage.round}, opens ${opensAt.toISOString()}, late-entry closes ${closesAt.toISOString()}`);
+    log(`  ${def.name}: current = Round ${currentStage.round} (${currentStage.futureMatchesCount} matches still to play), opens ${opensAt.toISOString()}, late-entry closes ${closesAt.toISOString()}`);
 
     let created = 0;
     for (const tier of TIERS) {
