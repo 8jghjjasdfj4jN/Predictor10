@@ -14,7 +14,8 @@
     "format": "prettier --write .",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "seed": "tsx server/scripts/seed.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
