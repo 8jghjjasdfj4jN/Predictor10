@@ -1,174 +1,214 @@
 /*
 Brand reminder — Broadcast Noir Athletics:
-This shell should feel like a centred football app workstation, not a website.
-Desktop uses a left control rail; mobile keeps the app-style bottom navigation.
+Post-login portal shell. Mobile-first, max 480px column on desktop (arch §1).
+Sticky top bar (logo · live badge · greeting+avatar) + sticky 4-tab bottom
+nav (Home · Predict · Pools · Account). Auth pages and the public marketing
+surface use AuthShell / MarketingShell respectively — this is the shell behind
+login only.
 */
 
 import { Link, useLocation } from "wouter";
-import { CreditCard, House, LayoutList, LogIn, ScrollText, ShieldQuestion, Trophy, User } from "lucide-react";
-import { BrandLogo } from "./BrandLogo";
+import { House, ListChecks, Trophy, User2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 
-const navItems = [
-  { href: "/",            label: "Play",        icon: House         },
-  { href: "/leagues",     label: "Leagues",     icon: Trophy        },
-  { href: "/leaderboard", label: "Leaderboard", icon: LayoutList    },
-  { href: "/history",     label: "History",     icon: ScrollText    },
-  { href: "/rules",       label: "Rules",       icon: ShieldQuestion },
+type NavItem = {
+  href: string;
+  label: string;
+  icon: typeof House;
+  /** Routes considered "this tab" beyond the exact href (e.g. /pools/* belongs to Pools). */
+  matchPrefix?: string;
+};
+
+const NAV: NavItem[] = [
+  { href: "/",        label: "Home",    icon: House                              },
+  { href: "/predict", label: "Predict", icon: ListChecks, matchPrefix: "/predict" },
+  { href: "/pools",   label: "Pools",   icon: Trophy,     matchPrefix: "/pools"   },
+  { href: "/account", label: "Account", icon: User2,      matchPrefix: "/account" },
 ];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
-  const { isLoggedIn, user } = useAuth();
+function isActive(currentPath: string, item: NavItem) {
+  if (item.matchPrefix) return currentPath === item.href || currentPath.startsWith(`${item.matchPrefix}/`);
+  return currentPath === "/";
+}
+
+/**
+ * Live badge.
+ *
+ * Architecture §5: appears only when ≥1 match is IN_PLAY/PAUSED across active
+ * competitions. Tap → bottom-sheet of live matches grouped by competition
+ * (arch §9.1).
+ *
+ * Currently the count is hard-zero — the live polling endpoint and bottom-sheet
+ * land in a later step. Plumbed here so wiring is a one-line swap.
+ */
+function LiveBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <button
+      type="button"
+      // TODO: open live-matches bottom sheet (arch §9.1).
+      className={cn(
+        "group inline-flex items-center gap-1.5 rounded-full border border-rose-400/40 bg-rose-500/12 px-2.5 py-1",
+        "font-['Barlow_Condensed'] text-[0.68rem] font-bold uppercase tracking-[0.18em] text-rose-200",
+        "transition hover:border-rose-300/60 hover:bg-rose-500/18",
+      )}
+      aria-label={`${count} live match${count === 1 ? "" : "es"} — open live overview`}
+    >
+      <span className="relative flex h-1.5 w-1.5">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-70" />
+        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-rose-400" />
+      </span>
+      <span>{count} live</span>
+    </button>
+  );
+}
+
+function TopBar() {
+  const { user } = useAuth();
+  const firstName = user?.name?.split(" ")[0] ?? "";
+  const initials = (user?.avatar ?? "··").slice(0, 2);
+  // TODO: replace with `useLiveMatches()` hook reading /api/live (arch §9.2). Hard-zero today.
+  const liveCount = 0;
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(46,204,113,0.18),transparent_28%),radial-gradient(circle_at_85%_10%,rgba(255,214,102,0.08),transparent_16%),linear-gradient(180deg,rgba(4,10,8,1),rgba(7,17,12,1))]" />
-      <div
-        className="pointer-events-none absolute inset-0 opacity-50 mix-blend-screen"
-        style={{
-          backgroundImage:
-            "url(https://d2xsxph8kpxj0f.cloudfront.net/310519663048135071/Hs9KYYBFCMZwearV4cmxdF/predictor10-pattern-surface-9crvNiZWEVeNZqnWS4Q7gX.webp)",
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-        }}
-      />
+    <header
+      className={cn(
+        "sticky top-0 z-20 flex flex-shrink-0 items-center justify-between gap-2",
+        "border-b border-white/[0.07] bg-[rgba(7,15,9,0.92)] px-4 py-2.5 backdrop-blur-xl",
+      )}
+    >
+      {/* Brand monogram + wordmark — links to / */}
+      <Link
+        href="/"
+        className="flex items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#070f09]"
+      >
+        <span
+          className={cn(
+            "flex h-[30px] w-[30px] items-center justify-center rounded-[0.55rem]",
+            "border border-emerald-400/30 bg-[linear-gradient(135deg,#0d2e1a,#1a4a28)]",
+            "font-['Barlow_Condensed']",
+          )}
+          aria-hidden
+        >
+          <span className="text-[0.85rem] font-black leading-none text-emerald-400">P</span>
+          <span className="mt-[3px] text-[0.55rem] font-bold leading-none text-emerald-400/70">10</span>
+        </span>
+        <span className="font-['Barlow_Condensed'] text-[1.05rem] font-extrabold uppercase tracking-[0.1em] text-white">
+          Predictor<span className="text-emerald-400">10</span>
+        </span>
+      </Link>
 
-      <div className="relative z-10 mx-auto flex min-h-screen max-w-[1520px] flex-col px-3 pb-28 pt-3 sm:px-5 sm:pb-32 sm:pt-5 lg:px-6 lg:pt-6">
-        <div className="relative flex-1 overflow-hidden rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))] shadow-[0_30px_120px_rgba(0,0,0,0.34)] backdrop-blur-xl lg:rounded-[2.4rem]">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(29,185,84,0.09),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(255,255,255,0.04),transparent_18%)]" />
-
-          <div className="relative z-10 lg:grid lg:min-h-[calc(100vh-3rem)] lg:grid-cols-[260px_minmax(0,1fr)]">
-
-            {/* Desktop sidebar */}
-            <aside className="hidden border-r border-white/8 bg-[linear-gradient(180deg,rgba(0,0,0,0.16),rgba(255,255,255,0.02))] lg:flex lg:flex-col lg:justify-between lg:px-5 lg:py-5">
-              <div className="space-y-5">
-                <Link href="/" className="block w-fit max-w-full">
-                  <BrandLogo compact className="max-w-full" />
-                </Link>
-
-                <div className="space-y-2">
-                  <p className="px-2 font-['Manrope'] text-[0.62rem] font-semibold uppercase tracking-[0.3em] text-white/38">
-                    Navigation
-                  </p>
-                  <nav className="space-y-1">
-                    {navItems.map(({ href, label, icon: Icon }) => {
-                      const active = location === href;
-                      return (
-                        <Link
-                          key={href}
-                          href={href}
-                          className={cn(
-                            "flex items-center gap-3 rounded-[1.25rem] border border-transparent px-4 py-3 text-sm font-semibold tracking-[0.12em] text-white/58 transition",
-                            active
-                              ? "border-emerald-300/20 bg-emerald-400/10 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
-                              : "hover:border-white/10 hover:bg-white/6 hover:text-white/82",
-                          )}
-                        >
-                          <Icon className={cn("h-4 w-4", active && "text-emerald-300")} />
-                          <span>{label}</span>
-                        </Link>
-                      );
-                    })}
-                  </nav>
-                </div>
-              </div>
-
-              {/* Auth section in sidebar */}
-              <div className="space-y-3">
-                {isLoggedIn ? (
-                  <Link
-                    href="/login"
-                    className="flex items-center gap-3 rounded-[1.25rem] border border-emerald-300/20 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-400/15"
-                  >
-                    <div className="flex h-7 w-7 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-400/15">
-                      <span className="font-['Barlow_Condensed'] text-xs font-bold text-emerald-300">
-                        {user?.avatar}
-                      </span>
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-white">{user?.name}</p>
-                      <p className="text-[0.65rem] text-emerald-300/70">My Dashboard →</p>
-                    </div>
-                  </Link>
-                ) : (
-                  <Link
-                    href="/login"
-                    className="flex items-center gap-3 rounded-[1.25rem] border border-white/10 bg-white/6 px-4 py-3 text-sm font-semibold text-white/70 transition hover:border-emerald-300/20 hover:bg-emerald-400/10 hover:text-white"
-                  >
-                    <LogIn className="h-4 w-4 text-emerald-300" />
-                    <span>Sign In / Register</span>
-                  </Link>
-                )}
-
-                <div className="rounded-[1.5rem] border border-white/10 bg-black/20 p-4">
-                  <div className="flex items-center gap-3 text-white/80">
-                    <CreditCard className="h-4 w-4 text-emerald-300" />
-                    <p className="font-['Manrope'] text-[0.66rem] font-semibold uppercase tracking-[0.24em]">
-                      Predictor10 · 2025/26
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </aside>
-
-            <main className="min-w-0">{children}</main>
-          </div>
-        </div>
+      {/* Live badge — middle, only renders when count > 0. Reserve height so the
+          bar doesn't twitch when the badge appears mid-session. */}
+      <div className="flex flex-1 justify-center">
+        {liveCount > 0 ? <LiveBadge count={liveCount} /> : <span className="block h-7" aria-hidden />}
       </div>
 
-      {/* Mobile bottom nav */}
-      <div className="fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(env(safe-area-inset-bottom)+0.65rem)] pt-3 sm:px-5 lg:hidden">
-        <div className="mx-auto w-full max-w-[860px]">
-          <div className="mx-auto flex max-w-[920px] flex-col items-center gap-2">
-            <nav className="grid w-full grid-cols-6 gap-1 rounded-[1.7rem] border border-white/10 bg-[rgba(8,18,13,0.92)] p-2 shadow-[0_-10px_40px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
-              {navItems.map(({ href, label, icon: Icon }) => {
-                const active = location === href;
-                return (
-                  <Link
-                    key={href}
-                    href={href}
-                    className={cn(
-                      "flex min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-[0.62rem] font-semibold tracking-[0.1em] text-white/56 transition",
-                      active &&
-                        "bg-emerald-400/12 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] ring-1 ring-emerald-300/20",
-                    )}
-                  >
-                    <Icon className={cn("h-4 w-4", active && "text-emerald-300")} />
-                    <span className="truncate">{label}</span>
-                  </Link>
-                );
-              })}
+      {/* Greeting + avatar — links to /account */}
+      <Link
+        href="/account"
+        className={cn(
+          "flex items-center gap-2 rounded-full py-1 pl-2.5 pr-1",
+          "transition hover:bg-white/[0.04] outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#070f09]",
+        )}
+        aria-label={firstName ? `Account — Hi ${firstName}` : "Account"}
+      >
+        {firstName && (
+          <span className="hidden text-[0.72rem] font-semibold text-white/55 sm:inline">
+            Hi, {firstName}
+          </span>
+        )}
+        <span
+          className={cn(
+            "flex h-[30px] w-[30px] items-center justify-center rounded-full",
+            "border border-emerald-400/30 bg-[linear-gradient(135deg,#0d2e1a,#1a4a28)]",
+          )}
+          aria-hidden
+        >
+          <span className="font-['Barlow_Condensed'] text-[0.72rem] font-black text-emerald-400">
+            {initials}
+          </span>
+        </span>
+      </Link>
+    </header>
+  );
+}
 
-              {/* Sign In / Avatar as 6th nav item on mobile */}
+function BottomNav() {
+  const [location] = useLocation();
+  return (
+    <nav
+      className={cn(
+        "sticky bottom-0 z-20 mt-auto flex-shrink-0",
+        "border-t border-white/[0.07] bg-[rgba(7,15,9,0.96)] backdrop-blur-2xl",
+        "px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]",
+      )}
+      aria-label="Primary"
+    >
+      <ul className="grid grid-cols-4 gap-1">
+        {NAV.map((item) => {
+          const Icon = item.icon;
+          const active = isActive(location, item);
+          return (
+            <li key={item.href} className="contents">
               <Link
-                href="/login"
+                href={item.href}
+                aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-[0.62rem] font-semibold tracking-[0.1em] transition",
-                  isLoggedIn
-                    ? "bg-emerald-400/12 text-emerald-300 ring-1 ring-emerald-300/20"
-                    : "text-white/56 hover:text-white/80",
+                  "flex flex-col items-center justify-center gap-1 rounded-[0.8rem] px-1 py-2 transition",
+                  "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
+                  active
+                    ? "bg-emerald-400/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ring-1 ring-emerald-300/20"
+                    : "hover:bg-white/[0.03]",
                 )}
               >
-                {isLoggedIn ? (
-                  <>
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full border border-emerald-300/40 bg-emerald-400/20 font-['Barlow_Condensed'] text-[0.6rem] font-bold text-emerald-300">
-                      {user?.avatar?.slice(0, 1)}
-                    </span>
-                    <span className="truncate">Me</span>
-                  </>
-                ) : (
-                  <>
-                    <User className="h-4 w-4" />
-                    <span className="truncate">Sign In</span>
-                  </>
-                )}
+                <Icon
+                  className={cn(
+                    "h-5 w-5 transition",
+                    active ? "text-emerald-400" : "text-white/40",
+                  )}
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <span
+                  className={cn(
+                    "font-['Manrope'] text-[0.6rem] font-bold uppercase tracking-[0.12em] transition",
+                    active ? "text-emerald-400" : "text-white/40",
+                  )}
+                >
+                  {item.label}
+                </span>
               </Link>
-            </nav>
-          </div>
-        </div>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}
+
+export function AppShell({ children }: { children: React.ReactNode }) {
+  return (
+    // Outer page background: literal #070f09 per Decided Rules / Dashboard parity.
+    <div className="min-h-screen bg-[#070f09] font-['Manrope'] text-white">
+      {/* Centred 480px column — mobile-first, holds the line on desktop (arch §1.3). */}
+      <div
+        className={cn(
+          "relative mx-auto flex min-h-screen max-w-[480px] flex-col",
+          "border-x border-white/[0.04]",
+        )}
+      >
+        <TopBar />
+
+        {/* Main scroll area. Sticky bottom nav sits inside the column flex flow. */}
+        <main className="flex-1 overflow-y-auto">{children}</main>
+
+        <BottomNav />
       </div>
     </div>
   );
 }
+
+// Re-exported for tests / future composition.
+export { TopBar, BottomNav, LiveBadge };
