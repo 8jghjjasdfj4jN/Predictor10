@@ -78,6 +78,13 @@ export const events = pgTable(
     kickoffAt: timestamp("kickoff_at", { withTimezone: true }).notNull(),
     venue: varchar("venue", { length: 200 }),
 
+    // Football: which gameweek / matchday this fixture belongs to in the
+    // competition's season (1-38 for PL, 1-46 for Championship). Nullable
+    // because some fixtures get scheduled before football-data assigns one;
+    // the seed leaves it null in that rare case and the predict screen
+    // groups it into a "TBD" bucket if it ever happens.
+    matchday: integer("matchday"),
+
     status: eventStatusEnum("status").default("scheduled").notNull(),
 
     // Server-enforced lock — predictions refused after this time

@@ -13,7 +13,7 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { competitions, stages, events } from "../db/schema/sports";
 import { leagues } from "../db/schema/leagues";
-import { pools, poolEntries } from "../db/schema/pools";
+import { pools, poolEntries, predictions } from "../db/schema/pools";
 import { payments } from "../db/schema/payments";
 import { ROUNDS_BY_CODE } from "./rounds";
 
@@ -250,10 +250,17 @@ export async function getUserOpenEntries(userId: string): Promise<UserEntryDto[]
     .groupBy(events.stageId);
   const totalByStage = new Map(totals.map((t) => [t.stageId ?? "", Number(t.total)]));
 
-  // Predictions-made: count predictions where pool_entry_id is one of ours.
-  // (Predictions table not built yet — placeholder zero counts for now.)
-  // TODO: when /api/predictions ships, swap this in.
-  const madeByEntry = new Map<string, number>();
+  // Predictions made per entry (real count now that /api/predictions exists).
+  const entryIds = rows.map((r) => r.entryId);
+  const made = await db
+    .select({
+      poolEntryId: predictions.poolEntryId,
+      count: sql<number>`COUNT(*)::int`,
+    })
+    .from(predictions)
+    .where(inArray(predictions.poolEntryId, entryIds))
+    .groupBy(predictions.poolEntryId);
+  const madeByEntry = new Map(made.map((m) => [m.poolEntryId, Number(m.count)]));
 
   return rows.map((r) => ({
     id: r.entryId,
@@ -528,5 +535,363 @@ export async function enterPool(opts: {
     entryId: result.entryId,
     paymentId: result.paymentId,
     alreadyEntered: false,
+  };
+}
+
+// ─── Entry detail / predictions (step 2f) ─────────────────────────────────
+
+export type EntryMatchPredictionDto = {
+  homeScore: number;
+  awayScore: number;
+  updatedAt: string;
+};
+
+export type EntryMatchDto = {
+  eventId: string;
+  matchday: number | null;
+  homeTeam: string;
+  awayTeam: string;
+  homeTeamShort: string | null;
+  awayTeamShort: string | null;
+  kickoffAt: string;
+  predictionLockAt: string;
+  isLocked: boolean; // predictionLockAt <= now
+  status: "scheduled" | "live" | "finished" | "postponed" | "cancelled" | "void";
+  prediction: EntryMatchPredictionDto | null;
+};
+
+export type EntryGameweekDto = {
+  matchday: number; // 1-38 PL, 1-46 Championship; -1 reserved for "Unscheduled" bucket
+  label: string; // "GW 34" / "MD 38" / "Unscheduled"
+  matchCount: number;
+  predictionCount: number;
+  lockedCount: number;
+};
+
+export type EntryDetailDto = {
+  id: string;
+  poolId: string;
+  enteredAt: string;
+  settledAt: string | null;
+  finalPoints: number | null;
+  finalRank: number | null;
+  pool: {
+    id: string;
+    name: string;
+    status: "draft" | "open" | "locked" | "settled" | "void";
+  };
+  tier: TierDto;
+  competition: {
+    id: string;
+    slug: string;
+    name: string;
+    shortName: string;
+    externalCode: string;
+  };
+  currentRound: CurrentRoundDto;
+  // Top-level totals (sum across all GWs).
+  matchesTotal: number;
+  predictionsMade: number;
+  // Per-GW summary for the tab strip — ordered by matchday ascending.
+  gameweeks: EntryGameweekDto[];
+  // Flat list of all matches in the Round, ordered by kickoff. Client groups
+  // by matchday for the active GW pane.
+  matches: EntryMatchDto[];
+};
+
+export type UpsertPredictionError =
+  | "ENTRY_NOT_FOUND"
+  | "ENTRY_NOT_OWNED"
+  | "EVENT_NOT_IN_POOL"
+  | "EVENT_LOCKED"
+  | "INVALID_SCORE";
+
+export type UpsertPredictionOutcome =
+  | { ok: true; prediction: EntryMatchPredictionDto; eventId: string }
+  | { ok: false; error: UpsertPredictionError };
+
+/**
+ * Full entry detail — every match in the Round, plus any predictions the user
+ * has already saved against this entry. Powers the canonical Predict screen
+ * (arch §8.5).
+ *
+ * Caller must pass the auth'd `userId`; this function returns null when the
+ * entry doesn't exist OR belongs to someone else. Don't leak existence by
+ * distinguishing the two cases.
+ *
+ * One round-trip per concern (cheap on Postgres): entry+pool meta, all
+ * events in the stage, all predictions for this entry. We then stitch them
+ * client-side here.
+ */
+export async function getEntryDetail(
+  entryId: string,
+  userId: string,
+): Promise<EntryDetailDto | null> {
+  const [row] = await db
+    .select({
+      entryId: poolEntries.id,
+      entryUserId: poolEntries.userId,
+      entryEnteredAt: poolEntries.enteredAt,
+      entrySettledAt: poolEntries.settledAt,
+      entryFinalPoints: poolEntries.finalPoints,
+      entryFinalRank: poolEntries.finalRank,
+      poolId: pools.id,
+      poolName: pools.name,
+      poolStatus: pools.status,
+      competitionId: competitions.id,
+      competitionSlug: competitions.slug,
+      competitionName: competitions.name,
+      competitionShortName: competitions.shortName,
+      competitionExternalId: competitions.externalId,
+      stageId: stages.id,
+      stageName: stages.name,
+      stageOrdinal: stages.ordinal,
+      stageStartDate: stages.startDate,
+      stageEndDate: stages.endDate,
+      leagueSlug: leagues.slug,
+      leagueName: leagues.name,
+      leagueEntryFee: leagues.entryFee,
+      leagueOrdinal: leagues.ordinal,
+    })
+    .from(poolEntries)
+    .innerJoin(pools, eq(poolEntries.poolId, pools.id))
+    .innerJoin(competitions, eq(pools.competitionId, competitions.id))
+    .innerJoin(stages, eq(pools.stageId, stages.id))
+    .innerJoin(leagues, eq(pools.leagueId, leagues.id))
+    .where(eq(poolEntries.id, entryId));
+
+  if (!row || row.entryUserId !== userId) return null;
+
+  // All events in the Round, ordered by kickoff.
+  const eventRows = await db
+    .select({
+      id: events.id,
+      matchday: events.matchday,
+      homeTeam: events.homeTeam,
+      awayTeam: events.awayTeam,
+      homeTeamShort: events.homeTeamShort,
+      awayTeamShort: events.awayTeamShort,
+      kickoffAt: events.kickoffAt,
+      predictionLockAt: events.predictionLockAt,
+      status: events.status,
+    })
+    .from(events)
+    .where(eq(events.stageId, row.stageId))
+    .orderBy(asc(events.kickoffAt));
+
+  // Predictions for this entry only.
+  const predictionRows = await db
+    .select({
+      eventId: predictions.eventId,
+      homeScore: predictions.homeScorePredicted,
+      awayScore: predictions.awayScorePredicted,
+      updatedAt: predictions.updatedAt,
+    })
+    .from(predictions)
+    .where(eq(predictions.poolEntryId, entryId));
+
+  const predByEventId = new Map(
+    predictionRows.map((p) => [
+      p.eventId,
+      {
+        homeScore: p.homeScore,
+        awayScore: p.awayScore,
+        updatedAt: p.updatedAt.toISOString(),
+      },
+    ]),
+  );
+
+  const now = Date.now();
+  const matches: EntryMatchDto[] = eventRows.map((e) => ({
+    eventId: e.id,
+    matchday: e.matchday,
+    homeTeam: e.homeTeam,
+    awayTeam: e.awayTeam,
+    homeTeamShort: e.homeTeamShort,
+    awayTeamShort: e.awayTeamShort,
+    kickoffAt: e.kickoffAt.toISOString(),
+    predictionLockAt: e.predictionLockAt.toISOString(),
+    isLocked: e.predictionLockAt.getTime() <= now,
+    status: e.status,
+    prediction: predByEventId.get(e.id) ?? null,
+  }));
+
+  // GW tab summary — group by matchday (null → -1 "Unscheduled" bucket).
+  const externalCode = row.competitionExternalId ?? "";
+  const matchdayLabel = externalCode === "ELC" ? "MD" : "GW";
+
+  const byMatchday = new Map<number, EntryMatchDto[]>();
+  for (const m of matches) {
+    const key = m.matchday ?? -1;
+    const list = byMatchday.get(key) ?? [];
+    list.push(m);
+    byMatchday.set(key, list);
+  }
+  const gameweeks: EntryGameweekDto[] = Array.from(byMatchday.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([matchday, group]) => ({
+      matchday,
+      label: matchday < 0 ? "Unscheduled" : `${matchdayLabel} ${matchday}`,
+      matchCount: group.length,
+      predictionCount: group.filter((m) => m.prediction !== null).length,
+      lockedCount: group.filter((m) => m.isLocked).length,
+    }));
+
+  const matchdays =
+    externalCode && ROUNDS_BY_CODE[externalCode]
+      ? (ROUNDS_BY_CODE[externalCode].find((rd) => rd.round === row.stageOrdinal)?.matchdays ?? [])
+      : [];
+
+  const predictionsMade = predictionRows.length;
+  const matchesTotal = eventRows.length;
+
+  return {
+    id: row.entryId,
+    poolId: row.poolId,
+    enteredAt: row.entryEnteredAt.toISOString(),
+    settledAt: row.entrySettledAt ? row.entrySettledAt.toISOString() : null,
+    finalPoints: row.entryFinalPoints,
+    finalRank: row.entryFinalRank,
+    pool: {
+      id: row.poolId,
+      name: row.poolName,
+      status: row.poolStatus,
+    },
+    tier: {
+      slug: row.leagueSlug,
+      name: row.leagueName,
+      entryFee: row.leagueEntryFee,
+      ordinal: row.leagueOrdinal,
+    },
+    competition: {
+      id: row.competitionId,
+      slug: row.competitionSlug,
+      name: row.competitionName,
+      shortName: row.competitionShortName ?? row.competitionName,
+      externalCode,
+    },
+    currentRound: {
+      stageId: row.stageId,
+      name: row.stageName,
+      ordinal: row.stageOrdinal,
+      matchdays,
+      matchdayLabel: matchdayLabel as "GW" | "MD",
+      startDate: row.stageStartDate,
+      endDate: row.stageEndDate,
+    },
+    matchesTotal,
+    predictionsMade,
+    gameweeks,
+    matches,
+  };
+}
+
+/**
+ * Upsert a prediction for a single match within an entry.
+ *
+ * Idempotent on the natural key `(pool_entry_id, event_id)` (the schema's
+ * uniqueIndex). Validates four things in order:
+ *
+ *   1. Entry exists and belongs to the calling user.
+ *   2. Event belongs to the entry's Round (otherwise the user could try to
+ *      score a different Round's match).
+ *   3. Match is still predictable — `predictionLockAt > now` (Decided Rule #7).
+ *   4. Scores are non-negative ints. Postgres int range is fine; we cap at 99
+ *      to keep the UI tidy and reject obvious mash-typing.
+ *
+ * The full match metadata (homeTeam, kickoffAt, etc.) is NOT echoed back —
+ * the client already has it from the most recent /api/entries/:id load.
+ * Just the score + updatedAt come back so the footer indicator can refresh.
+ */
+export async function upsertPrediction(opts: {
+  entryId: string;
+  eventId: string;
+  userId: string;
+  homeScore: number;
+  awayScore: number;
+  ipAddress: string;
+  userAgent: string | null;
+}): Promise<UpsertPredictionOutcome> {
+  const { entryId, eventId, userId, homeScore, awayScore, ipAddress, userAgent } = opts;
+
+  // Score validation — non-negative int ≤ 99.
+  if (
+    !Number.isInteger(homeScore) || !Number.isInteger(awayScore) ||
+    homeScore < 0 || awayScore < 0 || homeScore > 99 || awayScore > 99
+  ) {
+    return { ok: false, error: "INVALID_SCORE" };
+  }
+
+  // Verify entry ownership + grab the stageId / poolId in one round-trip.
+  const [entryRow] = await db
+    .select({
+      id: poolEntries.id,
+      userId: poolEntries.userId,
+      poolId: poolEntries.poolId,
+      stageId: pools.stageId,
+    })
+    .from(poolEntries)
+    .innerJoin(pools, eq(poolEntries.poolId, pools.id))
+    .where(eq(poolEntries.id, entryId));
+
+  if (!entryRow) return { ok: false, error: "ENTRY_NOT_FOUND" };
+  if (entryRow.userId !== userId) return { ok: false, error: "ENTRY_NOT_OWNED" };
+
+  // Verify event is in this entry's Round + still predictable.
+  const [eventRow] = await db
+    .select({
+      id: events.id,
+      stageId: events.stageId,
+      predictionLockAt: events.predictionLockAt,
+    })
+    .from(events)
+    .where(eq(events.id, eventId));
+
+  if (!eventRow || eventRow.stageId !== entryRow.stageId) {
+    return { ok: false, error: "EVENT_NOT_IN_POOL" };
+  }
+  if (eventRow.predictionLockAt.getTime() <= Date.now()) {
+    return { ok: false, error: "EVENT_LOCKED" };
+  }
+
+  // Upsert. (pool_entry_id, event_id) has a uniqueIndex, so ON CONFLICT works.
+  const now = new Date();
+  const [pred] = await db
+    .insert(predictions)
+    .values({
+      poolEntryId: entryId,
+      userId,
+      poolId: entryRow.poolId,
+      eventId,
+      homeScorePredicted: homeScore,
+      awayScorePredicted: awayScore,
+      ipAddress,
+      userAgent,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [predictions.poolEntryId, predictions.eventId],
+      set: {
+        homeScorePredicted: homeScore,
+        awayScorePredicted: awayScore,
+        ipAddress,
+        userAgent,
+        updatedAt: now,
+      },
+    })
+    .returning({
+      homeScore: predictions.homeScorePredicted,
+      awayScore: predictions.awayScorePredicted,
+      updatedAt: predictions.updatedAt,
+    });
+
+  return {
+    ok: true,
+    eventId,
+    prediction: {
+      homeScore: pred.homeScore,
+      awayScore: pred.awayScore,
+      updatedAt: pred.updatedAt.toISOString(),
+    },
   };
 }
