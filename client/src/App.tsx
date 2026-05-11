@@ -63,7 +63,13 @@ function PortalRouter() {
 }
 
 function Router() {
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, isLoading } = useAuth();
+
+  if (isLoading) {
+    // Brief splash while /api/auth/me resolves on first mount.
+    // Avoids a flash of the marketing page for already-signed-in users.
+    return <div className="min-h-screen bg-[#070f09]" aria-hidden />;
+  }
 
   return (
     <Switch>

@@ -224,6 +224,15 @@ export default defineConfig({
     port: 3000,
     strictPort: false, // Will find next available port if 3000 is busy
     host: true,
+    proxy: {
+      // /api/* hits the Express server (port 3001 in dev). Cookies pass through
+      // both directions; with `changeOrigin: true` the browser stores the
+      // session cookie against localhost:3000 and forwards it on next request.
+      "/api": {
+        target: "http://localhost:3001",
+        changeOrigin: true,
+      },
+    },
     allowedHosts: [
       ".manuspre.computer",
       ".manus.computer",

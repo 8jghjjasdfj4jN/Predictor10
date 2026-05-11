@@ -78,8 +78,8 @@ export default function RegisterPage() {
         marketingConsent: marketing,
       });
       navigate("/");
-    } catch {
-      setError("Couldn't create your account. Please try again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't create your account. Please try again.");
     } finally {
       setLoading(false);
     }

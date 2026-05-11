@@ -1,7 +1,10 @@
+import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
+import { authMiddleware } from "./lib/auth-middleware";
+import authRouter from "./routes/auth";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,8 +51,12 @@ async function footballFetch(urlPath: string, ttl = TTL): Promise<unknown> {
 
 async function startServer() {
   const app = express();
+  app.set("trust proxy", 1); // honour X-Forwarded-For on Render so req.ip is the real client
   app.use(express.json());
+  app.use(authMiddleware);
   const server = createServer(app);
+
+  app.use("/api/auth", authRouter);
 
   // All Premier League matches for the season (cached 1 hour)
   app.get("/api/fixtures", async (_req, res) => {
@@ -130,10 +137,11 @@ async function startServer() {
     res.sendFile(path.join(staticPath, "index.html"));
   });
 
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT || 3001;
   server.listen(port, () => {
     console.log(`Server on http://localhost:${port}`);
-    console.log(`Football API key: ${process.env.FOOTBALL_API_KEY ? "✓ set" : "✗ MISSING"}`);
+    console.log(`DATABASE_URL:    ${process.env.DATABASE_URL ? "✓ set" : "✗ MISSING"}`);
+    console.log(`FOOTBALL_API_KEY: ${process.env.FOOTBALL_API_KEY ? "✓ set" : "✗ MISSING"}`);
   });
 }
 

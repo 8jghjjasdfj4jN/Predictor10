@@ -1,11 +1,20 @@
-import { createContext, useContext, useState, ReactNode } from "react";
+/*
+Predictor10 — auth context.
+
+Real backend wiring: cookies + /api/auth/*. On mount we ask the server "who
+am I?" — if the session cookie's valid we get a user object back; otherwise
+we stay logged-out. Errors thrown by login/register carry the server's
+message text so the UI can surface it directly.
+*/
+
+import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 
 export type User = {
   id: string;
-  name: string;
   email: string;
+  name: string;
   avatar: string;
-  dateOfBirth?: string;
+  emailVerified?: boolean;
   country?: string;
   marketingConsent?: boolean;
 };
@@ -14,7 +23,7 @@ export type RegisterPayload = {
   email: string;
   password: string;
   displayName: string;
-  dateOfBirth: string;  // YYYY-MM-DD
+  dateOfBirth: string; // YYYY-MM-DD
   country: string;
   marketingConsent: boolean;
 };
@@ -22,43 +31,104 @@ export type RegisterPayload = {
 type AuthContextType = {
   user: User | null;
   isLoggedIn: boolean;
+  /** True until the first /api/auth/me round-trip resolves. Gate routing on this to avoid a marketing-page flash for already-signed-in users. */
+  isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (payload: RegisterPayload) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   updateName: (name: string) => void;
 };
+
+// Server response shape — kept private; mapped to client User via mapServerUser.
+type ServerUser = {
+  id: string;
+  email: string;
+  displayName: string;
+  avatarInitials: string | null;
+  emailVerified: boolean;
+  countryCode: string;
+  marketingConsent: boolean;
+};
+
+function mapServerUser(s: ServerUser): User {
+  return {
+    id: s.id,
+    email: s.email,
+    name: s.displayName,
+    avatar: s.avatarInitials ?? s.displayName.slice(0, 2).toUpperCase(),
+    emailVerified: s.emailVerified,
+    country: s.countryCode,
+    marketingConsent: s.marketingConsent,
+  };
+}
+
+async function apiPost(path: string, body: unknown): Promise<unknown> {
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let message = "Something went wrong. Please try again.";
+    try {
+      const data = await res.json();
+      if (data && typeof data.error === "string") message = data.error;
+    } catch {
+      // non-JSON error body, fall through with default message
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const login = async (email: string, _password: string) => {
-    // Frontend mock — replace with real API call later
-    await new Promise((r) => setTimeout(r, 800));
-    setUser({
-      id: "usr_001",
-      name: email.split("@")[0].replace(/[._]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
-      email,
-      avatar: email.slice(0, 2).toUpperCase(),
-    });
+  // Restore session on mount via the cookie. 401 is normal (= logged-out).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/me", { credentials: "include" });
+        if (cancelled) return;
+        if (res.ok) {
+          const data = (await res.json()) as { user: ServerUser };
+          if (data?.user) setUser(mapServerUser(data.user));
+        }
+      } catch {
+        // Network error on boot — treat as logged-out, don't block the UI.
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const login = async (email: string, password: string) => {
+    const data = (await apiPost("/api/auth/login", { email, password })) as { user: ServerUser };
+    setUser(mapServerUser(data.user));
   };
 
   const register = async (payload: RegisterPayload) => {
-    // Frontend mock — replace with real API call later
-    await new Promise((r) => setTimeout(r, 800));
-    setUser({
-      id: "usr_001",
-      name: payload.displayName,
-      email: payload.email,
-      avatar: payload.displayName.slice(0, 2).toUpperCase(),
-      dateOfBirth: payload.dateOfBirth,
-      country: payload.country,
-      marketingConsent: payload.marketingConsent,
-    });
+    const data = (await apiPost("/api/auth/signup", payload)) as { user: ServerUser };
+    setUser(mapServerUser(data.user));
   };
 
-  const logout = () => setUser(null);
+  const logout = async () => {
+    try {
+      await apiPost("/api/auth/logout", {});
+    } catch {
+      // Already-expired session or server unreachable — clear locally anyway.
+    } finally {
+      setUser(null);
+    }
+  };
 
   const updateName = (name: string) => {
     if (!user) return;
@@ -67,7 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, isLoggedIn: !!user, login, register, logout, updateName }}
+      value={{ user, isLoggedIn: !!user, isLoading, login, register, logout, updateName }}
     >
       {children}
     </AuthContext.Provider>

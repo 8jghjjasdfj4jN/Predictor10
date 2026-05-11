@@ -22,8 +22,8 @@ export default function LoginPage() {
     try {
       await login(email, password);
       navigate("/");
-    } catch {
-      setError("Sign in failed. Check your details and try again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign in failed. Check your details and try again.");
     } finally {
       setLoading(false);
     }
