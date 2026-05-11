@@ -89,24 +89,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   // Restore session on mount via the cookie. 401 is normal (= logged-out).
+  // Render's web service can cold-start for 20-60s; cap our wait at 30s and
+  // fall through as anonymous if /me hasn't responded by then. The user's
+  // session cookie still exists — their next real action will pick it up.
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
+
     (async () => {
       try {
-        const res = await fetch("/api/auth/me", { credentials: "include" });
+        const res = await fetch("/api/auth/me", {
+          credentials: "include",
+          signal: controller.signal,
+        });
         if (cancelled) return;
         if (res.ok) {
           const data = (await res.json()) as { user: ServerUser };
           if (data?.user) setUser(mapServerUser(data.user));
         }
       } catch {
-        // Network error on boot — treat as logged-out, don't block the UI.
+        // Abort, timeout, or network error on boot — treat as logged-out, don't block the UI.
       } finally {
+        clearTimeout(timeoutId);
         if (!cancelled) setIsLoading(false);
       }
     })();
     return () => {
       cancelled = true;
+      clearTimeout(timeoutId);
+      controller.abort();
     };
   }, []);
 

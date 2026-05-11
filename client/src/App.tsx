@@ -1,6 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
+import { useEffect, useState } from "react";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { AppShell } from "./components/predictor10/AppShell";
@@ -62,13 +63,48 @@ function PortalRouter() {
   );
 }
 
+/**
+ * Loading splash shown while /api/auth/me restores the session on first mount.
+ *
+ * On Render starter/free tiers the web service can cold-start for 20-60s, so
+ * we reveal progressively more text the longer this takes — the user sees a
+ * loading state, not a broken page.
+ */
+function LoadingSplash() {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // No label for the first 2 seconds — most loads resolve before that.
+  let label: string | null = null;
+  if (elapsed >= 8) label = "Server is waking up — won't be long…";
+  else if (elapsed >= 2) label = "Loading…";
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[#070f09] px-4 text-white">
+      <div className="flex flex-col items-center gap-4 text-center">
+        <span className="font-['Barlow_Condensed'] text-2xl font-extrabold uppercase tracking-[0.1em]">
+          Predictor<span className="text-emerald-400">10</span>
+        </span>
+        <span className="relative flex h-2.5 w-2.5" aria-hidden>
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/60" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+        </span>
+        {label && <p className="text-xs text-white/55">{label}</p>}
+      </div>
+    </div>
+  );
+}
+
 function Router() {
   const { isLoggedIn, isLoading } = useAuth();
 
   if (isLoading) {
     // Brief splash while /api/auth/me resolves on first mount.
     // Avoids a flash of the marketing page for already-signed-in users.
-    return <div className="min-h-screen bg-[#070f09]" aria-hidden />;
+    return <LoadingSplash />;
   }
 
   return (

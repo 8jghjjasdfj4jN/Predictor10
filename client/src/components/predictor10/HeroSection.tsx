@@ -16,9 +16,6 @@ export function HeroSection() {
             </span>
             Live round window · {appMeta.syncedAt}
           </span>
-          <span className="rounded-full border border-emerald-300/25 bg-emerald-400/12 px-3 py-1 text-[0.66rem] font-semibold uppercase tracking-[0.22em] text-emerald-200">
-            Launching for the world cup · 32 days
-          </span>
         </div>
 
         <img
