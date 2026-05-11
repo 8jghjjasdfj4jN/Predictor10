@@ -26,6 +26,7 @@ import RegisterPage from "./pages/RegisterPage";
 import HomePage from "./pages/portal/HomePage";
 import PredictPage from "./pages/portal/PredictPage";
 import PoolsPage from "./pages/portal/PoolsPage";
+import PoolDetailPage from "./pages/portal/PoolDetailPage";
 import AccountPage from "./pages/portal/AccountPage";
 
 // Public marketing surface — original screens, accessible only to logged-out users.
@@ -55,6 +56,7 @@ function PortalRouter() {
       <Switch>
         <Route path="/" component={HomePage} />
         <Route path="/predict" component={PredictPage} />
+        <Route path="/pools/:competitionSlug/:poolId" component={PoolDetailPage} />
         <Route path="/pools" component={PoolsPage} />
         <Route path="/account" component={AccountPage} />
         <Route component={NotFound} />

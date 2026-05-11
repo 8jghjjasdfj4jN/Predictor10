@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { authMiddleware } from "./lib/auth-middleware";
 import authRouter from "./routes/auth";
+import portalRouter from "./routes/portal";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -57,6 +58,7 @@ async function startServer() {
   const server = createServer(app);
 
   app.use("/api/auth", authRouter);
+  app.use("/api", portalRouter);
 
   // All Premier League matches for the season (cached 1 hour)
   app.get("/api/fixtures", async (_req, res) => {
