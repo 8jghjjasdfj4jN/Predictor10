@@ -130,10 +130,41 @@ async function startServer() {
       ? path.resolve(__dirname, "public")
       : path.resolve(__dirname, "..", "dist", "public");
 
-  app.use(express.static(staticPath));
+  // Hashed asset bundle (Vite gives each build a content-hashed filename, so
+  // the contents at any given URL are immutable — safe to cache aggressively).
+  app.use(
+    "/assets",
+    express.static(path.join(staticPath, "assets"), {
+      immutable: true,
+      maxAge: "1y",
+    }),
+  );
 
-  // SPA fallback — must be last
-  app.get("*", (_req, res) => {
+  // Everything else (favicon, logo svg, etc.) — short cache; let browsers
+  // revalidate so a redeploy of an unhashed asset is visible quickly.
+  app.use(
+    express.static(staticPath, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith("index.html")) {
+          // index.html references hashed asset filenames that change every
+          // build, so it MUST be revalidated on every load — otherwise a
+          // browser holds a stale HTML pointing at a non-existent CSS/JS hash.
+          res.setHeader("Cache-Control", "no-cache");
+        }
+      },
+    }),
+  );
+
+  // SPA fallback — only for "page" routes, never for asset URLs. If someone
+  // requests a missing .css/.js/etc, return a real 404 so the browser doesn't
+  // try to parse an HTML document as a stylesheet.
+  const ASSET_EXT = /\.(css|js|map|svg|png|jpe?g|gif|webp|ico|woff2?|ttf|otf|json)$/i;
+  app.get("*", (req, res) => {
+    if (ASSET_EXT.test(req.path)) {
+      res.status(404).send("Not found");
+      return;
+    }
+    res.setHeader("Cache-Control", "no-cache");
     res.sendFile(path.join(staticPath, "index.html"));
   });
 
