@@ -26,6 +26,7 @@ import RegisterPage from "./pages/RegisterPage";
 import HomePage from "./pages/portal/HomePage";
 import PredictPage from "./pages/portal/PredictPage";
 import PoolsPage from "./pages/portal/PoolsPage";
+import PoolsCompetitionPage from "./pages/portal/PoolsCompetitionPage";
 import PoolDetailPage from "./pages/portal/PoolDetailPage";
 import AccountPage from "./pages/portal/AccountPage";
 
@@ -57,6 +58,7 @@ function PortalRouter() {
         <Route path="/" component={HomePage} />
         <Route path="/predict" component={PredictPage} />
         <Route path="/pools/:competitionSlug/:poolId" component={PoolDetailPage} />
+        <Route path="/pools/:competitionSlug" component={PoolsCompetitionPage} />
         <Route path="/pools" component={PoolsPage} />
         <Route path="/account" component={AccountPage} />
         <Route component={NotFound} />

@@ -235,11 +235,10 @@ export default function PredictPage() {
         </header>
         <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center">
           <p className="font-['Manrope'] text-[0.82rem] leading-relaxed text-white/55">
-            Pick a tier on Home to enter the current Round — your entries land here once you're in.
+            Browse open pools to enter the current Round — your entries land here once you're in.
           </p>
-          {/* TODO (step 2h+): swap to /pools when the Pools landing page ships. */}
           <Link
-            href="/"
+            href="/pools"
             className={cn(
               "mt-4 inline-flex items-center gap-1.5 rounded-xl",
               "border border-emerald-400/30 bg-emerald-400/[0.08] px-4 py-2",
@@ -248,7 +247,7 @@ export default function PredictPage() {
               "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
             )}
           >
-            Pick your first tier
+            Browse pools
             <ArrowRight className="h-3.5 w-3.5" aria-hidden />
           </Link>
         </div>
