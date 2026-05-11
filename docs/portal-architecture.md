@@ -524,54 +524,99 @@ leagues       : 5 tier rows
 
 ## 11. API surface (Express endpoints)
 
-### Auth (Week 1)
+This section is a living map of endpoints. Status markers: **✓** = shipped, **~** = deferred (gated on Resend / live-sync wiring / post-licence work), no marker = planned but not yet built.
+
+### Auth
 ```
-POST   /api/auth/signup
-POST   /api/auth/login
-POST   /api/auth/logout
-GET    /api/auth/me
-POST   /api/auth/verify-email
-POST   /api/auth/resend-verification
-POST   /api/auth/request-password-reset
-POST   /api/auth/reset-password
+✓  POST   /api/auth/signup
+✓  POST   /api/auth/login
+✓  POST   /api/auth/logout
+✓  GET    /api/auth/me
+~  POST   /api/auth/verify-email               (Resend deferred to pre-launch)
+~  POST   /api/auth/resend-verification        (Resend deferred to pre-launch)
+~  POST   /api/auth/request-password-reset     (Resend deferred to pre-launch)
+~  POST   /api/auth/reset-password             (Resend deferred to pre-launch)
 ```
 
-### Catalogue (Week 2)
+### Catalogue (read)
 ```
-GET    /api/competitions              → list active competitions
-GET    /api/competitions/:slug        → one competition + current/next stage
-GET    /api/tiers                     → list of tiers (£1-£50)
-```
-
-### Pools (Week 2-3)
-```
-GET    /api/pools                     → all open pools across competitions
-GET    /api/pools/competition/:slug   → open pools in one competition
-GET    /api/pools/:id                 → pool detail (fixtures, entries count, prize)
-GET    /api/pools/:id/entries         → entries list (display names only)
-POST   /api/pools/:id/enter           → mock-payment + create entry
+✓  GET    /api/competitions   → competitions with an open Round, each with
+                                 their current stage and embedded pool list
+                                 (5 tiers per competition × Round). Public.
+✓  GET    /api/pools/:id      → full pool detail (round meta, tier meta,
+                                 entry count, late-entry window state,
+                                 matchesLocked/Total, bypassActive flag;
+                                 plus `myEntry` when the caller is authed).
+                                 Public — myEntry is null when unauthed.
+   GET    /api/pools/:id/entries → entries list (display names only).
+                                    Built when the league-table page lands.
 ```
 
-### Predictions (Week 3)
+Earlier draft endpoints `/api/competitions/:slug`, `/api/tiers`, `/api/pools` (top-level listing), and `/api/pools/competition/:slug` have been collapsed into `/api/competitions` — pools and tiers are always queried in competition context, so a single richer endpoint replaces four. Bring them back as separate resources only if a future surface needs them.
+
+### Pool entry
 ```
-GET    /api/entries/me                → user's entries
-GET    /api/entries/:id               → entry detail (predictions + matches)
-PUT    /api/predictions/:id           → upsert one prediction
-POST   /api/entries/:id/submit        → finalise all predictions for this entry
+✓  POST   /api/pools/:id/enter → mock-payment + create entry. Atomic
+                                  (payment → entry → backfill payment.referenceId).
+                                  Idempotent — returns existing entryId on duplicate.
+                                  Late-entry window enforced server-side with
+                                  BYPASS_LATE_ENTRY=true dev override (per-match
+                                  anti-cheat lock stays on regardless).
 ```
 
-### Live (Week 3)
+### Predictions
 ```
-GET    /api/live                      → all live matches
-GET    /api/live/:competitionCode     → live matches per competition
+✓  GET    /api/entries/me                                → user's open entries
+                                                            (filters settledAt IS NULL).
+✓  GET    /api/entries/:id                               → entry detail: every match in
+                                                            the Round + the user's
+                                                            predictions + outcomes when
+                                                            present + per-prediction
+                                                            scoring + per-GW aggregates.
+                                                            Owner-only — returns 404 for
+                                                            anyone else (no info leak).
+✓  PUT    /api/entries/:entryId/predictions/:eventId     → upsert one prediction.
+                                                            Validates ownership, event
+                                                            belongs to entry's stage,
+                                                            and predictionLockAt > now
+                                                            (Decided Rule #7).
 ```
 
-### Account (Week 4)
+`PUT /api/entries/:entryId/predictions/:eventId` replaces the earlier-drafted `PUT /api/predictions/:id`. Predictions have no stable id before first save; `(pool_entry_id, event_id)` is the schema's natural unique key (uniqueIndex `predictions_entry_event_idx`).
+
+No `POST /api/entries/:id/submit`. Per Decided Rule #12 predictions auto-save on every input change; there is no finalise step.
+
+### Admin (machine-to-machine; token-gated)
+
+Every request must carry `X-Admin-Token: <ADMIN_SECRET>` (env var). When `ADMIN_SECRET` is unset, every endpoint returns 401 — closed by default.
+
 ```
-GET    /api/account/payments          → payment history
-PUT    /api/account/profile
-PUT    /api/account/responsible-gambling/limits
-POST   /api/account/responsible-gambling/timeout
+✓  POST   /api/admin/sync-outcomes  → pull FT scores from football-data.org,
+                                       upsert event_outcomes (first-write-wins),
+                                       mark events finished, score any unscored
+                                       predictions (5/2/0 per Decided Rule #10).
+                                       Idempotent. Also runnable from the CLI
+                                       via `pnpm sync-outcomes`.
+   POST   /api/admin/settle-pools   → for pools where every event has an
+                                       outcome: compute final ranks (Decided
+                                       Rule #10 tie-break), write mock payouts,
+                                       mark pool + entries + predictions settled.
+                                       Idempotent. (next step)
+```
+
+### Live (deferred — gated on live-sync wiring)
+```
+~  GET    /api/live                      → all live matches
+~  GET    /api/live/:competitionCode     → live matches per competition
+```
+
+### Account (planned)
+```
+   GET    /api/account/payments                       → payment history (mock + live unified)
+   GET    /api/account/history                        → settled entries (the archive)
+   PUT    /api/account/profile
+   PUT    /api/account/responsible-gambling/limits
+   POST   /api/account/responsible-gambling/timeout
 ```
 
 ---
