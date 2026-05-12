@@ -9,8 +9,14 @@ the in-progress case so the user can glance at where they're behind.
 Horizontally scrollable on narrow viewports.
 
 Display rules:
+  - poolSettled                                     → "N pts ✓" (all tabs)
   - finishedCount === matchCount && hasPredictions  → "N pts ✓"
   - else                                            → "P/M" (predictions/matches)
+
+The `poolSettled` override exists because a settled Round may contain
+cancelled/void matches (Decided Rule #13) which never reach finishedCount;
+once the pool is settled the user should still see their per-GW totals
+without those matches blocking the "finished" badge.
 */
 
 import { Check, Lock } from "lucide-react";
@@ -21,9 +27,16 @@ type Props = {
   gameweeks: EntryGameweek[];
   activeMatchday: number;
   onSelect: (matchday: number) => void;
+  /**
+   * When the pool is settled (Decided Rule #11), every GW is treated as
+   * fully-finished regardless of whether its individual matches all reached
+   * status='finished' — Decided Rule #13 lets cancelled/void matches count
+   * toward the settlement gate. Defaults to false (active-round behaviour).
+   */
+  poolSettled?: boolean;
 };
 
-export function PredictGameweekTabs({ gameweeks, activeMatchday, onSelect }: Props) {
+export function PredictGameweekTabs({ gameweeks, activeMatchday, onSelect, poolSettled = false }: Props) {
   return (
     <div
       className={cn(
@@ -36,7 +49,8 @@ export function PredictGameweekTabs({ gameweeks, activeMatchday, onSelect }: Pro
     >
       {gameweeks.map((gw) => {
         const isActive = gw.matchday === activeMatchday;
-        const fullyFinished = gw.matchCount > 0 && gw.finishedCount === gw.matchCount;
+        const naturallyFinished = gw.matchCount > 0 && gw.finishedCount === gw.matchCount;
+        const fullyFinished = naturallyFinished || (poolSettled && gw.matchCount > 0);
         const fullyLocked = gw.matchCount > 0 && gw.lockedCount === gw.matchCount && !fullyFinished;
         // Finished tab body shows points total (when user has predictions);
         // otherwise the original P/M progress.

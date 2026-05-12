@@ -29,6 +29,7 @@ import PoolsPage from "./pages/portal/PoolsPage";
 import PoolsCompetitionPage from "./pages/portal/PoolsCompetitionPage";
 import PoolDetailPage from "./pages/portal/PoolDetailPage";
 import AccountPage from "./pages/portal/AccountPage";
+import AccountHistoryPage from "./pages/portal/AccountHistoryPage";
 
 // Public marketing surface — original screens, accessible only to logged-out users.
 function MarketingRouter() {
@@ -60,6 +61,7 @@ function PortalRouter() {
         <Route path="/pools/:competitionSlug/:poolId" component={PoolDetailPage} />
         <Route path="/pools/:competitionSlug" component={PoolsCompetitionPage} />
         <Route path="/pools" component={PoolsPage} />
+        <Route path="/account/history" component={AccountHistoryPage} />
         <Route path="/account" component={AccountPage} />
         <Route component={NotFound} />
       </Switch>

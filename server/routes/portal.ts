@@ -11,6 +11,7 @@ Surface (current):
   POST /api/pools/:id/enter                      — mock-money entry flow (requireAuth)
   GET  /api/entries/:id                          — entry detail with matches + predictions (requireAuth)
   PUT  /api/entries/:id/predictions/:eventId     — upsert one prediction (requireAuth)
+  GET  /api/account/history                      — settled-pools archive (requireAuth)
 */
 
 import { Router, type Request, type Response } from "express";
@@ -19,6 +20,7 @@ import { requireAuth } from "../lib/auth-middleware";
 import { writeAudit } from "../lib/audit";
 import {
   enterPool,
+  getAccountHistory,
   getCompetitionsWithOpenPools,
   getEntryDetail,
   getPoolDetail,
@@ -218,5 +220,17 @@ router.put(
     }
   },
 );
+
+// ─── Account history (step 2j) ───────────────────────────────────────────
+
+router.get("/account/history", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const history = await getAccountHistory(req.user!.id);
+    res.json(history);
+  } catch (err) {
+    console.error("[portal] /account/history failed:", err);
+    res.status(500).json({ error: "Failed to load history." });
+  }
+});
 
 export default router;

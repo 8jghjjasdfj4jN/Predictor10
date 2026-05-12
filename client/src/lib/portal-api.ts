@@ -256,3 +256,38 @@ export async function savePrediction(
   }
   return (await res.json()) as SavePredictionResponse;
 }
+
+// ─── Account history (step 2j) ───────────────────────────────────────────
+
+export type SettledEntry = {
+  id: string;
+  poolId: string;
+  competitionSlug: string;
+  competitionShortName: string;
+  competitionName: string;
+  tierName: string;
+  tierSlug: string;
+  tierOrdinal: number;
+  roundOrdinal: number;
+  roundName: string;
+  roundEndDate: string | null;
+  finalRank: number;
+  finalPoints: number;
+  entryCount: number;
+  payoutAmount: string | null; // decimal string ("0.70") or null when no payout
+  cashed: boolean;
+  settledAt: string;
+};
+
+export type AccountHistory = {
+  stats: {
+    rounds: number;
+    cashes: number;
+    bestRank: number | null;
+  };
+  entries: SettledEntry[];
+};
+
+export async function fetchAccountHistory(): Promise<AccountHistory> {
+  return getJson<AccountHistory>("/api/account/history");
+}

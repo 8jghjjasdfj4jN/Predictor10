@@ -16,7 +16,8 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "seed": "tsx server/scripts/seed.ts",
-    "sync-outcomes": "tsx server/scripts/sync-outcomes.ts"
+    "sync-outcomes": "tsx server/scripts/sync-outcomes.ts",
+    "settle-pools": "tsx server/scripts/settle-pools.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

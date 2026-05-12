@@ -24,6 +24,7 @@ import {
   Loader2,
   Lock,
   CheckCircle2,
+  Trophy,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -95,10 +96,10 @@ function formatDayHeader(iso: string): string {
 
 // ─── Pre-entry sub-components (unchanged from step 2e) ───────────────────
 
-function BackLink() {
+function BackLink({ to, label }: { to: string; label: string }) {
   return (
     <Link
-      href="/"
+      href={to}
       className={cn(
         "inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] font-semibold",
         "text-emerald-300 transition hover:text-emerald-200",
@@ -106,7 +107,7 @@ function BackLink() {
       )}
     >
       <ArrowLeft className="h-4 w-4" aria-hidden />
-      Home
+      {label}
     </Link>
   );
 }
@@ -381,12 +382,18 @@ function PreEntryView({
 // ─── Entered (canonical Predict) view ────────────────────────────────────
 
 /**
- * Picks the default GW tab on first load: the first GW that still has at
- * least one unlocked (predictable) match. Falls back to the last GW when
- * everything is locked. Arch §8.5: "default = the current GW (first that
- * hasn't fully completed)".
+ * Picks the default GW tab on first load:
+ *   - Settled (Decided Rule #11): GW1 (chronological start) per arch §8.5
+ *     settled mockup. Deferred Decision §14.2 may revisit this.
+ *   - Active: the first GW that still has at least one unlocked (predictable)
+ *     match. Falls back to the last GW when everything is locked but the
+ *     pool hasn't yet settled. Arch §8.5: "default = the current GW (first
+ *     that hasn't fully completed)".
  */
 function pickDefaultMatchday(entry: EntryDetail): number {
+  if (entry.settledAt !== null) {
+    return entry.gameweeks[0]?.matchday ?? -1;
+  }
   const fresh = entry.gameweeks.find((gw) => gw.lockedCount < gw.matchCount);
   if (fresh) return fresh.matchday;
   return entry.gameweeks[entry.gameweeks.length - 1]?.matchday ?? -1;
@@ -425,6 +432,83 @@ function PredictFooter({ state }: { state: FooterState }) {
     <div className="flex items-center justify-center gap-1.5 rounded-xl border border-rose-400/30 bg-rose-400/[0.06] px-4 py-2.5 font-['Manrope'] text-[0.72rem] text-rose-200">
       <AlertTriangle className="h-3 w-3" aria-hidden />
       <span>{state.message}</span>
+    </div>
+  );
+}
+
+// ─── Settled-state subcomponents (Decided Rule #11) ──────────────────────
+
+function formatSettledDate(iso: string): string {
+  return DATE_FMT.format(new Date(iso));
+}
+
+/**
+ * Header meta row shown in place of "X/Y saved" when the entry is settled.
+ *   "Final · Settled Sat 20 Sep · 87 pts · Rank 4 of 18"
+ * Tier name kept on the left so the header reads consistently with the
+ * active-state layout.
+ */
+function SettledMeta({ entry }: { entry: EntryDetail }) {
+  const settledLabel = entry.settledAt ? `Settled ${formatSettledDate(entry.settledAt)}` : "Settled";
+  const rankLabel =
+    entry.finalRank !== null
+      ? `Rank ${entry.finalRank}`
+      : "Rank —";
+  const ptsLabel = entry.finalPoints !== null ? `${entry.finalPoints} pts` : `${entry.pointsTotal} pts`;
+  return (
+    <div className="space-y-1">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="font-['Manrope'] text-[0.78rem] font-semibold text-white/65">
+          {entry.tier.name}
+        </p>
+        <p className="font-['Manrope'] text-[0.72rem] uppercase tracking-[0.16em] text-emerald-300/85">
+          Final
+        </p>
+      </div>
+      <p className="font-['Manrope'] text-[0.72rem] text-white/55">
+        {settledLabel}
+        <span className="mx-1.5 text-white/30">·</span>
+        {ptsLabel}
+        <span className="mx-1.5 text-white/30">·</span>
+        {rankLabel}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Read-only banner shown above the GW tabs when settled. The "view league
+ * table" link is non-clickable until the League Table page ships (step 2k);
+ * keeping the copy in place keeps the visual rhythm of arch §8.5 settled.
+ */
+function SettledBanner() {
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2 rounded-2xl border px-3.5 py-3",
+        "border-emerald-400/25 bg-emerald-400/[0.04]",
+      )}
+    >
+      <Trophy className="h-4 w-4 flex-shrink-0 text-emerald-300" aria-hidden />
+      <p className="font-['Manrope'] text-[0.78rem] text-emerald-100/90">
+        Round complete
+        <span className="mx-1.5 text-white/30">·</span>
+        <span className="text-white/45">League table coming soon</span>
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Replaces the PredictFooter when settled — no auto-save copy, no error
+ * recovery, just a static read-only indicator. Per arch §8.5 settled mockup:
+ * "Settled · Read-only".
+ */
+function SettledFooter() {
+  return (
+    <div className="flex items-center justify-center gap-1.5 rounded-xl border border-white/8 bg-white/[0.02] px-4 py-2.5 font-['Manrope'] text-[0.72rem] text-white/45">
+      <Lock className="h-3 w-3" aria-hidden />
+      <span>Settled · Read-only</span>
     </div>
   );
 }
@@ -531,21 +615,34 @@ function EnteredView({
 
   if (loadError) {
     return (
-      <p className="font-['Manrope'] text-sm text-rose-200">{loadError}</p>
+      <>
+        <BackLink to="/" label="Home" />
+        <p className="font-['Manrope'] text-sm text-rose-200">{loadError}</p>
+      </>
     );
   }
 
   if (!entry || activeMatchday === null) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 py-10 text-white/50">
-        <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-        <p className="font-['Manrope'] text-xs">Loading predictions…</p>
-      </div>
+      <>
+        <BackLink to="/" label="Home" />
+        <div className="flex flex-col items-center justify-center gap-2 py-10 text-white/50">
+          <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+          <p className="font-['Manrope'] text-xs">Loading predictions…</p>
+        </div>
+      </>
     );
   }
 
+  const isSettled = entry.settledAt !== null;
+
   return (
     <>
+      <BackLink
+        to={isSettled ? "/account/history" : "/"}
+        label={isSettled ? "History" : "Home"}
+      />
+
       <RoundHeader
         competitionName={competitionName}
         roundName={entry.currentRound.name}
@@ -554,21 +651,28 @@ function EnteredView({
         endDate={entry.currentRound.endDate}
       />
 
-      <div className="space-y-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <p className="font-['Manrope'] text-[0.78rem] font-semibold text-white/65">
-            {entry.tier.name}
-          </p>
-          <p className="font-['Manrope'] text-[0.72rem] text-white/45">
-            {entry.predictionsMade}/{entry.matchesTotal} saved
-          </p>
+      {isSettled ? (
+        <SettledMeta entry={entry} />
+      ) : (
+        <div className="space-y-1">
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="font-['Manrope'] text-[0.78rem] font-semibold text-white/65">
+              {entry.tier.name}
+            </p>
+            <p className="font-['Manrope'] text-[0.72rem] text-white/45">
+              {entry.predictionsMade}/{entry.matchesTotal} saved
+            </p>
+          </div>
         </div>
-      </div>
+      )}
+
+      {isSettled && <SettledBanner />}
 
       <PredictGameweekTabs
         gameweeks={entry.gameweeks}
         activeMatchday={activeMatchday}
         onSelect={setActiveMatchday}
+        poolSettled={isSettled}
       />
 
       <div className="space-y-4">
@@ -599,7 +703,7 @@ function EnteredView({
         )}
       </div>
 
-      <PredictFooter state={footer} />
+      {isSettled ? <SettledFooter /> : <PredictFooter state={footer} />}
     </>
   );
 }
@@ -635,7 +739,7 @@ export default function PoolDetailPage() {
   if (loadError) {
     return (
       <div className="space-y-5 px-4 py-7">
-        <BackLink />
+        <BackLink to="/" label="Home" />
         <p className="font-['Manrope'] text-sm text-rose-200">{loadError}</p>
       </div>
     );
@@ -654,7 +758,6 @@ export default function PoolDetailPage() {
 
   return (
     <div className="space-y-6 px-4 py-7 pb-10">
-      <BackLink />
       {isEntered ? (
         <EnteredView
           entryId={detail.myEntry!.id}
@@ -662,7 +765,10 @@ export default function PoolDetailPage() {
           onLockRejection={loadDetail}
         />
       ) : (
-        <PreEntryView detail={detail} onEntered={loadDetail} />
+        <>
+          <BackLink to="/" label="Home" />
+          <PreEntryView detail={detail} onEntered={loadDetail} />
+        </>
       )}
     </div>
   );

@@ -9,7 +9,7 @@ History as those screens get built. Keep the queries here, not inline in
 route handlers.
 */
 
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { competitions, stages, events, eventOutcomes } from "../db/schema/sports";
 import { leagues } from "../db/schema/leagues";
@@ -954,5 +954,129 @@ export async function upsertPrediction(opts: {
       isExact: pred.isExact,
       isCorrectResult: pred.isCorrectResult,
     },
+  };
+}
+
+// ─── Account history (step 2j) ───────────────────────────────────────────
+
+export type SettledEntryDto = {
+  id: string; // pool_entry id
+  poolId: string;
+  competitionSlug: string;
+  competitionShortName: string;
+  competitionName: string;
+  tierName: string;
+  tierSlug: string;
+  tierOrdinal: number;
+  roundOrdinal: number;
+  roundName: string;
+  roundEndDate: string | null;
+  finalRank: number;
+  finalPoints: number;
+  entryCount: number; // total entries in the pool — denominator for "X of Y"
+  payoutAmount: string | null; // null when no payout (e.g. rank outside the splits)
+  cashed: boolean;
+  settledAt: string; // ISO
+};
+
+export type AccountHistoryDto = {
+  stats: {
+    rounds: number; // settled entries the user has
+    cashes: number; // settled entries with a payout
+    bestRank: number | null; // best rank ever (null if no settled entries)
+  };
+  entries: SettledEntryDto[]; // newest settled first
+};
+
+/**
+ * The user's settled-pools archive (arch §8.8).
+ *
+ * One row per `pool_entries` with `settledAt IS NOT NULL`, ordered newest
+ * first. Pulls the pool's total entryCount (denominator for "X of Y") and
+ * the payout amount (LEFT JOIN — only paying ranks have a row).
+ *
+ * Empty stats + entries when the user has no settled entries yet.
+ */
+export async function getAccountHistory(userId: string): Promise<AccountHistoryDto> {
+  const rows = await db
+    .select({
+      entryId: poolEntries.id,
+      finalRank: poolEntries.finalRank,
+      finalPoints: poolEntries.finalPoints,
+      settledAt: poolEntries.settledAt,
+      payoutId: poolEntries.payoutId,
+      payoutAmount: payments.amount,
+      poolId: pools.id,
+      competitionSlug: competitions.slug,
+      competitionShortName: competitions.shortName,
+      competitionName: competitions.name,
+      tierSlug: leagues.slug,
+      tierName: leagues.name,
+      tierOrdinal: leagues.ordinal,
+      stageOrdinal: stages.ordinal,
+      stageName: stages.name,
+      stageEndDate: stages.endDate,
+    })
+    .from(poolEntries)
+    .innerJoin(pools, eq(poolEntries.poolId, pools.id))
+    .innerJoin(competitions, eq(pools.competitionId, competitions.id))
+    .innerJoin(stages, eq(pools.stageId, stages.id))
+    .innerJoin(leagues, eq(pools.leagueId, leagues.id))
+    .leftJoin(payments, eq(payments.id, poolEntries.payoutId))
+    .where(and(eq(poolEntries.userId, userId), isNotNull(poolEntries.settledAt)))
+    .orderBy(desc(poolEntries.settledAt));
+
+  if (rows.length === 0) {
+    return { stats: { rounds: 0, cashes: 0, bestRank: null }, entries: [] };
+  }
+
+  // Entry counts per pool (denominator), single grouped query.
+  const poolIds = Array.from(new Set(rows.map((r) => r.poolId)));
+  const counts = await db
+    .select({
+      poolId: poolEntries.poolId,
+      count: sql<number>`COUNT(*)::int`,
+    })
+    .from(poolEntries)
+    .where(inArray(poolEntries.poolId, poolIds))
+    .groupBy(poolEntries.poolId);
+  const countByPool = new Map(counts.map((c) => [c.poolId, Number(c.count)]));
+
+  const entries: SettledEntryDto[] = rows.map((r) => {
+    const payoutAmount = r.payoutAmount; // string | null
+    return {
+      id: r.entryId,
+      poolId: r.poolId,
+      competitionSlug: r.competitionSlug,
+      competitionShortName: r.competitionShortName ?? r.competitionName,
+      competitionName: r.competitionName,
+      tierSlug: r.tierSlug,
+      tierName: r.tierName,
+      tierOrdinal: r.tierOrdinal,
+      roundOrdinal: r.stageOrdinal,
+      roundName: r.stageName,
+      roundEndDate: r.stageEndDate,
+      // finalRank/finalPoints are nullable on the column but always written
+      // by settlement; fall back to 0 for the rare malformed row rather
+      // than crash the API.
+      finalRank: r.finalRank ?? 0,
+      finalPoints: r.finalPoints ?? 0,
+      entryCount: countByPool.get(r.poolId) ?? 0,
+      payoutAmount,
+      cashed: payoutAmount !== null,
+      // settledAt is non-null because of the isNotNull filter above.
+      settledAt: r.settledAt!.toISOString(),
+    };
+  });
+
+  const cashes = entries.filter((e) => e.cashed).length;
+  const bestRank = entries.reduce<number | null>(
+    (best, e) => (best === null || e.finalRank < best ? e.finalRank : best),
+    null,
+  );
+
+  return {
+    stats: { rounds: entries.length, cashes, bestRank },
+    entries,
   };
 }

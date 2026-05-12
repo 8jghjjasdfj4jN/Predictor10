@@ -1,18 +1,25 @@
 /*
 Account (arch §8.7). Profile summary + nav into history, payments,
-responsible-gambling, settings. Filled in a later step. For now, exposes a
-working Sign Out so the shell isn't a one-way trip during step-1 testing.
+responsible-gambling, settings. Step 2j enables the History link (sub-page
+shipped in this step); payments / RG / settings sub-pages still placeholder.
 */
 
+import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { ChevronRight, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const PLACEHOLDER_LINKS = [
-  { label: "History (settled rounds)", href: "/account/history" },
-  { label: "Payment history", href: "/account/payments" },
-  { label: "Responsible gambling", href: "/account/responsible-gambling" },
-  { label: "Settings", href: "/account/settings" },
+type NavRow = {
+  label: string;
+  href: string;
+  active: boolean;
+};
+
+const NAV_ROWS: NavRow[] = [
+  { label: "History (settled rounds)", href: "/account/history", active: true },
+  { label: "Payment history", href: "/account/payments", active: false },
+  { label: "Responsible gambling", href: "/account/responsible-gambling", active: false },
+  { label: "Settings", href: "/account/settings", active: false },
 ];
 
 export default function AccountPage() {
@@ -41,21 +48,38 @@ export default function AccountPage() {
         </div>
       </div>
 
-      {/* Nav rows — placeholders, filled in later steps */}
+      {/* Nav rows — History live, rest placeholder */}
       <ul className="mt-6 divide-y divide-white/[0.06] overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
-        {PLACEHOLDER_LINKS.map((row) => (
-          <li key={row.href}>
-            <button
-              type="button"
-              disabled
-              className="flex w-full cursor-not-allowed items-center justify-between px-4 py-3.5 text-left transition disabled:opacity-50"
-              aria-label={`${row.label} — coming soon`}
-            >
-              <span className="text-sm font-semibold text-white/72">{row.label}</span>
-              <ChevronRight className="h-4 w-4 text-white/30" aria-hidden />
-            </button>
-          </li>
-        ))}
+        {NAV_ROWS.map((row) =>
+          row.active ? (
+            <li key={row.href}>
+              <Link
+                href={row.href}
+                className={cn(
+                  "flex w-full items-center justify-between px-4 py-3.5 text-left transition",
+                  "hover:bg-white/[0.04]",
+                  "outline-none focus-visible:bg-white/[0.04]",
+                  "min-h-[52px]",
+                )}
+              >
+                <span className="text-sm font-semibold text-white/85">{row.label}</span>
+                <ChevronRight className="h-4 w-4 text-white/45" aria-hidden />
+              </Link>
+            </li>
+          ) : (
+            <li key={row.href}>
+              <button
+                type="button"
+                disabled
+                className="flex w-full cursor-not-allowed items-center justify-between px-4 py-3.5 text-left transition disabled:opacity-50 min-h-[52px]"
+                aria-label={`${row.label} — coming soon`}
+              >
+                <span className="text-sm font-semibold text-white/72">{row.label}</span>
+                <ChevronRight className="h-4 w-4 text-white/30" aria-hidden />
+              </button>
+            </li>
+          ),
+        )}
       </ul>
 
       {/* Sign out — wired to the existing AuthContext logout */}
@@ -68,6 +92,7 @@ export default function AccountPage() {
           "font-['Manrope'] text-sm font-semibold text-white/72",
           "transition hover:border-rose-300/30 hover:bg-rose-500/10 hover:text-rose-100",
           "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
+          "min-h-[52px]",
         )}
       >
         <LogOut className="h-4 w-4" aria-hidden />
@@ -79,7 +104,7 @@ export default function AccountPage() {
           Step placeholder
         </p>
         <p className="mt-2 text-xs text-white/40">
-          Account detail · sub-pages — arch §8.7 / §8.8 / §8.9
+          Payments · RG · Settings — arch §8.7 / §8.9
         </p>
       </div>
     </div>
