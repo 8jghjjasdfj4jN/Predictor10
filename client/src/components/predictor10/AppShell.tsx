@@ -192,10 +192,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     // Outer page background: literal #070f09 per Decided Rules / Dashboard parity.
     <div className="min-h-screen bg-[#070f09] font-['Manrope'] text-white">
-      {/* Centred 480px column — mobile-first, holds the line on desktop (arch §1.3). */}
+      {/* Centred mobile-first column. Caps at 480px (the iPhone Pro width the
+          design was authored against) and steps up at tablet/desktop breakpoints.
+          Desktop cap is 1024px — fills a laptop screen comfortably without
+          requiring a per-component redesign. Some elements (score boxes, nav
+          tabs) look a bit airy at full desktop width; full desktop layout
+          (sidebar nav, grid cards) is a future step (arch §1.3 — mobile-first,
+          native ports later). */}
       <div
         className={cn(
-          "relative mx-auto flex min-h-screen max-w-[480px] flex-col",
+          "relative mx-auto flex min-h-screen max-w-[480px] md:max-w-[720px] lg:max-w-[1024px] flex-col",
           "border-x border-white/[0.04]",
         )}
       >

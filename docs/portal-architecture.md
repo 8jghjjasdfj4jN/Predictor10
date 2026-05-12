@@ -597,11 +597,15 @@ Every request must carry `X-Admin-Token: <ADMIN_SECRET>` (env var). When `ADMIN_
                                        predictions (5/2/0 per Decided Rule #10).
                                        Idempotent. Also runnable from the CLI
                                        via `pnpm sync-outcomes`.
-   POST   /api/admin/settle-pools   → for pools where every event has an
-                                       outcome: compute final ranks (Decided
-                                       Rule #10 tie-break), write mock payouts,
+✓  POST   /api/admin/settle-pools   → for pools where every event is either
+                                       finished+outcome OR cancelled/void
+                                       (Decided Rule #13): compute final ranks
+                                       (Decided Rule #10 tie-break), write mock
+                                       payouts (Decided Rule #14 rounding),
                                        mark pool + entries + predictions settled.
-                                       Idempotent. (next step)
+                                       Zero-entry pools settle silently
+                                       (Decided Rule #15). Idempotent. Also
+                                       runnable from CLI via `pnpm settle-pools`.
 ```
 
 ### Live (deferred — gated on live-sync wiring)
@@ -610,13 +614,13 @@ Every request must carry `X-Admin-Token: <ADMIN_SECRET>` (env var). When `ADMIN_
 ~  GET    /api/live/:competitionCode     → live matches per competition
 ```
 
-### Account (planned)
+### Account
 ```
-   GET    /api/account/payments                       → payment history (mock + live unified)
-   GET    /api/account/history                        → settled entries (the archive)
-   PUT    /api/account/profile
-   PUT    /api/account/responsible-gambling/limits
-   POST   /api/account/responsible-gambling/timeout
+   GET    /api/account/payments                       → payment history (mock + live unified) — planned
+✓  GET    /api/account/history                        → settled entries (the archive)
+   PUT    /api/account/profile                                                                — planned
+   PUT    /api/account/responsible-gambling/limits                                            — planned
+   POST   /api/account/responsible-gambling/timeout                                           — planned
 ```
 
 ---

@@ -31,7 +31,7 @@ These must be decided before public registration opens. If undecided by mid-July
 |---|---|---|---|
 | 1.1.a | Prize split (1st / 2nd / 3rd %) | TBD | arch §13 #9 |
 | 1.1.b | Operator commission % | TBD | arch §13 #9 |
-| 1.1.c | Default tab on settled-state Pool screen (GW1 / last-viewed / highest-scoring) | GW1 chronological | arch §14 #2 |
+| 1.1.c | Default tab on settled-state Pool screen (GW1 / last-viewed / highest-scoring) | GW1 chronological (default already shipped in step 2j) | arch §14 #2 |
 | 1.1.d | Archive header stats (3 cells) — current: Rounds / Cashes / Best rank | Keep current | arch §14 #3 |
 | 1.1.e | Settled-pool "Cashed" copy — keep generic or show £ amount | Keep "Cashed" generic until commission % settled | arch §14 #4 |
 | 1.1.f | Settlement → archive grace period (immediate / 24h / 48h) | Immediate | arch §14 #5 |
@@ -59,10 +59,10 @@ These must be decided before public registration opens. If undecided by mid-July
 
 These ship the playable product end-to-end. Without these, no closed test.
 
-- [ ] **Week 1 — DB and auth** — Render Postgres provisioned · Drizzle migrations applied · sign-up / login / logout / verify-email working with real email · audit log middleware wired
-- [ ] **Week 2 — Tiers, pools, predictions** — 5 tiers seeded · PL + Championship competitions and stages synced · 9 Rounds per competition generated · pool generation cron tested · `/api/pools/:id/enter` endpoint with mock-payment + late-entry 7-day check · `PUT /api/predictions/:id` with anti-cheat 403 enforcement · auto-save debounced 800ms
-- [ ] **Week 3 — UI build** — Home (live entries + available tiers) · canonical Pool/Predict screen with GW tabs · League Table page · History archive page · late-entry warning modal
-- [ ] **Week 4 — Settlement and basic RG** — settlement cron at 5min cadence · idempotent · tie-breaker enforced · pool moves to archive on settlement · deposit limits + self-exclusion UI · email templates (verification, welcome, pool-entered, pool-settled, late-entry-confirmation) · Sentry deployed
+- [x] **Week 1 — DB and auth** — Render Postgres provisioned · Drizzle migrations applied · sign-up / login / logout working · audit log middleware wired *(email verification deferred — Resend not yet in env, signup creates an unverified account that can use the product)*
+- [x] **Week 2 — Tiers, pools, predictions** — 5 tiers seeded · PL + Championship competitions and stages synced · 9 Rounds per competition generated · current-Round pool generation in idempotent seed script (cron deferred — re-run `pnpm seed` to generate) · `/api/pools/:id/enter` endpoint with mock-payment + late-entry 7-day check · `PUT /api/entries/:entryId/predictions/:eventId` with anti-cheat 403 enforcement · auto-save debounced 800ms
+- [ ] **Week 3 — UI build** — *Mostly done:* Home ✅ · canonical Pool/Predict screen with GW tabs ✅ · History archive page ✅ · late-entry warning modal ✅ · **League Table page — step 2k (in progress)**
+- [ ] **Week 4 — Settlement and basic RG** — *Partial:* settlement engine ✅ (CLI + admin endpoint, idempotent, tie-breaker enforced, Rules #13-15 applied, pool moves to archive on settlement) · **settlement cron not yet scheduled** (manual CLI/admin endpoint runs for now) · **deposit limits + self-exclusion UI not started** · email templates not started (Resend deferred) · Sentry not started
 
 ---
 
