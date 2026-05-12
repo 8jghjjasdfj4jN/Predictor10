@@ -15,6 +15,8 @@ import { competitions, stages, events, eventOutcomes } from "../db/schema/sports
 import { leagues } from "../db/schema/leagues";
 import { pools, poolEntries, predictions } from "../db/schema/pools";
 import { payments } from "../db/schema/payments";
+import { users } from "../db/schema/users";
+import { rankEntries, type EntryScore } from "./pool-settle";
 import { ROUNDS_BY_CODE } from "./rounds";
 
 // ─── API response shapes ──────────────────────────────────────────────────
@@ -1078,5 +1080,235 @@ export async function getAccountHistory(userId: string): Promise<AccountHistoryD
   return {
     stats: { rounds: entries.length, cashes, bestRank },
     entries,
+  };
+}
+
+// ─── League table (step 2k) ──────────────────────────────────────────────
+
+export type PoolEntryDto = {
+  entryId: string;
+  rank: number;
+  displayName: string;
+  isYou: boolean;
+  points: number;
+  exacts: number;
+  results: number;
+};
+
+export type PoolEntriesPoolDto = {
+  id: string;
+  status: "draft" | "open" | "locked" | "settled" | "void";
+  competitionShortName: string;
+  competitionSlug: string;
+  tierName: string;
+  roundName: string;
+  roundOrdinal: number;
+  matchdayLabel: "GW" | "MD";
+  // ISO timestamp of when settlement finalised the pool. Null when still live.
+  // Sourced from pools.updatedAt — settlement bumps it in the same UPDATE
+  // that flips status='settled'. Works for zero-entry pools too (Rule #15),
+  // which have no pool_entries.settledAt to read from.
+  settledAt: string | null;
+  // 1-indexed position of the current GW within this Round (e.g. "GW 2 of 4").
+  // Null when every matchday in the round is terminal (finished/cancelled/void).
+  // Drives the "Round in progress · GW2 of 4" status pill per arch §8.6.
+  currentMatchdayOrdinal: number | null;
+  totalMatchdays: number;
+};
+
+export type PoolEntriesDto = {
+  pool: PoolEntriesPoolDto;
+  viewer: { isEntrant: boolean };
+  entries: PoolEntryDto[];
+};
+
+export type GetPoolEntriesError =
+  | "POOL_NOT_FOUND"
+  | "NOT_AUTHENTICATED"
+  | "NOT_ENTRANT";
+
+export type GetPoolEntriesOutcome =
+  | { ok: true; data: PoolEntriesDto }
+  | { ok: false; error: GetPoolEntriesError };
+
+/**
+ * League table data for a single pool (arch §8.6).
+ *
+ * Access rules — mapped to HTTP statuses at the route layer:
+ *   - Pool not found → POOL_NOT_FOUND (404)
+ *   - Pool settled → public; any caller (auth'd or not) gets the standings.
+ *   - Pool live + viewer not auth'd → NOT_AUTHENTICATED (401)
+ *   - Pool live + viewer not entered → NOT_ENTRANT (403)
+ *
+ * Ranking:
+ *   - Live pools: aggregate per-entry scores from `predictions` (LEFT JOIN so
+ *     zero-prediction entries still appear at the bottom) and rank with the
+ *     same `rankEntries` used by settlement (Decided Rule #10). Live ranks
+ *     recompute on every fetch as outcome-sync awards points.
+ *   - Settled pools: use the stored `pool_entries.finalRank` / `finalPoints`
+ *     so the rendered table matches what got audited, even if a late score
+ *     correction nudges the underlying aggregates. Exacts/results columns are
+ *     still derived from the predictions aggregate — those per-prediction
+ *     flags are immutable post-scoring so they can't drift from the audit.
+ *
+ * Performance: three queries — pool meta, matchday rollup, entries aggregate.
+ * The entries aggregate is one grouped query joining users + LEFT JOIN
+ * predictions (mirrors `settleOnePool`); no per-entry loops.
+ */
+export async function getPoolEntries(
+  poolId: string,
+  viewerUserId: string | null,
+): Promise<GetPoolEntriesOutcome> {
+  // 1. Pool meta + competition + tier + stage.
+  const [meta] = await db
+    .select({
+      poolId: pools.id,
+      poolStatus: pools.status,
+      poolUpdatedAt: pools.updatedAt,
+      stageId: stages.id,
+      stageName: stages.name,
+      stageOrdinal: stages.ordinal,
+      competitionShortName: competitions.shortName,
+      competitionName: competitions.name,
+      competitionSlug: competitions.slug,
+      competitionExternalId: competitions.externalId,
+      tierName: leagues.name,
+    })
+    .from(pools)
+    .innerJoin(competitions, eq(pools.competitionId, competitions.id))
+    .innerJoin(stages, eq(pools.stageId, stages.id))
+    .innerJoin(leagues, eq(pools.leagueId, leagues.id))
+    .where(eq(pools.id, poolId));
+
+  if (!meta) return { ok: false, error: "POOL_NOT_FOUND" };
+
+  const isSettled = meta.poolStatus === "settled";
+
+  // 2. Access gating. Settled pools are public — anyone can view final
+  // standings. Live pools require auth + an existing entry in this pool.
+  if (!isSettled) {
+    if (!viewerUserId) return { ok: false, error: "NOT_AUTHENTICATED" };
+    const [own] = await db
+      .select({ id: poolEntries.id })
+      .from(poolEntries)
+      .where(and(eq(poolEntries.poolId, poolId), eq(poolEntries.userId, viewerUserId)));
+    if (!own) return { ok: false, error: "NOT_ENTRANT" };
+  }
+
+  // 3. Per-matchday rollup — drives the "GW2 of 4" status pill. A matchday
+  // is "terminal" once every event in it is finished / cancelled / void;
+  // current matchday = first matchday containing any non-terminal event.
+  const matchdayRows = await db
+    .select({
+      matchday: events.matchday,
+      nonTerminalCount: sql<number>`COUNT(*) FILTER (WHERE ${events.status} NOT IN ('finished','cancelled','void'))::int`,
+    })
+    .from(events)
+    .where(and(eq(events.stageId, meta.stageId), isNotNull(events.matchday)))
+    .groupBy(events.matchday)
+    .orderBy(asc(events.matchday));
+
+  const totalMatchdays = matchdayRows.length;
+  const firstNonTerminalIdx = matchdayRows.findIndex(
+    (r) => Number(r.nonTerminalCount) > 0,
+  );
+  const currentMatchdayOrdinal =
+    firstNonTerminalIdx === -1 ? null : firstNonTerminalIdx + 1;
+
+  // 4. Entries aggregate — one grouped query, mirrors settleOnePool's score
+  // aggregate with users joined for displayName. LEFT JOIN predictions so
+  // entries with zero predictions still show up (0/0/0) at the bottom.
+  const rows = await db
+    .select({
+      entryId: poolEntries.id,
+      userId: poolEntries.userId,
+      displayName: users.displayName,
+      finalRank: poolEntries.finalRank,
+      finalPoints: poolEntries.finalPoints,
+      points: sql<number>`COALESCE(SUM(${predictions.pointsAwarded}), 0)::int`,
+      exacts: sql<number>`COALESCE(SUM(CASE WHEN ${predictions.isExact} THEN 1 ELSE 0 END), 0)::int`,
+      results: sql<number>`COALESCE(SUM(CASE WHEN ${predictions.isCorrectResult} THEN 1 ELSE 0 END), 0)::int`,
+    })
+    .from(poolEntries)
+    .innerJoin(users, eq(users.id, poolEntries.userId))
+    .leftJoin(predictions, eq(predictions.poolEntryId, poolEntries.id))
+    .where(eq(poolEntries.poolId, poolId))
+    .groupBy(
+      poolEntries.id,
+      poolEntries.userId,
+      users.displayName,
+      poolEntries.finalRank,
+      poolEntries.finalPoints,
+    );
+
+  // 5. Map to DTO with rank applied. For settled pools the audited
+  // finalRank/finalPoints win; for live pools recompute via rankEntries().
+  let entryDtos: PoolEntryDto[];
+  if (isSettled) {
+    entryDtos = rows.map((r) => ({
+      entryId: r.entryId,
+      rank: r.finalRank ?? 0,
+      displayName: r.displayName,
+      isYou: viewerUserId !== null && r.userId === viewerUserId,
+      // Trust audited finalPoints; fall back to the aggregate only for
+      // malformed rows (shouldn't happen — settlement always writes both).
+      points: r.finalPoints ?? Number(r.points),
+      exacts: Number(r.exacts),
+      results: Number(r.results),
+    }));
+  } else {
+    const scores: EntryScore[] = rows.map((r) => ({
+      entryId: r.entryId,
+      userId: r.userId,
+      points: Number(r.points),
+      exacts: Number(r.exacts),
+      results: Number(r.results),
+    }));
+    const ranked = rankEntries(scores);
+    const byId = new Map(rows.map((r) => [r.entryId, r]));
+    entryDtos = ranked.map((rk) => {
+      const row = byId.get(rk.entryId)!;
+      return {
+        entryId: rk.entryId,
+        rank: rk.finalRank,
+        displayName: row.displayName,
+        isYou: viewerUserId !== null && rk.userId === viewerUserId,
+        points: rk.points,
+        exacts: rk.exacts,
+        results: rk.results,
+      };
+    });
+  }
+
+  // Stable secondary sort by displayName for tied ranks so the visible
+  // order doesn't flicker between fetches.
+  entryDtos.sort((a, b) =>
+    a.rank !== b.rank ? a.rank - b.rank : a.displayName.localeCompare(b.displayName),
+  );
+
+  const matchdayLabel: "GW" | "MD" =
+    meta.competitionExternalId === "ELC" ? "MD" : "GW";
+
+  return {
+    ok: true,
+    data: {
+      pool: {
+        id: meta.poolId,
+        status: meta.poolStatus,
+        competitionShortName: meta.competitionShortName ?? meta.competitionName,
+        competitionSlug: meta.competitionSlug,
+        tierName: meta.tierName,
+        roundName: meta.stageName,
+        roundOrdinal: meta.stageOrdinal,
+        matchdayLabel,
+        settledAt: isSettled ? meta.poolUpdatedAt.toISOString() : null,
+        currentMatchdayOrdinal,
+        totalMatchdays,
+      },
+      viewer: {
+        isEntrant: viewerUserId !== null && entryDtos.some((e) => e.isYou),
+      },
+      entries: entryDtos,
+    },
   };
 }

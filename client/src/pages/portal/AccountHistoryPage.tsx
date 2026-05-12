@@ -151,21 +151,20 @@ function EntryCard({ entry }: { entry: SettledEntry }) {
           <span>Results</span>
           <ArrowRight className="h-3.5 w-3.5" aria-hidden />
         </Link>
-        {/* [Table →] CTA — League Table page ships in step 2k. */}
-        <button
-          type="button"
-          disabled
+        <Link
+          href={`/pools/${entry.competitionSlug}/${entry.poolId}/table`}
           className={cn(
             "flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2",
-            "border border-white/8 bg-white/[0.01]",
-            "font-['Manrope'] text-[0.74rem] font-semibold text-white/35",
-            "cursor-not-allowed",
+            "border border-white/10 bg-white/[0.03]",
+            "font-['Manrope'] text-[0.74rem] font-semibold text-white/75",
+            "transition hover:border-emerald-300/30 hover:bg-emerald-400/[0.06] hover:text-emerald-200",
+            "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
             "min-h-[40px]",
           )}
-          aria-label="League table — coming soon"
         >
           <span>Table</span>
-        </button>
+          <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+        </Link>
       </div>
     </div>
   );

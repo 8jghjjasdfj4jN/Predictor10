@@ -28,6 +28,7 @@ import PredictPage from "./pages/portal/PredictPage";
 import PoolsPage from "./pages/portal/PoolsPage";
 import PoolsCompetitionPage from "./pages/portal/PoolsCompetitionPage";
 import PoolDetailPage from "./pages/portal/PoolDetailPage";
+import PoolTablePage from "./pages/portal/PoolTablePage";
 import AccountPage from "./pages/portal/AccountPage";
 import AccountHistoryPage from "./pages/portal/AccountHistoryPage";
 
@@ -58,6 +59,8 @@ function PortalRouter() {
       <Switch>
         <Route path="/" component={HomePage} />
         <Route path="/predict" component={PredictPage} />
+        {/* `/table` is more specific — must come before `/:poolId` in the Switch. */}
+        <Route path="/pools/:competitionSlug/:poolId/table" component={PoolTablePage} />
         <Route path="/pools/:competitionSlug/:poolId" component={PoolDetailPage} />
         <Route path="/pools/:competitionSlug" component={PoolsCompetitionPage} />
         <Route path="/pools" component={PoolsPage} />

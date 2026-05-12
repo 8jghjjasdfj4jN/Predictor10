@@ -111,25 +111,49 @@ function LiveEntryCard({ entry, competitionSlug }: { entry: UserEntry; competiti
   const progress = entry.predictionsTotal > 0
     ? `${entry.predictionsMade}/${entry.predictionsTotal} saved`
     : "No matches yet";
+  const predictHref = `/pools/${competitionSlug}/${entry.poolId}`;
+  const tableHref = `/pools/${competitionSlug}/${entry.poolId}/table`;
   return (
-    <Link
-      href={`/pools/${competitionSlug}/${entry.poolId}`}
+    <div
       className={cn(
-        "block rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.06]",
-        "px-4 py-3.5 transition hover:border-emerald-300/50 hover:bg-emerald-400/[0.09]",
-        "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
+        "rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.06]",
+        "px-4 py-3.5",
       )}
     >
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0 space-y-0.5">
-          <p className="truncate font-['Barlow_Condensed'] text-[1rem] font-bold uppercase tracking-[0.06em] text-white">
-            {entry.competitionShortName} · {entry.tierName}
-          </p>
-          <p className="font-['Manrope'] text-[0.75rem] text-white/55">{progress}</p>
-        </div>
-        <ArrowRight className="h-4 w-4 flex-shrink-0 text-emerald-300" aria-hidden />
+      <div className="min-w-0 space-y-0.5">
+        <p className="truncate font-['Barlow_Condensed'] text-[1rem] font-bold uppercase tracking-[0.06em] text-white">
+          {entry.competitionShortName} · {entry.tierName}
+        </p>
+        <p className="font-['Manrope'] text-[0.75rem] text-white/55">{progress}</p>
       </div>
-    </Link>
+      <div className="mt-3 flex gap-2">
+        <Link
+          href={predictHref}
+          className={cn(
+            "flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2",
+            "bg-emerald-500 font-['Manrope'] text-[0.78rem] font-semibold text-black",
+            "transition hover:bg-emerald-400 active:bg-emerald-600",
+            "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60",
+            "min-h-[44px]",
+          )}
+        >
+          <span>Predictions</span>
+        </Link>
+        <Link
+          href={tableHref}
+          className={cn(
+            "flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2",
+            "border border-emerald-400/30 bg-emerald-400/[0.04]",
+            "font-['Manrope'] text-[0.78rem] font-semibold text-emerald-200",
+            "transition hover:border-emerald-300/50 hover:bg-emerald-400/[0.08]",
+            "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
+            "min-h-[44px]",
+          )}
+        >
+          <span>Table</span>
+        </Link>
+      </div>
+    </div>
   );
 }
 

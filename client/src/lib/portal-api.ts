@@ -291,3 +291,66 @@ export type AccountHistory = {
 export async function fetchAccountHistory(): Promise<AccountHistory> {
   return getJson<AccountHistory>("/api/account/history");
 }
+
+// ─── League table (step 2k) ──────────────────────────────────────────────
+
+export type PoolEntry = {
+  entryId: string;
+  rank: number;
+  displayName: string;
+  isYou: boolean;
+  points: number;
+  exacts: number;
+  results: number;
+};
+
+export type PoolEntriesPool = {
+  id: string;
+  status: "draft" | "open" | "locked" | "settled" | "void";
+  competitionShortName: string;
+  competitionSlug: string;
+  tierName: string;
+  roundName: string;
+  roundOrdinal: number;
+  matchdayLabel: "GW" | "MD";
+  settledAt: string | null;
+  currentMatchdayOrdinal: number | null;
+  totalMatchdays: number;
+};
+
+export type PoolEntriesPayload = {
+  pool: PoolEntriesPool;
+  viewer: { isEntrant: boolean };
+  entries: PoolEntry[];
+};
+
+/**
+ * Errors from /api/pools/:id/entries carry the HTTP status so the page can
+ * distinguish 401 (not signed in), 403 (signed in but not entered), 404
+ * (no such pool) and surface helpful copy.
+ */
+export class FetchPoolEntriesError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+    this.name = "FetchPoolEntriesError";
+  }
+}
+
+export async function fetchPoolEntries(poolId: string): Promise<PoolEntriesPayload> {
+  const res = await fetch(`/api/pools/${encodeURIComponent(poolId)}/entries`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = data.error;
+    } catch {
+      // non-JSON error body
+    }
+    throw new FetchPoolEntriesError(message, res.status);
+  }
+  return (await res.json()) as PoolEntriesPayload;
+}

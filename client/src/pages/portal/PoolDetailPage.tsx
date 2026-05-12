@@ -19,6 +19,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { Link, useRoute } from "wouter";
 import {
   ArrowLeft,
+  ArrowRight,
   AlarmClock,
   AlertTriangle,
   Loader2,
@@ -477,24 +478,53 @@ function SettledMeta({ entry }: { entry: EntryDetail }) {
 }
 
 /**
- * Read-only banner shown above the GW tabs when settled. The "view league
- * table" link is non-clickable until the League Table page ships (step 2k);
- * keeping the copy in place keeps the visual rhythm of arch §8.5 settled.
+ * Read-only banner shown above the GW tabs when settled. Links to the
+ * League Table page (step 2k); the "view results" deep-link back to the
+ * pool detail lives at the bottom of the table page.
  */
-function SettledBanner() {
+function SettledBanner({ tableHref }: { tableHref: string }) {
   return (
-    <div
+    <Link
+      href={tableHref}
       className={cn(
         "flex items-center gap-2 rounded-2xl border px-3.5 py-3",
         "border-emerald-400/25 bg-emerald-400/[0.04]",
+        "transition hover:border-emerald-300/40 hover:bg-emerald-400/[0.07]",
+        "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
       )}
     >
       <Trophy className="h-4 w-4 flex-shrink-0 text-emerald-300" aria-hidden />
-      <p className="font-['Manrope'] text-[0.78rem] text-emerald-100/90">
+      <p className="flex-1 font-['Manrope'] text-[0.78rem] text-emerald-100/90">
         Round complete
         <span className="mx-1.5 text-white/30">·</span>
-        <span className="text-white/45">League table coming soon</span>
+        <span className="text-emerald-200">View league table</span>
       </p>
+      <ArrowRight className="h-4 w-4 flex-shrink-0 text-emerald-300" aria-hidden />
+    </Link>
+  );
+}
+
+/**
+ * Subtle right-aligned affordance shown during an active entered pool. Lets
+ * the user peek at live standings without leaving the predict screen as the
+ * primary surface. Home page's [Table] CTA on the live-entry card remains
+ * the main discovery path; this is the in-context shortcut.
+ */
+function LiveTableLink({ tableHref }: { tableHref: string }) {
+  return (
+    <div className="flex justify-end">
+      <Link
+        href={tableHref}
+        className={cn(
+          "inline-flex items-center gap-1 font-['Manrope'] text-[0.72rem] font-semibold",
+          "text-emerald-300 transition hover:text-emerald-200",
+          "outline-none focus-visible:underline",
+          "min-h-[28px]",
+        )}
+      >
+        View league table
+        <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+      </Link>
     </div>
   );
 }
@@ -654,7 +684,7 @@ function EnteredView({
       {isSettled ? (
         <SettledMeta entry={entry} />
       ) : (
-        <div className="space-y-1">
+        <div className="space-y-2">
           <div className="flex items-baseline justify-between gap-2">
             <p className="font-['Manrope'] text-[0.78rem] font-semibold text-white/65">
               {entry.tier.name}
@@ -663,10 +693,13 @@ function EnteredView({
               {entry.predictionsMade}/{entry.matchesTotal} saved
             </p>
           </div>
+          <LiveTableLink tableHref={`/pools/${entry.competition.slug}/${entry.poolId}/table`} />
         </div>
       )}
 
-      {isSettled && <SettledBanner />}
+      {isSettled && (
+        <SettledBanner tableHref={`/pools/${entry.competition.slug}/${entry.poolId}/table`} />
+      )}
 
       <PredictGameweekTabs
         gameweeks={entry.gameweeks}

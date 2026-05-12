@@ -8,6 +8,7 @@ Surface (current):
   GET  /api/competitions                         — competitions with open Round + 5 tier pools (public)
   GET  /api/entries/me                           — current user's open pool entries (requireAuth)
   GET  /api/pools/:id                            — full pool detail (public; myEntry only when auth'd)
+  GET  /api/pools/:id/entries                    — league table for a pool (public when settled, auth+entrant otherwise)
   POST /api/pools/:id/enter                      — mock-money entry flow (requireAuth)
   GET  /api/entries/:id                          — entry detail with matches + predictions (requireAuth)
   PUT  /api/entries/:id/predictions/:eventId     — upsert one prediction (requireAuth)
@@ -24,9 +25,11 @@ import {
   getCompetitionsWithOpenPools,
   getEntryDetail,
   getPoolDetail,
+  getPoolEntries,
   getUserOpenEntries,
   upsertPrediction,
   type EnterPoolError,
+  type GetPoolEntriesError,
   type UpsertPredictionError,
 } from "../lib/portal-data";
 
@@ -131,6 +134,33 @@ router.post("/pools/:id/enter", requireAuth, async (req: Request, res: Response)
   } catch (err) {
     console.error("[portal] /pools/:id/enter failed:", err);
     res.status(500).json({ error: "Failed to enter pool." });
+  }
+});
+
+// ─── League table (step 2k) ──────────────────────────────────────────────
+
+const POOL_ENTRIES_ERROR_MAP: Record<GetPoolEntriesError, { status: number; message: string }> = {
+  POOL_NOT_FOUND: { status: 404, message: "Pool not found." },
+  NOT_AUTHENTICATED: { status: 401, message: "Sign in to view live standings." },
+  NOT_ENTRANT: { status: 403, message: "Only entrants can view live standings." },
+};
+
+// Public when the pool is settled (anyone can see final standings); for live
+// pools requires auth + an existing entry. Gating happens inside
+// getPoolEntries — handler just maps the error variant to a status code.
+router.get("/pools/:id/entries", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const viewerUserId = req.user?.id ?? null;
+    const outcome = await getPoolEntries(req.params.id, viewerUserId);
+    if (!outcome.ok) {
+      const { status, message } = POOL_ENTRIES_ERROR_MAP[outcome.error];
+      res.status(status).json({ error: message });
+      return;
+    }
+    res.json(outcome.data);
+  } catch (err) {
+    console.error("[portal] /pools/:id/entries failed:", err);
+    res.status(500).json({ error: "Failed to load pool entries." });
   }
 });
 
