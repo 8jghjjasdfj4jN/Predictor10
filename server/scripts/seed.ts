@@ -23,16 +23,20 @@ the 10 req/min free-tier ceiling.
 */
 
 import "dotenv/config";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { sports, competitions, stages, events } from "../db/schema/sports";
 import { leagues } from "../db/schema/leagues";
 import { pools } from "../db/schema/pools";
 import { ROUNDS_BY_CODE, roundForMatchday } from "../lib/rounds";
+import {
+  fetchAllMatchesForSeason,
+  upsertEventFromFootballData,
+  type FDMatch,
+  type InternalEventStatus,
+} from "../lib/fixture-sync";
 
 const SEASON = 2025; // football-data convention: starting year → 2025/26
-
-const FOOTBALL_API_BASE = "https://api.football-data.org/v4";
 
 const TIERS = [
   { slug: "pound",   name: "The Pound",   entryFee: "1.00",  ordinal: 1, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.70, 0.20, 0.10] } },
@@ -47,51 +51,8 @@ const COMPETITIONS = [
   { code: "ELC", slug: "championship",   name: "EFL Championship", shortName: "Championship",  countryCode: "GB" },
 ] as const;
 
-// football-data.org match shape (subset we use)
-type FDStatus =
-  | "SCHEDULED" | "TIMED" | "IN_PLAY" | "PAUSED"
-  | "FINISHED" | "SUSPENDED" | "POSTPONED" | "CANCELLED" | "AWARDED";
-
-type FDMatch = {
-  id: number;
-  utcDate: string;
-  status: FDStatus;
-  matchday: number | null;
-  homeTeam: { id: number; name: string; shortName?: string | null; tla?: string | null };
-  awayTeam: { id: number; name: string; shortName?: string | null; tla?: string | null };
-  venue?: string | null;
-};
-
-type InternalEventStatus = "scheduled" | "live" | "finished" | "postponed" | "cancelled" | "void";
-
-function mapStatus(fd: FDStatus): InternalEventStatus {
-  switch (fd) {
-    case "SCHEDULED":
-    case "TIMED":      return "scheduled";
-    case "IN_PLAY":
-    case "PAUSED":     return "live";
-    case "FINISHED":
-    case "AWARDED":    return "finished";
-    case "POSTPONED":  return "postponed";
-    case "CANCELLED":  return "cancelled";
-    case "SUSPENDED":  return "void";
-  }
-}
-
 function log(msg: string) {
   console.log(`[seed] ${msg}`);
-}
-
-async function footballFetch(path: string): Promise<unknown> {
-  const apiKey = process.env.FOOTBALL_API_KEY;
-  if (!apiKey) throw new Error("FOOTBALL_API_KEY env var not set");
-  const url = `${FOOTBALL_API_BASE}${path}`;
-  log(`  fetching ${url}`);
-  const res = await fetch(url, { headers: { "X-Auth-Token": apiKey } });
-  if (!res.ok) {
-    throw new Error(`football-data.org ${res.status} ${res.statusText} for ${path}`);
-  }
-  return res.json();
 }
 
 // ─── Phase 1 — sports ─────────────────────────────────────────────────────
@@ -195,13 +156,13 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
     const rounds = ROUNDS_BY_CODE[def.code];
     if (!rounds) throw new Error(`no Round structure for ${def.code}`);
 
-    const data = (await footballFetch(`/competitions/${def.code}/matches?season=${SEASON}`)) as { matches: FDMatch[] };
-    log(`  ${def.name}: ${data.matches.length} matches from football-data`);
+    const allMatches = await fetchAllMatchesForSeason(def.code, SEASON);
+    log(`  ${def.name}: ${allMatches.length} matches from football-data`);
 
     // Group by Round
     const matchesByRound = new Map<number, FDMatch[]>();
     let skipped = 0;
-    for (const m of data.matches) {
+    for (const m of allMatches) {
       if (m.matchday == null) { skipped++; continue; }
       const round = roundForMatchday(def.code, m.matchday);
       if (round == null) { skipped++; continue; }
@@ -210,6 +171,24 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
       matchesByRound.set(round, list);
     }
     if (skipped > 0) log(`    skipped ${skipped} matches with no/invalid matchday`);
+
+    // Batch existing-event lookup for this competition's full match set —
+    // saves N round-trips inside the per-match loop below. Same pattern
+    // outcome-sync uses.
+    const allExtIds = allMatches.map((m) => String(m.id));
+    const existingRows = allExtIds.length
+      ? await db
+          .select({
+            id: events.id,
+            externalId: events.externalId,
+            status: events.status,
+            kickoffAt: events.kickoffAt,
+            matchday: events.matchday,
+          })
+          .from(events)
+          .where(inArray(events.externalId, allExtIds))
+      : [];
+    const existingByExt = new Map(existingRows.map((e) => [e.externalId, e]));
 
     const compStages: StageInfo[] = [];
     for (const r of rounds) {
@@ -255,45 +234,26 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
         stageId = row.id;
       }
 
-      // Upsert events keyed by external_id (football-data match id).
+      // Upsert events via the shared helper — same code path outcome-sync's
+      // cron uses, so behaviour stays consistent across the two callers.
+      // Helper preserves the "finished is terminal" safety rail; matches
+      // already finished stay finished even if football-data transiently
+      // re-emits a different status.
       for (const m of matches) {
-        const kickoff = new Date(m.utcDate);
-        const lockAt = new Date(kickoff.getTime() - 60 * 60 * 1000); // -1 hour
-        const status = mapStatus(m.status);
-        const values = {
+        const existing = existingByExt.get(String(m.id));
+        await upsertEventFromFootballData({
+          fdMatch: m,
           competitionId: compId,
           stageId,
-          externalId: String(m.id),
-          homeTeam: m.homeTeam.name,
-          awayTeam: m.awayTeam.name,
-          homeTeamShort: m.homeTeam.tla ?? null,
-          awayTeamShort: m.awayTeam.tla ?? null,
-          kickoffAt: kickoff,
-          venue: m.venue ?? null,
-          matchday: m.matchday,
-          status,
-          predictionLockAt: lockAt,
-          lastSyncedAt: new Date(),
-        };
-        await db
-          .insert(events)
-          .values(values)
-          .onConflictDoUpdate({
-            target: events.externalId,
-            set: {
-              stageId,
-              homeTeam: values.homeTeam,
-              awayTeam: values.awayTeam,
-              homeTeamShort: values.homeTeamShort,
-              awayTeamShort: values.awayTeamShort,
-              kickoffAt: values.kickoffAt,
-              venue: values.venue,
-              matchday: values.matchday,
-              status: values.status,
-              predictionLockAt: values.predictionLockAt,
-              lastSyncedAt: values.lastSyncedAt,
-            },
-          });
+          existing: existing
+            ? {
+                id: existing.id,
+                status: existing.status as InternalEventStatus,
+                kickoffAt: existing.kickoffAt,
+                matchday: existing.matchday,
+              }
+            : null,
+        });
       }
 
       compStages.push({ stageId, round: r.round, startDate, endDate, totalMatchesCount, futureMatchesCount });

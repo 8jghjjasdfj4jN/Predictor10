@@ -1,15 +1,21 @@
 /*
-Predictor10 — outcome sync CLI.
+Predictor10 — football-data → DB sync CLI.
 
 Run: `pnpm sync-outcomes`
 
 One-shot. Reads DATABASE_URL + FOOTBALL_API_KEY from env (set on Render, or
 .env locally). Exits 0 on success, 1 if any per-competition fetch failed.
 
+As of step 2l this script doesn't only sync outcomes — the same job now also
+refreshes scheduled-fixture metadata (kickoff, lock, matchday, status,
+inserts new matches). The CLI name `sync-outcomes` is preserved for
+backwards compatibility with anything already wired to it; the summary line
+surfaces both responsibilities.
+
 Same logic also reachable via POST /api/admin/sync-outcomes (token-gated) —
 both call the shared syncOutcomes() in server/lib/outcome-sync.ts. Use the
-CLI for manual runs from the Render shell; use the HTTP endpoint for an
-external scheduler.
+CLI for manual runs from the Render shell; use the HTTP endpoint for the
+Render Cron Job.
 */
 
 import "dotenv/config";
@@ -27,10 +33,19 @@ function log(s: string) {
     const dur = Date.now() - startedAt;
     log(
       `done in ${dur}ms: ${result.competitionsChecked} competitions, ` +
-      `${result.matchesSeen} matches seen, ` +
-      `${result.outcomesWritten} new outcomes, ` +
+      `${result.matchesSeen} matches seen`,
+    );
+    log(
+      `  outcomes: ${result.outcomesWritten} new, ` +
       `${result.eventsMarkedFinished} events marked finished, ` +
       `${result.predictionsScored} predictions scored`,
+    );
+    log(
+      `  fixtures: ${result.fixturesInserted} inserted, ` +
+      `${result.fixturesUpdated} updated, ` +
+      `${result.fixturesUnchanged} unchanged, ` +
+      `${result.fixturesSkippedFinished} skipped-finished, ` +
+      `${result.fixturesSkippedNoStage} skipped-no-stage`,
     );
     if (result.errors.length > 0) {
       for (const e of result.errors) {

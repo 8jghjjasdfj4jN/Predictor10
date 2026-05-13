@@ -487,22 +487,44 @@ GET /api/live                   → all live matches across active competitions
 GET /api/live/:competitionCode  → live matches for one competition
 ```
 
-Both server-cached at 60s (existing `LIVE_TTL`). Polling: clients re-fetch every 30s while view is mounted; visibility-API pause when tab is hidden.
+Deferred — not yet built. When they ship, polling at 30s with a small server-side cache (60s default, parametric per-call) and visibility-API pause when tab is hidden. The legacy 1-hour `footballFetch` cache and `/api/fixtures*` proxy that hosted the marketing Dashboard were retired in step 2l along with the old `cache-status` debug endpoint — the new live endpoints will be built fresh against the same `events` table the rest of the portal reads from, not as a transparent proxy of football-data.
 
 ### 9.3 Match status mapping
 
 football-data.org → internal:
 - `SCHEDULED` / `TIMED` → `scheduled`
 - `IN_PLAY` / `PAUSED` → `live`
-- `FINISHED` → `finished`
-- `POSTPONED` / `CANCELLED` → `postponed` / `cancelled`
+- `FINISHED` / `AWARDED` → `finished`
+- `POSTPONED` → `postponed`
+- `CANCELLED` → `cancelled`
 - `SUSPENDED` → `void`
+
+### 9.4 Sync job — what runs against football-data continuously (step 2l)
+
+One job, one HTTP call per active competition per cron tick, two responsibilities:
+
+**Outcome path** — for every FINISHED match in the response: upsert `event_outcomes` (PK `eventId`, first-write-wins), mark `events.status='finished'`, score any unscored predictions per Decided Rule #10 (5 / 2 / 0).
+
+**Fixture path** — for every non-finished match: upsert `events` so kickoff, lock, matchday, and status track football-data verbatim. Covers reschedulings, postponements, cancellations, and previously-unseen matches that football-data adds late in the season. Was previously seed-only — see "Notable deviations" in `roadmap.md`.
+
+Shared helper `server/lib/fixture-sync.ts` is the single source of truth for the upsert. Used by both the cron-driven `syncOutcomes()` (in `outcome-sync.ts`) and the first-deploy bootstrap (`seed.ts`).
+
+Safety rails:
+- **Finished is terminal from the fixture path.** A status flip back to `scheduled` is never written, even if football-data transiently re-emits one. Outcome corrections go through the outcome path with first-write-wins (the score-correction reconciliation pass is still a pre-launch follow-up).
+- **Unchanged scheduled matches short-circuit to a no-op** (no UPDATE) — saves Postgres millions of writes per season.
+- **Matchdays outside our modelled Round structure get counted, not raised** — the `fixturesSkippedNoStage` counter shows up in the sync summary.
+
+Stats returned and logged on every run: `competitionsChecked`, `matchesSeen`, plus outcome counters (`outcomesWritten`, `eventsMarkedFinished`, `predictionsScored`) and fixture counters (`fixturesInserted`, `fixturesUpdated`, `fixturesUnchanged`, `fixturesSkippedFinished`, `fixturesSkippedNoStage`).
+
+Schedule: Render Cron Job hitting `pnpm sync-outcomes` every 5 minutes. CLI name preserved for compatibility — the job now does more than the name suggests.
 
 ---
 
 ## 10. Seed data plan
 
-Run once, server-side, on first deploy:
+The seed script `pnpm seed` is the **first-deploy bootstrap**, not the ongoing fixture source of truth. Run once on a fresh database, or whenever schema migrations require a re-seed; the cron then takes over for everything that changes during the season.
+
+Bootstrap responsibilities:
 
 ```
 sports        : ['football']
@@ -514,11 +536,14 @@ leagues       : 5 tier rows
                   - The Tenner £10  prize=top_3 split [70/20/10]
                   - The Pony   £25  prize=top_5 split [50/25/15/7/3]
                   - The Big One £50 prize=top_5 split [50/25/15/7/3]
+stages        : 9 Rounds per active competition
+events        : all fixtures for the configured season
+pools         : 5 tiers × 1 current stage × competitions with current stage
 ```
 
-`stages` and `events` populated by sync cron (Render Cron Jobs) calling football-data.org.
+Fixture upsert inside the seed uses the same `upsertEventFromFootballData()` helper the cron uses, so seed and cron can't drift on how kickoff / lock / matchday / status get written. Seed is idempotent — re-running it never deletes pools with `pool_entries` rows and never reverts a finished event back to scheduled.
 
-`pools` created by cron when a stage opens: 5 tiers × 1 stage × 1 competition per cron run = 5 rows. Cron runs per competition stage transition.
+`pools` are created idempotently for the current Round only (= lowest-ordinal Round still having ≥ 5 future kickoffs). When a Round settles, a future cron-driven pool-creation step rolls pools forward to the next Round. Not yet built — see "Pool generation cron" in `roadmap.md`.
 
 ---
 
@@ -548,8 +573,13 @@ This section is a living map of endpoints. Status markers: **✓** = shipped, **
                                  matchesLocked/Total, bypassActive flag;
                                  plus `myEntry` when the caller is authed).
                                  Public — myEntry is null when unauthed.
-   GET    /api/pools/:id/entries → entries list (display names only).
-                                    Built when the league-table page lands.
+✓  GET    /api/pools/:id/entries → ranked entries list for the pool's league
+                                    table (arch §8.6). Returns `{ pool, viewer,
+                                    entries: [{ rank, displayName, isYou,
+                                    points, exacts, results }] }`. Public when
+                                    `pool.status='settled'`; live pools require
+                                    auth + an existing entry (401 / 403 / 404
+                                    mapping handled at the route).
 ```
 
 Earlier draft endpoints `/api/competitions/:slug`, `/api/tiers`, `/api/pools` (top-level listing), and `/api/pools/competition/:slug` have been collapsed into `/api/competitions` — pools and tiers are always queried in competition context, so a single richer endpoint replaces four. Bring them back as separate resources only if a future surface needs them.
@@ -591,10 +621,18 @@ No `POST /api/entries/:id/submit`. Per Decided Rule #12 predictions auto-save on
 Every request must carry `X-Admin-Token: <ADMIN_SECRET>` (env var). When `ADMIN_SECRET` is unset, every endpoint returns 401 — closed by default.
 
 ```
-✓  POST   /api/admin/sync-outcomes  → pull FT scores from football-data.org,
-                                       upsert event_outcomes (first-write-wins),
-                                       mark events finished, score any unscored
-                                       predictions (5/2/0 per Decided Rule #10).
+✓  POST   /api/admin/sync-outcomes  → one-shot football-data → DB sync. Does
+                                       BOTH responsibilities in a single HTTP
+                                       call per active competition:
+                                       (a) outcomes — upsert event_outcomes
+                                       (first-write-wins), mark events
+                                       finished, score unscored predictions
+                                       (5/2/0 per Decided Rule #10);
+                                       (b) fixtures — upsert events so
+                                       kickoff/lock/matchday/status track
+                                       football-data for any rescheduled,
+                                       postponed, cancelled, or newly-added
+                                       match (step 2l, see arch §9.4).
                                        Idempotent. Also runnable from the CLI
                                        via `pnpm sync-outcomes`.
 ✓  POST   /api/admin/settle-pools   → for pools where every event is either
