@@ -5,9 +5,26 @@ Real backend wiring: cookies + /api/auth/*. On mount we ask the server "who
 am I?" — if the session cookie's valid we get a user object back; otherwise
 we stay logged-out. Errors thrown by login/register carry the server's
 message text so the UI can surface it directly.
+
+Cold-start tolerance (step 2l follow-up):
+- Render's free tier can take 20-60s to wake a sleeping web service. We no
+  longer impose a 30s hard timeout on the boot-time /api/auth/me round-trip
+  (that timeout was kicking valid sessions out into a logged-out state when
+  the server took longer than 30s to respond).
+- Instead we retry transient network / 5xx failures (up to 3 attempts with
+  exponential backoff). A genuine 401 — cookie expired or no cookie at all —
+  resolves immediately as "logged out", no retry.
+- LoadingSplash (in App.tsx) shows progressively more informative copy as
+  time passes, with a Reload affordance after 60s for the rare case the boot
+  hangs entirely.
+
+Mid-session 401s are handled by `setUnauthorizedHandler` in portal-api.ts:
+on mount we register a callback that clears `user`, and the App.tsx Router's
+portal-URL → /login redirect catches the navigation from there.
 */
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { setUnauthorizedHandler } from "@/lib/portal-api";
 
 export type User = {
   id: string;
@@ -84,42 +101,87 @@ async function apiPost(path: string, body: unknown): Promise<unknown> {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+const ME_RETRY_DELAYS_MS = [2_000, 5_000, 10_000]; // 3 retries; final attempt at ~17s elapsed
+
+/**
+ * Boot-time session restore — calls /api/auth/me, retrying transient failures.
+ *
+ * Returns the user on success, or null when the server resolves us as
+ * logged-out (HTTP 401). Throws only after all retries exhaust on
+ * network/5xx — caller treats that as a temporary failure and leaves
+ * `user` null without flipping to a "definitely logged out" state.
+ *
+ * AbortSignal lets the cleanup function cancel an in-flight call on unmount.
+ */
+async function loadCurrentUser(signal: AbortSignal): Promise<User | null> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= ME_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const res = await fetch("/api/auth/me", {
+        credentials: "include",
+        signal,
+      });
+      if (signal.aborted) return null;
+      if (res.status === 401) return null; // genuinely logged-out, don't retry
+      if (res.ok) {
+        const data = (await res.json()) as { user: ServerUser };
+        return data?.user ? mapServerUser(data.user) : null;
+      }
+      // 5xx or other transient failure — fall through to retry
+      lastError = new Error(`${res.status} ${res.statusText}`);
+    } catch (err) {
+      if (signal.aborted) return null;
+      lastError = err;
+    }
+    const delay = ME_RETRY_DELAYS_MS[attempt];
+    if (delay === undefined) break;
+    await new Promise<void>((resolve) => {
+      const timeoutId = window.setTimeout(resolve, delay);
+      signal.addEventListener("abort", () => {
+        window.clearTimeout(timeoutId);
+        resolve();
+      }, { once: true });
+    });
+    if (signal.aborted) return null;
+  }
+  // All retries exhausted. Bubble up so the caller can decide whether to
+  // treat as logged-out or surface a retry UI.
+  throw lastError ?? new Error("Auth check failed after retries");
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Restore session on mount via the cookie. 401 is normal (= logged-out).
-  // Render's web service can cold-start for 20-60s; cap our wait at 30s and
-  // fall through as anonymous if /me hasn't responded by then. The user's
-  // session cookie still exists — their next real action will pick it up.
+  // Boot-time session restore. No hard timeout — cold starts on Render free
+  // tier can legitimately take 30-60s, and dropping a valid session on the
+  // floor with a 30s abort was the cause of the "refresh logs me out" bug.
+  // Retries are handled inside loadCurrentUser; we just resolve loading
+  // state when it returns.
   useEffect(() => {
-    let cancelled = false;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30_000);
-
     (async () => {
       try {
-        const res = await fetch("/api/auth/me", {
-          credentials: "include",
-          signal: controller.signal,
-        });
-        if (cancelled) return;
-        if (res.ok) {
-          const data = (await res.json()) as { user: ServerUser };
-          if (data?.user) setUser(mapServerUser(data.user));
-        }
+        const u = await loadCurrentUser(controller.signal);
+        if (!controller.signal.aborted) setUser(u);
       } catch {
-        // Abort, timeout, or network error on boot — treat as logged-out, don't block the UI.
+        // Retries exhausted on transient failures — treat as logged-out for
+        // now. Next portal API call will re-trigger the 401 path and the
+        // redirect-to-login flow takes over. Better than spinning forever.
       } finally {
-        clearTimeout(timeoutId);
-        if (!cancelled) setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-      clearTimeout(timeoutId);
-      controller.abort();
-    };
+    return () => controller.abort();
+  }, []);
+
+  // Wire portal-api.ts's 401 interceptor — any post-boot API call returning
+  // 401 (e.g. cookie expired mid-session, server-side session revoked) flips
+  // us to logged-out, which the App.tsx Router catches and redirects to
+  // /login with the current URL preserved as `redirect`.
+  useEffect(() => {
+    setUnauthorizedHandler(() => setUser(null));
+    return () => setUnauthorizedHandler(null);
   }, []);
 
   const login = async (email: string, password: string) => {

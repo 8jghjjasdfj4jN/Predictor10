@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { useEffect, useState } from "react";
-import { Route, Switch } from "wouter";
+import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { AppShell } from "./components/predictor10/AppShell";
 import { MarketingShell } from "./components/predictor10/MarketingShell";
@@ -77,7 +77,9 @@ function PortalRouter() {
  *
  * On Render starter/free tiers the web service can cold-start for 20-60s, so
  * we reveal progressively more text the longer this takes — the user sees a
- * loading state, not a broken page.
+ * loading state, not a broken page. After 60s a Reload affordance appears
+ * for the rare case the boot has genuinely stuck (network drop, server
+ * crash mid-boot).
  */
 function LoadingSplash() {
   const [elapsed, setElapsed] = useState(0);
@@ -88,7 +90,9 @@ function LoadingSplash() {
 
   // No label for the first 2 seconds — most loads resolve before that.
   let label: string | null = null;
-  if (elapsed >= 8) label = "Server is waking up — won't be long…";
+  if (elapsed >= 60) label = "Taking longer than usual.";
+  else if (elapsed >= 30) label = "Still waking up, hang tight…";
+  else if (elapsed >= 8) label = "Server is waking up — won't be long…";
   else if (elapsed >= 2) label = "Loading…";
 
   return (
@@ -102,13 +106,51 @@ function LoadingSplash() {
           <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
         </span>
         {label && <p className="text-xs text-white/55">{label}</p>}
+        {elapsed >= 60 && (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-2 rounded-full border border-emerald-400/40 bg-emerald-400/5 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:border-emerald-300/60 hover:bg-emerald-400/10"
+          >
+            Reload
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
+/**
+ * Portal URLs (/predict, /pools/..., /account/...) are auth-required. When a
+ * logged-out user lands on one — typically a hard refresh after their session
+ * cookie was purged (Safari ITP, manual cookie clear, server-side revoke) —
+ * we'd previously fall through to MarketingRouter, which has no matching
+ * route and renders the marketing-shell 404. Confusing: the user looks
+ * "logged out" with a 404 even though their intent was just to reach a
+ * page they had been on.
+ *
+ * Match what Wouter sees as the current path; redirect to /login carrying
+ * the original URL as `redirect`. LoginPage / RegisterPage read it after
+ * sign-in to bring the user back exactly where they were.
+ */
+const PORTAL_PATH = /^\/(predict|pools|account)(\/|$)/;
+
+function isPortalPath(path: string): boolean {
+  return PORTAL_PATH.test(path);
+}
+
+function RedirectToLogin({ returnTo }: { returnTo: string }) {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    const target = `/login?redirect=${encodeURIComponent(returnTo)}`;
+    setLocation(target);
+  }, [returnTo, setLocation]);
+  return <LoadingSplash />;
+}
+
 function Router() {
   const { isLoggedIn, isLoading } = useAuth();
+  const [path] = useLocation();
 
   if (isLoading) {
     // Brief splash while /api/auth/me resolves on first mount.
@@ -126,9 +168,15 @@ function Router() {
         {isLoggedIn ? <PortalRouter /> : <RegisterPage />}
       </Route>
 
-      {/* Everything else: logged-in → portal, logged-out → public marketing. */}
+      {/* Everything else: logged-in → portal; logged-out → marketing,
+         except logged-out users on portal URLs get redirected to /login
+         with a return-to param so sign-in lands them back where they were. */}
       <Route>
-        {isLoggedIn ? <PortalRouter /> : <MarketingRouter />}
+        {isLoggedIn
+          ? <PortalRouter />
+          : isPortalPath(path)
+            ? <RedirectToLogin returnTo={path} />
+            : <MarketingRouter />}
       </Route>
     </Switch>
   );

@@ -19,6 +19,19 @@ function isOver18(dob: Date): boolean {
   return dob.getTime() <= cutoff.getTime();
 }
 
+/**
+ * Read the `redirect` query param. Same open-redirect guard as LoginPage —
+ * accepts only internal paths starting with a single `/`.
+ */
+function readRedirectParam(): string | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get("redirect");
+  if (!raw) return null;
+  if (!raw.startsWith("/") || raw.startsWith("//")) return null;
+  return raw;
+}
+
 export default function RegisterPage() {
   const { register } = useAuth();
   const [, navigate] = useLocation();
@@ -77,7 +90,10 @@ export default function RegisterPage() {
         country,
         marketingConsent: marketing,
       });
-      navigate("/");
+      // Honour the `redirect` query param when present (deep-link from a
+      // portal URL). Defaults to home otherwise. Same guard as LoginPage.
+      const redirect = readRedirectParam();
+      navigate(redirect ?? "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't create your account. Please try again.");
     } finally {

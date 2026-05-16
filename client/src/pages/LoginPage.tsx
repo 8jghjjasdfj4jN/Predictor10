@@ -3,6 +3,21 @@ import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { AuthShell, AuthField, inputClasses } from "@/components/predictor10/AuthShell";
 
+/**
+ * Read the `redirect` query param from the current URL. Only honour internal
+ * paths (starting with `/` and no protocol) — anything else gets ignored,
+ * preventing open-redirect to attacker domains.
+ */
+function readRedirectParam(): string | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get("redirect");
+  if (!raw) return null;
+  // Must be a relative URL, no protocol, no // prefix (avoids //evil.com).
+  if (!raw.startsWith("/") || raw.startsWith("//")) return null;
+  return raw;
+}
+
 export default function LoginPage() {
   const { login } = useAuth();
   const [, navigate] = useLocation();
@@ -21,7 +36,11 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(email, password);
-      navigate("/");
+      // If the user landed on /login via a deep-link from a portal URL
+      // (App.tsx Router's RedirectToLogin path), the `redirect` query param
+      // tells us where to send them next. Defaults to home otherwise.
+      const redirect = readRedirectParam();
+      navigate(redirect ?? "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed. Check your details and try again.");
     } finally {

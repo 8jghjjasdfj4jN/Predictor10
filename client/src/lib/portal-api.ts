@@ -162,8 +162,29 @@ export type SavePredictionResponse = {
   prediction: EntryMatchPrediction;
 };
 
+// ─── 401 interceptor (step 2l follow-up — refresh-on-portal bug) ─────────
+// Lets AuthContext register a callback that fires when ANY portal API call
+// comes back with 401. That covers the "cookie expired mid-session" case —
+// API call fails, callback flips the auth context to logged-out, the
+// portal-URL → /login redirect in App.tsx Router catches the navigation
+// from there. Module-level so it works from non-React code paths.
+
+type UnauthorizedHandler = () => void;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  unauthorizedHandler = handler;
+}
+
+function notify401IfNeeded(res: Response): void {
+  if (res.status === 401 && unauthorizedHandler) {
+    unauthorizedHandler();
+  }
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path, { credentials: "include" });
+  notify401IfNeeded(res);
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
@@ -183,6 +204,10 @@ export async function fetchCompetitions(): Promise<Competition[]> {
 
 export async function fetchMyEntries(): Promise<UserEntry[]> {
   const res = await fetch("/api/entries/me", { credentials: "include" });
+  notify401IfNeeded(res);
+  // Returning [] on 401 keeps HomePage rendering during the brief moment
+  // before the auth-state flip + redirect-to-login propagate through the
+  // tree. Without this we'd flash a thrown-error state.
   if (res.status === 401) return [];
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return (await res.json()) as UserEntry[];
@@ -198,6 +223,7 @@ export async function enterPool(poolId: string): Promise<EnterPoolResponse> {
     credentials: "include",
     headers: { "Content-Type": "application/json" },
   });
+  notify401IfNeeded(res);
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
@@ -244,6 +270,7 @@ export async function savePrediction(
       body: JSON.stringify({ homeScore, awayScore }),
     },
   );
+  notify401IfNeeded(res);
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
@@ -342,6 +369,7 @@ export async function fetchPoolEntries(poolId: string): Promise<PoolEntriesPaylo
   const res = await fetch(`/api/pools/${encodeURIComponent(poolId)}/entries`, {
     credentials: "include",
   });
+  notify401IfNeeded(res);
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
