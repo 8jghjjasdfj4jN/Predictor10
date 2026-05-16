@@ -133,11 +133,26 @@ React 19 + TypeScript + Vite + Tailwind v4 + shadcn/ui frontend · Express on Re
 - `client/src/App.tsx` — new `isPortalPath()` regex (`/^\/(predict|pools|account)(\/|$)/`), new `RedirectToLogin` component. Router: logged-out + portal URL → `RedirectToLogin` with the original URL as `redirect` query param. Extended `LoadingSplash` with longer escalation: 2s "Loading…", 8s "Server is waking up", 30s "Still waking up", 60s + Reload button.
 - `client/src/pages/LoginPage.tsx` + `RegisterPage.tsx` — `readRedirectParam()` with open-redirect guard (must start with `/`, not `//`). On success, navigate to the redirect param if present, else `/`.
 
-### Live deployment state (post step 2l.1)
+### Step 2m — IA restructure + Pound retirement
+- **Bottom nav slot 3 repurposed**: POOLS → TABLES in `AppShell.tsx`. Trophy icon retained; `matchPrefix` updated to `/tables`.
+- **Prediction screen moved**: `/pools/:competitionSlug/:poolId` → `/predict/:entryId`. Keeps the Predict bottom-nav tab highlighted while users make picks (the old URL was highlighting Pools).
+- **`PoolDetailPage.tsx` refactored**: reads `:entryId` from the URL, fetches `EntryDetail` via `/api/entries/:id` only, renders the entered-state predict view. Pre-entry branches (open/late/closed window states, late-entry warning modal, enter CTA) removed entirely — those flows live in TablesPage now.
+- **`TablesPage.tsx` NEW** (`client/src/pages/portal/`): comp pills + tier sub-tabs (entered tiers prefixed by an emerald dot) + header card with conditional entered-status widget or "Enter · £NN →" button + standings table (`maxRows={10}`, with the viewer's own row pinned below the visible window if they're outside the top 10). Inline entry flow using the existing `LateEntryWarningModal`. Default landing tier: leftmost-entered, fallback to The Fiver. Default comp: leftmost with an open Round.
+- **`PoolStandingsTable.tsx` NEW** (`client/src/components/predictor10/`): shared leaderboard component extracted from PoolTablePage. Optional `maxRows` prop with "↓ N more entries ↓" expander + "Your position" pinned row when truncated. PoolTablePage refactored to consume it (full unbounded list when `maxRows` omitted).
+- **`LegacyPoolRedirect.tsx` NEW** (`client/src/components/predictor10/`): mounted at the old `/pools/:competitionSlug/:poolId` URL. Fetches `/api/entries/me`, finds entry by poolId, redirects to `/predict/:entryId` (or `/tables` if no match / fetch error).
+- **Browse-flow legacy redirects**: `/pools` and `/pools/:competitionSlug` route through a tiny inline `RedirectTo` component → `/tables`. `/pools/:competitionSlug/:poolId/table` stays mounted on PoolTablePage — Account History's `[Table →]` still links there. `PoolsPage.tsx` and `PoolsCompetitionPage.tsx` deleted outright (Pools-as-browse killed per Decisions §May 2026).
+- **The Pound retired**: removed from `TIERS` array in `server/scripts/seed.ts`. New `RETIRED_TIER_SLUGS = ["pound"]` constant drives an idempotent `is_active=false` flip in `seedTiers()` on every run. Existing Round 9 Pound pool + Wez's entry + the `leagues.slug='pound'` row all stay in the DB — they play out and settle normally on 24 May 2026.
+- **`getCompetitionsWithOpenPools` filters by `leagues.is_active=true`**: hides retired tiers from `/api/competitions` (Home + Tables). `/api/pools/:id` and `/api/entries/me` are unaffected so Wez's live Pound entry still loads on the predict screen.
+- **Marketing showcase**: `leagueTiers` mock array in `client/src/lib/mockData.ts` lost its `kickoff-one` entry (4 entries now). `currentLeague` index shifted from `[2]` → `[1]` to keep marketing leaderboard preview anchored to "Premier Ten" (£10). `LeagueShowcase.tsx` copy "Five tiers" → "Four tiers", grid `xl:grid-cols-5` → `xl:grid-cols-4`.
+- **PORTAL_PATH regex** in `App.tsx` extended to include `/tables`. Legacy `/pools` paths still match so logged-out users hitting old URLs go through the redirect-to-login flow with the return URL preserved.
+- **Link target updates**: HomePage's live-entry "Predictions" button → `/predict/:entryId`; Available Tier rows → `/tables`. PredictPage's entry cards → `/predict/:entryId`. AccountHistoryPage's `[Results →]` → `/predict/:entryId`; `[Table →]` unchanged (still legacy `/pools/.../table`).
+
+### Live deployment state (post step 2m)
 - Render web service deployed at `https://predictor10.com`. Build green.
-- Render Postgres: 25 tables. 1 sport, 2 competitions, 5 tiers (Pound retiring per step 2m), 18 stages (9 Rounds × 2 comps), ~932 events, 5 open pools (PL Round 9), `event_outcomes` rows updated continuously by `syncOutcomes()`.
-- Wez has an entry in The Pound for Round 9 with `Aston Villa 2-2 Liverpool` saved. Round 9 settles Sun 24 May 2026.
-- Round 9 league table viewable at `/pools/premier-league/{poolId}/table`.
+- Render Postgres: 25 tables. 1 sport, 2 competitions, 5 leagues — 4 active (Fiver / Tenner / Pony / Big One) + 1 inactive (Pound). 18 stages (9 Rounds × 2 comps), ~932 events, 5 open pools for PL Round 9 (one being The Pound, still settling 24 May), `event_outcomes` rows updated continuously by `syncOutcomes()`.
+- Wez has an entry in The Pound for Round 9 with `Aston Villa 2-2 Liverpool` saved. Round 9 settles Sun 24 May 2026. After 24 May, no Pound pool will ever be created again — `seedTiers()` flips `is_active=false` and `seedPoolsForCurrentRound()` only iterates active TIERS.
+- Round 9 league table viewable at `/pools/premier-league/{poolId}/table` (settled-table URL preserved post step 2m).
+- Bottom nav: HOME / PREDICT / TABLES / ACCOUNT. Trophy icon for Tables.
 - Render env vars: `DATABASE_URL`, `FOOTBALL_API_KEY`, `NODE_ENV`, `BYPASS_LATE_ENTRY=true`, `ADMIN_SECRET`, `SESSION_SECRET`.
 - Node pinned `22.20.0` via `.nvmrc` + `engines.node`. Build command still reads `corepack enable && pnpm install && pnpm build` — `--frozen-lockfile` tightening still pending dashboard config.
 - `pnpm settle-pools` runs clean. `POST /api/admin/settle-pools` and `POST /api/admin/sync-outcomes` verified end-to-end (401 without token, identical stats JSON to CLI with token).
@@ -216,7 +231,9 @@ Carry forward, none urgent for the next step:
 - **Cold-start retry tops out at ~17s elapsed** — beyond that, treated as logged-out (the redirect-to-login flow takes over). Bump the backoff schedule if legit cold starts routinely exceed that.
 - **Manus runtime inlined in Vite production builds** — the scaffolded `vite.config.ts` injects a ~250KB preview-mode runtime into every build's `index.html`. Causes a blank white screen on Chrome iPhone after refresh (not Safari). Doesn't affect native app store builds. Strip the plugin from `vite.config.ts` before public web launch.
 - **Resend / email templates** — still no transactional email. Signup creates an unverified account that can use the product. `RESEND_API_KEY` not in env yet.
-- **Old `/pools/...` URLs** — once step 2m ships and the prediction screen moves to `/predict/:entryId`, decide whether to add short-term redirects or hard-switch (existing share links / browser history will 404 otherwise).
+- **Legacy `/pools/*` redirects** — `/pools`, `/pools/:slug`, and `/pools/:slug/:poolId` all redirect to new step-2m URLs. Hard-switch (remove the redirect handlers) once inbound `/pools/*` traffic disappears from logs (~30 days post-launch). `/pools/:slug/:poolId/table` is NOT in the redirect set — PoolTablePage is mounted there and Account History's `[Table →]` still links to it.
+- **`/tables` deep links** — Tables tab currently has no URL state for the selected (comp, tier). Home's Available Tier rows all land on plain `/tables` and require the user to manually tap the right sub-tab to enter. Add `/tables/:competitionSlug/:tierSlug` or `?comp=&tier=` query support so the Home flow is one-tap end-to-end. Low priority — Fiver (the default) is also the most common entry tier.
+- **Marketing tier names** — `leagueTiers` in `client/src/lib/mockData.ts` still uses old branding (Matchday Five / Premier Ten / Grand Twenty / Elite Fifty with prices £5/£10/£20/£50). Portal tiers are now Fiver/Tenner/Pony/Big One at £5/£10/£25/£50. Names + prices should be aligned pre-launch — kept misaligned in step 2m to avoid scope creep.
 
 ## My working style
 
@@ -235,59 +252,34 @@ Carry forward, none urgent for the next step:
 - **Render deploys with `--frozen-lockfile`** (target — see follow-up flag above). Whenever `package.json` changes, ship `pnpm-lock.yaml` in the same batch or the build fails with `ERR_PNPM_OUTDATED_LOCKFILE`.
 - **Schema changes need `pnpm db:push` after deploy** (drizzle-kit syncs schema → live Postgres). Flag this explicitly whenever a step touches `server/db/schema/`. If matchday is missing or any new column is missing, the user has likely skipped this step.
 
-## What's next — step 2m
+## What's next — TBD with Wez
 
-**Menu / IA restructure + Pound retirement.** Three concurrent changes, one deploy:
+Step 2m is done. Open candidates for the next step (Wez picks):
 
-**1. PREDICT tab tap-through bug** — tapping an entry on the Predict tab today jumps to `/pools/<slug>/<id>`, which highlights Pools in the bottom nav. Fix: introduce `/predict/:entryId` route that renders the existing PoolDetailPage component. Update PredictPage's entry links to point there. Bottom nav highlighting is path-based, so the Predict tab stays lit.
+- **Render Cron Jobs** — automated outcome sync (5-min) + pool settle (15-min). Pure dashboard work, no new code; just configuration. The two CLI scripts (`pnpm sync-outcomes`, `pnpm settle-pools`) are ready and the admin endpoints are token-gated. Currently both run manually.
+- **Tables tab deep links** — `/tables/:competitionSlug/:tierSlug` (or `?comp=&tier=` query) so Home's Available Tier rows land on the right tier in one tap.
+- **Resend + email verification** — signup currently creates an unverified account. Wire up `RESEND_API_KEY`, transactional templates, magic-link flow.
+- **`pool_entries` unique index `(pool_id, user_id)`** — DB-level Decided Rule #2 enforcement, closing the concurrent-double-tap race. Pre-launch blocker eventually.
+- **Marketing tier name alignment** — `leagueTiers` mock data still uses old branding (Matchday Five / Premier Ten / Grand Twenty / Elite Fifty at £5/£10/£20/£50). Should align with portal reality (Fiver / Tenner / Pony / Big One at £5/£10/£25/£50).
+- **Manus runtime strip from `vite.config.ts`** — fixes the blank Chrome iPhone refresh. Web-only; doesn't block native app builds.
 
-**2. POOLS tab → TABLES tab (Option C, locked).** Repurpose the third bottom-nav slot. Route: `/tables` (with optional `/tables/:competitionSlug/:tier` deep links — TBD whether to expose those URLs or keep state in-page). Layout:
-- Competition pills row (Premier League, Championship — selected pill solid emerald, others faded).
-- Tier sub-tabs row (Fiver, Tenner, Pony, Big One — selected has emerald underline, entered tiers prefixed by emerald dot).
-- Header: tier name + meta line ("£10 · 32 players · £320 pot") on the left; right side shows either "You — Nth · X pts" (entered) or "Enter · £NN →" emerald button (not entered).
-- Standings table reusing the PoolTablePage component (gold 1-3, emerald "You", `↓ N more ↓` truncation footer).
-- Default landing tier: leftmost where viewer is entered; fallback to first tier if entered in none.
-- Bottom nav: change label/icon from "POOLS" to "TABLES" (trophy stays).
-
-**3. Retire The Pound.**
-- Remove from `TIERS` array in `server/scripts/seed.ts`. From the next run onwards, no Pound pools get created.
-- Wez's existing Round 9 Pound entry plays out and settles normally on Sun 24 May 2026 (no migration needed — the row stays in the DB).
-- Remove the "Play The Pound" CTA from Home immediately on deploy.
-- Update marketing pages (`/rules`, `/leagues`) to show 4 tiers, not 5.
-- Don't drop the `leagues.slug='pound'` row from the DB — keep it for historical reference. Just deactivate it (set `is_active=false`).
-
-**Routes after step 2m:**
+Routes as of step 2m:
 | URL | Page |
 |---|---|
 | `/` | Home (logged-in: portal Home; logged-out: marketing) |
 | `/predict` | Predict tab — list of entries |
-| `/predict/:entryId` | Prediction screen (was `/pools/:slug/:poolId`) |
+| `/predict/:entryId` | Prediction screen |
 | `/tables` | Tables tab |
+| `/pools/:slug/:poolId` | Legacy redirect → `/predict/:entryId` (or `/tables` if no entry) |
+| `/pools/:slug/:poolId/table` | Standalone league table (linked from Account History) |
+| `/pools`, `/pools/:slug` | Legacy redirect → `/tables` |
 | `/account`, `/account/history` | unchanged |
 | `/login`, `/register` | unchanged |
 
-Files likely touched (verify before bulk-changing):
-- `client/src/App.tsx` — route map, bottom nav labels, `isPortalPath` regex (add `/tables`)
-- `client/src/components/predictor10/AppShell.tsx` — bottom nav definition
-- `client/src/pages/portal/PredictPage.tsx` — entry link target
-- `client/src/pages/portal/PoolDetailPage.tsx` — rename to `EntryPredictPage.tsx`? Or keep filename and just remap the route. Recommend keep filename.
-- `client/src/pages/portal/TablesPage.tsx` — NEW, replaces PoolsPage / PoolsCompetitionPage / standalone PoolTablePage uses.
-- `client/src/pages/portal/HomePage.tsx` — drop Pound CTA, update entry-link targets to `/predict/:entryId`
-- `client/src/pages/portal/AccountHistoryPage.tsx` — `[Results →]` and `[Table →]` link targets update
-- `server/scripts/seed.ts` — remove Pound from TIERS, or mark it `is_active=false`
-- `docs/pre-launch.md` — log Manus runtime removal as a launch blocker
-
-Before bulk-changing, confirm with Wez:
-- Old `/pools/...` URLs — short-term redirect or hard-switch?
-- TablesPage default sub-tab when viewer is entered in nothing — which tier to land on?
-- Default landing tier when viewer is entered in multiple — leftmost-entered, or highest-stakes-entered?
-
 ## What to do first
 
-1. Read all three docs in `/docs/` (architecture first, especially §6-§8 which step 2m rewrites).
-2. Skim the recent file edits to understand the current shape — particularly `server/lib/portal-data.ts`, `client/src/pages/portal/PoolDetailPage.tsx`, `client/src/pages/portal/PoolTablePage.tsx`, `client/src/App.tsx`.
-3. Confirm Wez's three clarifying questions above before bulk-changing files.
-4. Propose your file plan for step 2m in tabular form with folder paths.
+1. Read all three docs in `/docs/` (architecture first).
+2. Skim the recent file edits — `server/lib/portal-data.ts`, `client/src/pages/portal/TablesPage.tsx`, `client/src/pages/portal/PoolDetailPage.tsx`, `client/src/App.tsx`.
+3. Ask Wez what's next.
+4. Propose your file plan in tabular form with folder paths.
 5. Wait for "go" before bulk-changing files.
-
-Don't ask 5 clarifying questions. Read the docs, ask the 3 above, make a recommendation, Wez will push back if it's wrong.

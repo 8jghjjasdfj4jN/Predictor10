@@ -95,18 +95,6 @@ export const appMeta = {
 
 export const leagueTiers: LeagueTier[] = [
   {
-    id: "kickoff-one",
-    name: "Kickoff One",
-    entry: 1,
-    tagline: "Weekly entry, low-friction start",
-    players: 248,
-    prizePool: "£248 projected",
-    status: "Open",
-    roundDuration: "Round 3 · 4 gameweeks",
-    description: "Ideal for casual entry with full weekly competition energy.",
-    accent: "from-emerald-500/40 via-emerald-400/10 to-transparent",
-  },
-  {
     id: "matchday-five",
     name: "Matchday Five",
     entry: 5,
@@ -156,7 +144,10 @@ export const leagueTiers: LeagueTier[] = [
   },
 ];
 
-export const currentLeague = leagueTiers[2];
+// Index shifted from 2 → 1 in step 2m (Kickoff One tier removed). Still
+// points at Premier Ten (£10) — keeping the marketing leaderboard preview
+// anchored to the same tier as before.
+export const currentLeague = leagueTiers[1];
 
 export const roundOptions = [
   "Round 1 · Gameweeks 1–4",

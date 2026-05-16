@@ -5,10 +5,11 @@ Per-user list of every settled pool the user entered, newest first. Header
 stat strip shows rounds played, cashes, best rank (Decided Rule #11 — once
 a Round settles its pools disappear from active surfaces and land here).
 
-Cards link out via [Results →] to the read-only Pool detail at
-`/pools/:slug/:poolId`. The [Table →] CTA in the wireframe goes to a League
-Table page that doesn't exist yet (step 2k); placeholder kept for parity but
-disabled.
+Cards link out via [Results →] to the read-only Predict screen at
+`/predict/:entryId` (step 2m IA restructure — was `/pools/:slug/:poolId`).
+The [Table →] CTA links to the standalone league table view at
+`/pools/:slug/:poolId/table` — that URL stays mounted post step 2m
+precisely because settled-pool tables are linked from here.
 
 Grouping: cards are grouped by Round under a "ROUND N · MMM YYYY" header,
 newest Round first. Cashed cards get an amber accent + trophy.
@@ -138,7 +139,7 @@ function EntryCard({ entry }: { entry: SettledEntry }) {
 
       <div className="mt-3 flex gap-2">
         <Link
-          href={`/pools/${entry.competitionSlug}/${entry.poolId}`}
+          href={`/predict/${entry.id}`}
           className={cn(
             "flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2",
             "border border-white/10 bg-white/[0.03]",

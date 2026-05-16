@@ -111,7 +111,7 @@ function LiveEntryCard({ entry, competitionSlug }: { entry: UserEntry; competiti
   const progress = entry.predictionsTotal > 0
     ? `${entry.predictionsMade}/${entry.predictionsTotal} saved`
     : "No matches yet";
-  const predictHref = `/pools/${competitionSlug}/${entry.poolId}`;
+  const predictHref = `/predict/${entry.id}`;
   const tableHref = `/pools/${competitionSlug}/${entry.poolId}/table`;
   return (
     <div
@@ -198,7 +198,7 @@ function LiveEntriesSection({
 function AvailableTierRow({ pool, competitionSlug }: { pool: Pool; competitionSlug: string }) {
   return (
     <Link
-      href={`/pools/${competitionSlug}/${pool.id}`}
+      href="/tables"
       className={cn(
         "flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.02]",
         "px-4 py-3.5 transition hover:border-emerald-300/30 hover:bg-emerald-400/[0.04]",

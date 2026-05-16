@@ -9,10 +9,10 @@ export function LeagueShowcase() {
       <SectionHeader
         eyebrow="Competition tiers"
         title="Pick your level. Same rules, different stakes."
-        description="Five tiers from casual entry to the elite leaderboard. While we're in test mode all tiers are free to play with virtual credits. Real-money entry switches on at licence grant."
+        description="Four tiers from value entry to the elite leaderboard. While we're in test mode all tiers are free to play with virtual credits. Real-money entry switches on at licence grant."
       />
 
-      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {leagueTiers.map((league) => (
           <div
             key={league.id}

@@ -1,18 +1,22 @@
 /*
-Pool detail / Predict (arch §8.5).
+Predict screen — arch §8.5, refactored for step 2m.
 
-Two top-level branches:
+Now served at /predict/:entryId — a fresh URL so the Predict bottom-nav tab
+stays highlighted while making picks (was /pools/:slug/:poolId, which
+highlighted Pools).
 
-  Pre-entry  — PoolDetail drives header + tier card + window-state CTA.
-               (Three sub-states: window 'open', 'late', 'closed'.)
-  Entered    — EntryDetail drives the canonical Predict screen: GW tabs,
-               day-grouped match rows, debounced auto-save, footer indicator.
+Scope: this is the *entered* view only. Pre-entry flow lives on the Tables
+tab now — it handles the open/late/closed window states, the late-entry
+warning modal, and the POST /api/pools/:id/enter call. By the time a user
+reaches /predict/:entryId, they're always entered.
 
-Pre-entry is exactly what shipped in step 2e — untouched. The "You're in"
-placeholder has been replaced with the real canonical layout (step 2f).
+Two top-level branches inside the entered view, both driven by EntryDetail:
 
-Settled state, FT scores, points pills and live in-play indicators arrive
-behind the settlement / live-sync work (step 2g+).
+  Active   — GW tabs, day-grouped match rows, 800ms debounced auto-save,
+             footer "Auto-saving · saved 2s ago" indicator.
+  Settled  — read-only. "Final · Settled DATE · X pts · Rank N of Y" meta
+             line, "Round complete · View league table" banner, read-only
+             footer pill. Decided Rule #11.
 */
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -20,7 +24,6 @@ import { Link, useRoute } from "wouter";
 import {
   ArrowLeft,
   ArrowRight,
-  AlarmClock,
   AlertTriangle,
   Loader2,
   Lock,
@@ -30,15 +33,11 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
-  enterPool,
   fetchEntryDetail,
-  fetchPoolDetail,
   type EntryDetail,
   type EntryMatch,
-  type PoolDetail,
   type SavePredictionResponse,
 } from "@/lib/portal-api";
-import { LateEntryWarningModal } from "@/components/predictor10/LateEntryWarningModal";
 import { PredictGameweekTabs } from "@/components/predictor10/PredictGameweekTabs";
 import { PredictMatchRow } from "@/components/predictor10/PredictMatchRow";
 
@@ -55,28 +54,11 @@ function formatDate(iso: string | null): string {
   return DATE_FMT.format(new Date(iso));
 }
 
-function formatFee(decimal: string): string {
-  const num = parseFloat(decimal);
-  return `£${num % 1 === 0 ? num.toFixed(0) : num.toFixed(2)}`;
-}
-
 function formatMatchdayRange(matchdays: number[], label: "GW" | "MD"): string {
   if (matchdays.length === 0) return "";
   const first = matchdays[0];
   const last = matchdays[matchdays.length - 1];
   return matchdays.length === 1 ? `${label} ${first}` : `${label}s ${first}-${last}`;
-}
-
-function formatEntryCount(n: number): string {
-  if (n === 0) return "No entries yet";
-  if (n === 1) return "1 entry";
-  return `${n.toLocaleString("en-GB")} entries`;
-}
-
-function daysSince(iso: string | null): number {
-  if (!iso) return 0;
-  const ms = Date.now() - new Date(iso).getTime();
-  return Math.max(0, Math.floor(ms / (24 * 60 * 60 * 1000)));
 }
 
 function formatSavedAgo(savedAt: number, now: number): string {
@@ -95,7 +77,11 @@ function formatDayHeader(iso: string): string {
   return formatDate(iso); // e.g. "Sat 22 Aug"
 }
 
-// ─── Pre-entry sub-components (unchanged from step 2e) ───────────────────
+function formatSettledDate(iso: string): string {
+  return DATE_FMT.format(new Date(iso));
+}
+
+// ─── Shared sub-components ───────────────────────────────────────────────
 
 function BackLink({ to, label }: { to: string; label: string }) {
   return (
@@ -147,240 +133,7 @@ function RoundHeader({
   );
 }
 
-function TierCard({ detail }: { detail: PoolDetail }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0 space-y-0.5">
-          <p className="truncate font-['Barlow_Condensed'] text-[1.25rem] font-bold uppercase tracking-[0.06em] text-white">
-            {detail.tier.name}
-          </p>
-          <p className="font-['Manrope'] text-[0.75rem] text-white/45">
-            {formatEntryCount(detail.entryCount)}
-          </p>
-        </div>
-        <span className="flex-shrink-0 font-['Barlow_Condensed'] text-[1.6rem] font-extrabold leading-none text-emerald-300">
-          {formatFee(detail.tier.entryFee)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function WindowBadge({ detail }: { detail: PoolDetail }) {
-  if (detail.entryWindow === "open") {
-    return (
-      <div
-        className={cn(
-          "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1",
-          "border border-emerald-300/30 bg-emerald-400/10",
-          "font-['Manrope'] text-[0.66rem] font-semibold uppercase tracking-[0.18em] text-emerald-200",
-        )}
-      >
-        <AlarmClock className="h-3 w-3" aria-hidden />
-        <span>Late entry closes {formatDate(detail.closesAt)}</span>
-      </div>
-    );
-  }
-  if (detail.entryWindow === "late") {
-    return (
-      <div
-        className={cn(
-          "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1",
-          "border border-amber-300/30 bg-amber-400/10",
-          "font-['Manrope'] text-[0.66rem] font-semibold uppercase tracking-[0.18em] text-amber-200",
-        )}
-      >
-        <AlertTriangle className="h-3 w-3" aria-hidden />
-        <span>Late entry — warning required</span>
-      </div>
-    );
-  }
-  return (
-    <div
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1",
-        "border border-white/15 bg-white/[0.04]",
-        "font-['Manrope'] text-[0.66rem] font-semibold uppercase tracking-[0.18em] text-white/55",
-      )}
-    >
-      <Lock className="h-3 w-3" aria-hidden />
-      <span>Round closed</span>
-    </div>
-  );
-}
-
-function EnterCTA({
-  feeLabel,
-  submitting,
-  onClick,
-}: {
-  feeLabel: string;
-  submitting: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={submitting}
-      className={cn(
-        "flex w-full items-center justify-center gap-2 rounded-2xl",
-        "bg-emerald-500 px-5 py-4 font-['Manrope'] text-[0.95rem] font-semibold tracking-wide text-black",
-        "transition hover:bg-emerald-400 active:bg-emerald-600",
-        "disabled:cursor-not-allowed disabled:opacity-60",
-        "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60",
-        "min-h-[52px]",
-      )}
-    >
-      {submitting ? (
-        <>
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-          <span>Entering…</span>
-        </>
-      ) : (
-        <span>Enter — {feeLabel}</span>
-      )}
-    </button>
-  );
-}
-
-function ClosedState() {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-5 py-6 text-center">
-      <p className="font-['Barlow_Condensed'] text-[0.86rem] font-bold uppercase tracking-[0.22em] text-white/55">
-        Entries closed
-      </p>
-      <p className="mt-2 font-['Manrope'] text-[0.78rem] leading-relaxed text-white/45">
-        This Round's late-entry window has passed. The next Round's pools will appear on Home when
-        they open.
-      </p>
-    </div>
-  );
-}
-
-function LateEntryBanner({
-  daysLive,
-  matchesLocked,
-  matchesTotal,
-}: {
-  daysLive: number;
-  matchesLocked: number;
-  matchesTotal: number;
-}) {
-  const liveCopy =
-    daysLive <= 0
-      ? "is already in progress"
-      : daysLive === 1
-        ? "has been live for 1 day"
-        : `has been live for ${daysLive} days`;
-  return (
-    <div className="rounded-2xl border border-amber-300/30 bg-amber-400/[0.06] px-4 py-3.5">
-      <div className="flex items-start gap-2.5">
-        <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" aria-hidden />
-        <div className="min-w-0 space-y-1">
-          <p className="font-['Manrope'] text-[0.78rem] font-semibold text-amber-100">Late entry</p>
-          <p className="font-['Manrope'] text-[0.74rem] leading-relaxed text-amber-100/75">
-            This Round {liveCopy}. {matchesLocked} of {matchesTotal} matches have already kicked off
-            — you'll score 0 on those.
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Pre-entry view ──────────────────────────────────────────────────────
-
-function PreEntryView({
-  detail,
-  onEntered,
-}: {
-  detail: PoolDetail;
-  onEntered: () => Promise<void>;
-}) {
-  const [submitting, setSubmitting] = useState(false);
-  const [showLateModal, setShowLateModal] = useState(false);
-
-  const feeLabel = formatFee(detail.tier.entryFee);
-  const canEnter = detail.entryWindow === "open" || detail.entryWindow === "late";
-  const showLateBanner = detail.entryWindow === "late";
-
-  async function submitEntry(): Promise<void> {
-    if (submitting) return;
-    setSubmitting(true);
-    try {
-      const result = await enterPool(detail.id);
-      if (!result.alreadyEntered) {
-        toast.success(`Entered ${detail.tier.name} · ${feeLabel}`);
-      }
-      await onEntered();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't enter pool.");
-    } finally {
-      setSubmitting(false);
-      setShowLateModal(false);
-    }
-  }
-
-  function onCTAClick(): void {
-    if (detail.entryWindow === "late") {
-      setShowLateModal(true);
-    } else {
-      submitEntry();
-    }
-  }
-
-  return (
-    <>
-      <RoundHeader
-        competitionName={detail.competition.name}
-        roundName={detail.currentRound.name}
-        matchdays={detail.currentRound.matchdays}
-        matchdayLabel={detail.currentRound.matchdayLabel}
-        endDate={detail.currentRound.endDate}
-      />
-
-      <div className="space-y-3">
-        <TierCard detail={detail} />
-        <div>
-          <WindowBadge detail={detail} />
-        </div>
-      </div>
-
-      {showLateBanner && (
-        <LateEntryBanner
-          daysLive={daysSince(detail.firstKickoffAt)}
-          matchesLocked={detail.matchesLocked}
-          matchesTotal={detail.matchesTotal}
-        />
-      )}
-
-      {detail.entryWindow === "closed" && <ClosedState />}
-
-      {canEnter && (
-        <EnterCTA feeLabel={feeLabel} submitting={submitting} onClick={onCTAClick} />
-      )}
-
-      <LateEntryWarningModal
-        open={showLateModal}
-        onOpenChange={(open) => {
-          if (!submitting) setShowLateModal(open);
-        }}
-        onConfirm={submitEntry}
-        roundName={detail.currentRound.name}
-        daysLive={daysSince(detail.firstKickoffAt)}
-        matchesLocked={detail.matchesLocked}
-        matchesTotal={detail.matchesTotal}
-        feeLabel={feeLabel}
-        bypassActive={detail.bypassActive}
-        submitting={submitting}
-      />
-    </>
-  );
-}
-
-// ─── Entered (canonical Predict) view ────────────────────────────────────
+// ─── Active-state sub-components ─────────────────────────────────────────
 
 /**
  * Picks the default GW tab on first load:
@@ -437,11 +190,7 @@ function PredictFooter({ state }: { state: FooterState }) {
   );
 }
 
-// ─── Settled-state subcomponents (Decided Rule #11) ──────────────────────
-
-function formatSettledDate(iso: string): string {
-  return DATE_FMT.format(new Date(iso));
-}
+// ─── Settled-state sub-components (Decided Rule #11) ─────────────────────
 
 /**
  * Header meta row shown in place of "X/Y saved" when the entry is settled.
@@ -543,15 +292,9 @@ function SettledFooter() {
   );
 }
 
-function EnteredView({
-  entryId,
-  competitionName,
-  onLockRejection,
-}: {
-  entryId: string;
-  competitionName: string;
-  onLockRejection: () => void;
-}) {
+// ─── Entered (canonical Predict) view ────────────────────────────────────
+
+function EnteredView({ entryId }: { entryId: string }) {
   const [entry, setEntry] = useState<EntryDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeMatchday, setActiveMatchday] = useState<number | null>(null);
@@ -614,7 +357,6 @@ function EnteredView({
         lockRejectionFiredRef.current = true;
         toast.error("That match just locked — refreshing.");
         setFooter({ kind: "error", message: "Match locked — refreshing" });
-        onLockRejection();
         load();
         return;
       }
@@ -623,7 +365,7 @@ function EnteredView({
     },
     // load is stable enough — defined per render but no real cost
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [onLockRejection],
+    [],
   );
 
   // Group the active GW's matches by day for the day-headers.
@@ -665,6 +407,7 @@ function EnteredView({
   }
 
   const isSettled = entry.settledAt !== null;
+  const tableHref = `/pools/${entry.competition.slug}/${entry.poolId}/table`;
 
   return (
     <>
@@ -674,7 +417,7 @@ function EnteredView({
       />
 
       <RoundHeader
-        competitionName={competitionName}
+        competitionName={entry.competition.name}
         roundName={entry.currentRound.name}
         matchdays={entry.currentRound.matchdays}
         matchdayLabel={entry.currentRound.matchdayLabel}
@@ -693,13 +436,11 @@ function EnteredView({
               {entry.predictionsMade}/{entry.matchesTotal} saved
             </p>
           </div>
-          <LiveTableLink tableHref={`/pools/${entry.competition.slug}/${entry.poolId}/table`} />
+          <LiveTableLink tableHref={tableHref} />
         </div>
       )}
 
-      {isSettled && (
-        <SettledBanner tableHref={`/pools/${entry.competition.slug}/${entry.poolId}/table`} />
-      )}
+      {isSettled && <SettledBanner tableHref={tableHref} />}
 
       <PredictGameweekTabs
         gameweeks={entry.gameweeks}
@@ -744,65 +485,22 @@ function EnteredView({
 // ─── Top-level page ──────────────────────────────────────────────────────
 
 export default function PoolDetailPage() {
-  const [, params] = useRoute<{ competitionSlug: string; poolId: string }>(
-    "/pools/:competitionSlug/:poolId",
-  );
-  const poolId = params?.poolId ?? "";
+  const [, params] = useRoute<{ entryId: string }>("/predict/:entryId");
+  const entryId = params?.entryId ?? "";
 
-  const [detail, setDetail] = useState<PoolDetail | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  async function loadDetail(): Promise<void> {
-    try {
-      const d = await fetchPoolDetail(poolId);
-      setDetail(d);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Couldn't load pool.");
-    }
-  }
-
-  useEffect(() => {
-    if (!poolId) return;
-    setDetail(null);
-    setLoadError(null);
-    loadDetail();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poolId]);
-
-  if (loadError) {
+  if (!entryId) {
+    // Should never happen given the route definition; defensive empty state.
     return (
       <div className="space-y-5 px-4 py-7">
         <BackLink to="/" label="Home" />
-        <p className="font-['Manrope'] text-sm text-rose-200">{loadError}</p>
+        <p className="font-['Manrope'] text-sm text-rose-200">No entry specified.</p>
       </div>
     );
   }
-
-  if (!detail) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-2 px-4 py-12 text-white/50">
-        <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-        <p className="font-['Manrope'] text-xs">Loading pool…</p>
-      </div>
-    );
-  }
-
-  const isEntered = detail.myEntry !== null;
 
   return (
     <div className="space-y-6 px-4 py-7 pb-10">
-      {isEntered ? (
-        <EnteredView
-          entryId={detail.myEntry!.id}
-          competitionName={detail.competition.name}
-          onLockRejection={loadDetail}
-        />
-      ) : (
-        <>
-          <BackLink to="/" label="Home" />
-          <PreEntryView detail={detail} onEntered={loadDetail} />
-        </>
-      )}
+      <EnteredView entryId={entryId} />
     </div>
   );
 }

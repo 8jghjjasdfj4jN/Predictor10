@@ -1,7 +1,8 @@
 /*
 Predict (arch §8.2) — every open entry the user holds, grouped by close
 time. Cards deep-link to the canonical Predict screen at
-`/pools/:competitionSlug/:poolId`.
+`/predict/:entryId` (step 2m IA restructure — keeps the Predict bottom-nav
+tab highlighted while picking; was `/pools/:competitionSlug/:poolId`).
 
 Two sections:
   CLOSING SOON — entries whose pool late-entry window closes within 48h.
@@ -10,10 +11,10 @@ Two sections:
 
 The "closing soon" threshold of 48h is chosen to keep the urgency bucket
 useful without firing too eagerly. Entries already past their late-entry
-window stay reachable via Home/Pools — they're not duplicated here.
+window stay reachable via Home/Tables — they're not duplicated here.
 
-Empty state: "No open entries — pick a tier on Home." When /pools ships
-(arch §8.3), the link should swap to /pools.
+Empty state: "No open entries — pick a tier on Home." Tables tab is the
+secondary discovery surface (step 2m).
 */
 
 import { useEffect, useState } from "react";
@@ -77,7 +78,7 @@ function EntryCard({
 
   return (
     <Link
-      href={`/pools/${entry.competitionSlug}/${entry.poolId}`}
+      href={`/predict/${entry.id}`}
       className={cn(
         "block rounded-2xl border px-4 py-4 transition",
         "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
