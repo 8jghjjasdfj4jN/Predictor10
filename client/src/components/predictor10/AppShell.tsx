@@ -2,9 +2,14 @@
 Brand reminder — Broadcast Noir Athletics:
 Post-login portal shell. Mobile-first, max 480px column on desktop (arch §1).
 Sticky top bar (logo · live badge · greeting+avatar) + sticky 4-tab bottom
-nav (Home · Predict · Pools · Account). Auth pages and the public marketing
+nav (Home · Predict · Tables · Account). Auth pages and the public marketing
 surface use AuthShell / MarketingShell respectively — this is the shell behind
 login only.
+
+Step 2m: third slot in the bottom nav repurposed. Was POOLS (Trophy icon →
+/pools); now TABLES (Trophy icon stays → /tables). Match prefix updated so
+the tab highlights for /tables/... but no longer for /pools/... (legacy
+redirects route those URLs elsewhere anyway).
 */
 
 import { Link, useLocation } from "wouter";
@@ -16,15 +21,15 @@ type NavItem = {
   href: string;
   label: string;
   icon: typeof House;
-  /** Routes considered "this tab" beyond the exact href (e.g. /pools/* belongs to Pools). */
+  /** Routes considered "this tab" beyond the exact href (e.g. /tables/* belongs to Tables). */
   matchPrefix?: string;
 };
 
 const NAV: NavItem[] = [
-  { href: "/",        label: "Home",    icon: House                              },
-  { href: "/predict", label: "Predict", icon: ListChecks, matchPrefix: "/predict" },
-  { href: "/pools",   label: "Pools",   icon: Trophy,     matchPrefix: "/pools"   },
-  { href: "/account", label: "Account", icon: User2,      matchPrefix: "/account" },
+  { href: "/",        label: "Home",    icon: House                                },
+  { href: "/predict", label: "Predict", icon: ListChecks, matchPrefix: "/predict"  },
+  { href: "/tables",  label: "Tables",  icon: Trophy,     matchPrefix: "/tables"   },
+  { href: "/account", label: "Account", icon: User2,      matchPrefix: "/account"  },
 ];
 
 function isActive(currentPath: string, item: NavItem) {

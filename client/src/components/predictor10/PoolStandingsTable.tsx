@@ -1,0 +1,228 @@
+/*
+PoolStandingsTable — shared leaderboard component (step 2m).
+
+Pulled out of PoolTablePage so the Tables tab can reuse the same visual
+without duplicating the row / table / footer styling. Behaviour matches
+arch §8.6:
+
+  - Gold rank numbers (amber-300) for the top 3 podium positions.
+  - Emerald-tinted row when entry.isYou.
+  - Decided Rule #10 tie-break verbatim in the footer:
+      pts → exact-score count → correct-result count → split.
+
+New for the Tables tab use case: optional `maxRows` truncation. When set
+and the leaderboard is longer than that, the table shows the top N rows
+plus a "↓ M more ↓" expander. If the viewer's own row sits below the
+visible window, it's pinned in a separate "Your position" section so they
+can always see their rank without expanding.
+
+Standalone callers (PoolTablePage) omit `maxRows` to get the full list.
+*/
+
+import { useState } from "react";
+import { ChevronDown, ChevronUp, Trophy } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { PoolEntry } from "@/lib/portal-api";
+
+// ─── Sub-components ──────────────────────────────────────────────────────
+
+function LeaderboardRow({ entry }: { entry: PoolEntry }) {
+  const isPodium = entry.rank >= 1 && entry.rank <= 3;
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-[28px_1fr_36px_36px_44px] items-center gap-2 px-3 py-3",
+        entry.isYou && "bg-emerald-400/[0.08]",
+      )}
+    >
+      <span
+        className={cn(
+          "text-center font-['Barlow_Condensed'] text-[1rem] font-extrabold tabular-nums",
+          isPodium ? "text-amber-300" : "text-white/55",
+        )}
+      >
+        {entry.rank}
+      </span>
+      <span
+        className={cn(
+          "min-w-0 truncate font-['Manrope'] text-[0.82rem]",
+          entry.isYou ? "font-semibold text-emerald-100" : "text-white/85",
+        )}
+      >
+        {entry.isYou ? "You" : entry.displayName}
+      </span>
+      <span className="text-right font-['Manrope'] text-[0.78rem] tabular-nums text-white/65">
+        {entry.exacts}
+      </span>
+      <span className="text-right font-['Manrope'] text-[0.78rem] tabular-nums text-white/65">
+        {entry.results}
+      </span>
+      <span
+        className={cn(
+          "text-right font-['Barlow_Condensed'] text-[1rem] font-bold tabular-nums",
+          entry.isYou ? "text-emerald-200" : "text-white",
+        )}
+      >
+        {entry.points}
+      </span>
+    </div>
+  );
+}
+
+function ColumnHeader() {
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-[28px_1fr_36px_36px_44px] gap-2 px-3 py-2.5",
+        "border-b border-white/10 bg-white/[0.02]",
+        "font-['Manrope'] text-[0.6rem] font-semibold uppercase tracking-[0.22em] text-white/45",
+      )}
+    >
+      <span className="text-center">#</span>
+      <span>Player</span>
+      <span className="text-right">Exact</span>
+      <span className="text-right">Res</span>
+      <span className="text-right">Pts</span>
+    </div>
+  );
+}
+
+/**
+ * Mirrors Decided Rule #10 verbatim — must include "split" as the final step.
+ * The arch §8.6 wireframe truncates ("pts → exact → result") but the canonical
+ * rule has four steps and the app should communicate the full tie-breaker so
+ * users understand how prizes resolve in a true tie.
+ */
+export function TieBreakFooter() {
+  return (
+    <p className="px-1 font-['Manrope'] text-[0.7rem] leading-relaxed text-white/45">
+      Tie-break: pts → exact-score count → correct-result count → split.
+    </p>
+  );
+}
+
+/**
+ * Covers two zero-entry cases:
+ *   - a brand-new pool no one's entered yet (status='open'), and
+ *   - a settled zero-entry pool per Decided Rule #15 (rare but real).
+ */
+export function EmptyStandings({ settled }: { settled: boolean }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-8 text-center">
+      <Trophy className="mx-auto mb-3 h-6 w-6 text-white/30" aria-hidden />
+      <p className="font-['Manrope'] text-[0.82rem] leading-relaxed text-white/55">
+        {settled
+          ? "No entries this Round — no standings to show."
+          : "No entries yet. Be the first to join this pool."}
+      </p>
+    </div>
+  );
+}
+
+// ─── Main component ──────────────────────────────────────────────────────
+
+type PoolStandingsTableProps = {
+  entries: PoolEntry[];
+  /**
+   * When set and entries.length > maxRows, show only the top N rows plus a
+   * "↓ M more ↓" expander. Omit for the full standalone table (PoolTablePage).
+   */
+  maxRows?: number;
+};
+
+export function PoolStandingsTable({ entries, maxRows }: PoolStandingsTableProps) {
+  const [expanded, setExpanded] = useState(false);
+
+  const total = entries.length;
+  const shouldTruncate =
+    typeof maxRows === "number" && maxRows > 0 && total > maxRows && !expanded;
+  const visible = shouldTruncate ? entries.slice(0, maxRows) : entries;
+  const hiddenCount = total - visible.length;
+
+  // When truncated, if the viewer's own row sits below the visible window,
+  // surface it separately so they can always see their rank without
+  // expanding the full table.
+  const youEntry = entries.find((e) => e.isYou);
+  const youInVisible = visible.some((e) => e.isYou);
+  const showPinnedYou = shouldTruncate && youEntry !== undefined && !youInVisible;
+
+  return (
+    <div className="space-y-2">
+      <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+        <ColumnHeader />
+
+        <div className="divide-y divide-white/5">
+          {visible.map((e) => (
+            <LeaderboardRow key={e.entryId} entry={e} />
+          ))}
+        </div>
+
+        {showPinnedYou && youEntry !== undefined && (
+          <>
+            <div
+              className={cn(
+                "px-3 py-1.5 text-center",
+                "border-t border-white/10 bg-white/[0.015]",
+                "font-['Manrope'] text-[0.6rem] font-semibold uppercase tracking-[0.22em] text-white/35",
+              )}
+              aria-hidden
+            >
+              · · ·
+            </div>
+            <div className="border-t border-white/10">
+              <LeaderboardRow entry={youEntry} />
+            </div>
+          </>
+        )}
+
+        {shouldTruncate && (
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className={cn(
+              "flex w-full items-center justify-center gap-1.5 px-3 py-2.5",
+              "border-t border-white/10 bg-white/[0.015]",
+              "font-['Manrope'] text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-emerald-300/80",
+              "transition hover:bg-white/[0.04] hover:text-emerald-200",
+              "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
+              "min-h-[44px]",
+            )}
+            aria-expanded={false}
+            aria-label={`Show ${hiddenCount} more ${hiddenCount === 1 ? "entry" : "entries"}`}
+          >
+            <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+            <span>
+              {hiddenCount} more {hiddenCount === 1 ? "entry" : "entries"}
+            </span>
+            <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        )}
+
+        {/* Collapse affordance — visible only when the table was previously truncated and is now expanded. */}
+        {typeof maxRows === "number" &&
+          maxRows > 0 &&
+          total > maxRows &&
+          expanded && (
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              className={cn(
+                "flex w-full items-center justify-center gap-1.5 px-3 py-2.5",
+                "border-t border-white/10 bg-white/[0.015]",
+                "font-['Manrope'] text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-white/55",
+                "transition hover:bg-white/[0.04] hover:text-white/70",
+                "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
+                "min-h-[44px]",
+              )}
+              aria-expanded={true}
+              aria-label={`Collapse to top ${maxRows}`}
+            >
+              <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+              <span>Show top {maxRows}</span>
+              <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          )}
+      </div>
+    </div>
+  );
+}
