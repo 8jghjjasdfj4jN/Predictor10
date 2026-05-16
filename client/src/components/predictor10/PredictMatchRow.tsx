@@ -185,7 +185,7 @@ function FinishedView({ match }: { match: EntryMatch }) {
     >
       <div className="flex items-center gap-2.5">
         <div className="flex flex-1 items-center justify-end gap-2 min-w-0">
-          <span className="truncate font-['Barlow_Condensed'] text-[0.95rem] font-bold uppercase tracking-[0.04em] text-right text-white">
+          <span className="line-clamp-2 break-words font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase leading-[1.15] tracking-[0.02em] text-right text-white">
             {displayTeamName(match.homeTeam)}
           </span>
         </div>
@@ -197,7 +197,7 @@ function FinishedView({ match }: { match: EntryMatch }) {
         <FtScoreBox value={out.awayScore} />
 
         <div className="flex flex-1 items-center gap-2 min-w-0">
-          <span className="truncate font-['Barlow_Condensed'] text-[0.95rem] font-bold uppercase tracking-[0.04em] text-white">
+          <span className="line-clamp-2 break-words font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase leading-[1.15] tracking-[0.02em] text-white">
             {displayTeamName(match.awayTeam)}
           </span>
         </div>
@@ -319,7 +319,7 @@ function EditableOrLockedView({
         <div className="flex flex-1 items-center justify-end gap-2 min-w-0">
           <span
             className={cn(
-              "truncate font-['Barlow_Condensed'] text-[0.95rem] font-bold uppercase tracking-[0.04em] text-right",
+              "line-clamp-2 break-words font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase leading-[1.15] tracking-[0.02em] text-right",
               match.isLocked ? "text-white/55" : "text-white",
             )}
           >
@@ -346,7 +346,7 @@ function EditableOrLockedView({
         <div className="flex flex-1 items-center gap-2 min-w-0">
           <span
             className={cn(
-              "truncate font-['Barlow_Condensed'] text-[0.95rem] font-bold uppercase tracking-[0.04em]",
+              "line-clamp-2 break-words font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase leading-[1.15] tracking-[0.02em]",
               match.isLocked ? "text-white/55" : "text-white",
             )}
           >
