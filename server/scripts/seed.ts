@@ -6,13 +6,17 @@ Run: `pnpm seed`
 Idempotent. What it does:
   1. Sport row (football)
   2. Competition rows (Premier League, EFL Championship)
-  3. Tier rows (5 leagues: Pound, Fiver, Tenner, Pony, Big One)
+  3. Tier rows (4 active leagues: Fiver, Tenner, Pony, Big One).
+     The Pound (£1) is retired as of step 2m — the row stays in the DB
+     for historical reference (Wez's Round 9 Pound entry settles 24 May
+     2026) but is_active is flipped to false so it never appears in
+     /api/competitions again.
   4. Fixture sync from football-data.org for the 2025/26 season
      - Upserts events keyed by football-data match id
      - Groups them into the 9 Rounds per arch §3
      - Sets predictionLockAt = kickoff − 1 hour
   5. Pools for the **current** Round only (= lowest-ordinal Round still
-     having future kickoffs). 5 pools per competition × 2 competitions = 10.
+     having future kickoffs). 4 pools per competition × 2 competitions = 8.
 
 Past Rounds are populated as stages + events but get no pool rows — a brand-
 new user shouldn't see "settled pools they were never in" cluttering the
@@ -38,13 +42,21 @@ import {
 
 const SEASON = 2025; // football-data convention: starting year → 2025/26
 
+// Active tiers from step 2m onwards. The Pound (£1) is retired — Stripe +
+// merchant fees on a £1 entry leave negative margin after 90% prize-pool
+// payout. Removed here so seedTiers() doesn't recreate it and
+// seedPoolsForCurrentRound() doesn't open new Pound pools.
 const TIERS = [
-  { slug: "pound",   name: "The Pound",   entryFee: "1.00",  ordinal: 1, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.70, 0.20, 0.10] } },
   { slug: "fiver",   name: "The Fiver",   entryFee: "5.00",  ordinal: 2, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.70, 0.20, 0.10] } },
   { slug: "tenner",  name: "The Tenner",  entryFee: "10.00", ordinal: 3, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.70, 0.20, 0.10] } },
   { slug: "pony",    name: "The Pony",    entryFee: "25.00", ordinal: 4, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.50, 0.25, 0.15, 0.07, 0.03] } },
   { slug: "big-one", name: "The Big One", entryFee: "50.00", ordinal: 5, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.50, 0.25, 0.15, 0.07, 0.03] } },
 ] as const;
+
+// Retired tiers — kept in the DB for historical reference, deactivated by
+// seedTiers() on every run. Add a slug here to retire a tier going forward
+// without losing past pool/entry/payment rows tied to it.
+const RETIRED_TIER_SLUGS = ["pound"] as const;
 
 const COMPETITIONS = [
   { code: "PL",  slug: "premier-league", name: "Premier League",   shortName: "PL",            countryCode: "GB" },
@@ -104,11 +116,19 @@ async function seedCompetitions(sportId: number): Promise<Map<string, string>> {
 async function seedTiers(): Promise<Map<string, string>> {
   log("tiers (leagues)…");
   const bySlug = new Map<string, string>();
+
+  // Active tiers — insert if missing, ensure is_active=true if previously
+  // retired then revived. (Idempotent: no-op when already correct.)
   for (const tier of TIERS) {
     const [existing] = await db.select().from(leagues).where(eq(leagues.slug, tier.slug));
     if (existing) {
       bySlug.set(tier.slug, existing.id);
-      log(`  ${tier.name} already exists`);
+      if (existing.isActive === false) {
+        await db.update(leagues).set({ isActive: true }).where(eq(leagues.id, existing.id));
+        log(`  ${tier.name} reactivated`);
+      } else {
+        log(`  ${tier.name} already exists`);
+      }
       continue;
     }
     const [row] = await db
@@ -127,6 +147,24 @@ async function seedTiers(): Promise<Map<string, string>> {
     bySlug.set(tier.slug, row.id);
     log(`  inserted ${tier.name}`);
   }
+
+  // Retired tiers — flip is_active=false so /api/competitions stops listing
+  // them. Existing pool / pool_entries / payments rows for the retired tier
+  // are untouched — they continue to play out and settle normally.
+  for (const slug of RETIRED_TIER_SLUGS) {
+    const [existing] = await db.select().from(leagues).where(eq(leagues.slug, slug));
+    if (!existing) {
+      log(`  retired tier '${slug}' not in DB — nothing to deactivate`);
+      continue;
+    }
+    if (existing.isActive === false) {
+      log(`  retired tier '${existing.name}' already deactivated`);
+      continue;
+    }
+    await db.update(leagues).set({ isActive: false }).where(eq(leagues.id, existing.id));
+    log(`  retired tier '${existing.name}' deactivated (is_active=false)`);
+  }
+
   return bySlug;
 }
 
@@ -385,7 +423,7 @@ async function seedPoolsForCurrentRound(
         .returning({ id: pools.id });
       if (inserted.length > 0) created++;
     }
-    log(`    ${created} pools created (${5 - created} already existed)`);
+    log(`    ${created} pools created (${TIERS.length - created} already existed)`);
   }
 }
 

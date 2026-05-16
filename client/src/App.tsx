@@ -6,6 +6,7 @@ import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { AppShell } from "./components/predictor10/AppShell";
 import { MarketingShell } from "./components/predictor10/MarketingShell";
+import { LegacyPoolRedirect } from "./components/predictor10/LegacyPoolRedirect";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 
@@ -22,15 +23,26 @@ import RulesPage from "./pages/RulesPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 
-// Post-login portal pages (arch §7)
+// Post-login portal pages (arch §7 — IA restructured in step 2m)
 import HomePage from "./pages/portal/HomePage";
 import PredictPage from "./pages/portal/PredictPage";
-import PoolsPage from "./pages/portal/PoolsPage";
-import PoolsCompetitionPage from "./pages/portal/PoolsCompetitionPage";
+import TablesPage from "./pages/portal/TablesPage";
 import PoolDetailPage from "./pages/portal/PoolDetailPage";
 import PoolTablePage from "./pages/portal/PoolTablePage";
 import AccountPage from "./pages/portal/AccountPage";
 import AccountHistoryPage from "./pages/portal/AccountHistoryPage";
+
+// Tiny declarative redirect helper. Wouter 3 ships `Redirect`, but we avoid
+// pulling it directly because the project applies a patch to wouter's ESM
+// build — keeping the redirect inline insulates us from any future patch
+// drift around the named exports.
+function RedirectTo({ to }: { to: string }) {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    setLocation(to, { replace: true });
+  }, [to, setLocation]);
+  return null;
+}
 
 // Public marketing surface — original screens, accessible only to logged-out users.
 function MarketingRouter() {
@@ -51,21 +63,48 @@ function MarketingRouter() {
   );
 }
 
-// Post-login portal — Home / Predict / Pools / Account top-level routes
-// (arch §7). Nested /pools/:competitionSlug etc. land in step 3+.
+// Post-login portal — Home / Predict / Tables / Account top-level routes.
+// Step 2m IA restructure: the prediction screen lives at /predict/:entryId
+// (was /pools/:slug/:poolId); the third bottom-nav slot is /tables (was
+// /pools). Old /pools/... URLs land on legacy redirect handlers so any
+// bookmarks / browser history continue to work for ~30 days post-deploy.
 function PortalRouter() {
   return (
     <AppShell>
       <Switch>
         <Route path="/" component={HomePage} />
+
+        {/* Predict tab + canonical prediction screen */}
         <Route path="/predict" component={PredictPage} />
-        {/* `/table` is more specific — must come before `/:poolId` in the Switch. */}
-        <Route path="/pools/:competitionSlug/:poolId/table" component={PoolTablePage} />
-        <Route path="/pools/:competitionSlug/:poolId" component={PoolDetailPage} />
-        <Route path="/pools/:competitionSlug" component={PoolsCompetitionPage} />
-        <Route path="/pools" component={PoolsPage} />
+        <Route path="/predict/:entryId" component={PoolDetailPage} />
+
+        {/* Tables tab */}
+        <Route path="/tables" component={TablesPage} />
+
+        {/* Account */}
         <Route path="/account/history" component={AccountHistoryPage} />
         <Route path="/account" component={AccountPage} />
+
+        {/* Legacy /pools URLs — kept alive temporarily for bookmark/history
+            compatibility. `/table` is more specific — must come before the
+            generic /:poolId match. PoolTablePage stays mounted at the old
+            URL because Account History's [Table →] still links there. */}
+        <Route path="/pools/:competitionSlug/:poolId/table" component={PoolTablePage} />
+        <Route path="/pools/:competitionSlug/:poolId">
+          {(params) => (
+            <LegacyPoolRedirect
+              poolId={params.poolId}
+              competitionSlug={params.competitionSlug}
+            />
+          )}
+        </Route>
+        <Route path="/pools/:competitionSlug">
+          <RedirectTo to="/tables" />
+        </Route>
+        <Route path="/pools">
+          <RedirectTo to="/tables" />
+        </Route>
+
         <Route component={NotFound} />
       </Switch>
     </AppShell>
@@ -121,19 +160,22 @@ function LoadingSplash() {
 }
 
 /**
- * Portal URLs (/predict, /pools/..., /account/...) are auth-required. When a
- * logged-out user lands on one — typically a hard refresh after their session
- * cookie was purged (Safari ITP, manual cookie clear, server-side revoke) —
- * we'd previously fall through to MarketingRouter, which has no matching
- * route and renders the marketing-shell 404. Confusing: the user looks
- * "logged out" with a 404 even though their intent was just to reach a
- * page they had been on.
+ * Portal URLs (/predict, /tables, /pools/..., /account/...) are auth-required.
+ * When a logged-out user lands on one — typically a hard refresh after their
+ * session cookie was purged (Safari ITP, manual cookie clear, server-side
+ * revoke) — we'd previously fall through to MarketingRouter, which has no
+ * matching route and renders the marketing-shell 404. Confusing: the user
+ * looks "logged out" with a 404 even though their intent was just to reach
+ * a page they had been on.
  *
  * Match what Wouter sees as the current path; redirect to /login carrying
  * the original URL as `redirect`. LoginPage / RegisterPage read it after
  * sign-in to bring the user back exactly where they were.
+ *
+ * Step 2m: added `tables` to the portal-path regex. Kept `pools` so legacy
+ * URLs still redirect through login → eventual /tables, not a 404 dead end.
  */
-const PORTAL_PATH = /^\/(predict|pools|account)(\/|$)/;
+const PORTAL_PATH = /^\/(predict|pools|tables|account)(\/|$)/;
 
 function isPortalPath(path: string): boolean {
   return PORTAL_PATH.test(path);

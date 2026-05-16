@@ -55,7 +55,7 @@ export type CompetitionDto = {
   shortName: string;
   externalCode: string; // "PL", "ELC"
   currentRound: CurrentRoundDto;
-  pools: PoolDto[]; // 5 tiers, ordered by ordinal
+  pools: PoolDto[]; // active tiers only, ordered by ordinal (4 from step 2m)
 };
 
 export type UserEntryDto = {
@@ -116,11 +116,18 @@ export type EnterPoolOutcome =
 
 /**
  * Competitions that currently have at least one open pool, with their current
- * Round details and 5 tier pools embedded. Used by /api/competitions and the
- * Home page.
+ * Round details and active tier pools embedded (4 from step 2m onwards;
+ * was 5 — the Pound is retired and excluded via leagues.is_active=false).
+ * Used by /api/competitions, the Home page, and the Tables tab.
  *
  * Returns [] if no competition has an open Round (entire site is between
  * seasons). UI shows an empty state in that case.
+ *
+ * Important: retired tiers' existing pools/entries are NOT hidden by this
+ * query in /api/pools/:id or /api/entries/me — those endpoints still return
+ * the user's live Pound entry from Round 9 so it can play out and settle.
+ * The is_active filter only suppresses retired tiers from the browse /
+ * landing surface.
  */
 export async function getCompetitionsWithOpenPools(): Promise<CompetitionDto[]> {
   const rows = await db
@@ -149,7 +156,7 @@ export async function getCompetitionsWithOpenPools(): Promise<CompetitionDto[]> 
     .innerJoin(competitions, eq(pools.competitionId, competitions.id))
     .innerJoin(stages, eq(pools.stageId, stages.id))
     .innerJoin(leagues, eq(pools.leagueId, leagues.id))
-    .where(eq(pools.status, "open"))
+    .where(and(eq(pools.status, "open"), eq(leagues.isActive, true)))
     .orderBy(asc(competitions.name), asc(leagues.ordinal));
 
   if (rows.length === 0) return [];
