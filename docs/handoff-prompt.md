@@ -108,35 +108,41 @@ React 19 + TypeScript + Vite + Tailwind v4 + shadcn/ui frontend · Express on Re
 - New `/account/history` route in `App.tsx`.
 
 ### Step 2k — League Table page
-- `server/lib/portal-data.ts` — new `getPoolEntries(poolId, viewerUserId)` returning `{ pool, viewer, entries }`. Live ranking via `rankEntries()` (reused from `pool-settle.ts`). Settled pools use stored `pool_entries.finalRank` / `finalPoints` so the rendered table matches what got audited; exacts/results columns derive from the same per-entry aggregate (immutable per-prediction flags, can't drift). Single grouped query: `pool_entries INNER JOIN users LEFT JOIN predictions` with SUM aggregates — mirrors `settleOnePool`'s shape, no per-entry loops. Three queries total (pool meta, matchday rollup, entries).
-- `server/routes/portal.ts` — new `GET /api/pools/:id/entries`. Access gating at the route: 404 POOL_NOT_FOUND, 401 NOT_AUTHENTICATED (live pool, no session), 403 NOT_ENTRANT (live pool, signed in but not entered), 200 on success. Public when `pool.status='settled'`.
-- `client/src/lib/portal-api.ts` — `PoolEntry` / `PoolEntriesPayload` types + `fetchPoolEntries()`. Custom `FetchPoolEntriesError` carries the status code so the page can swap copy on 401 vs 403 vs other failures.
-- `client/src/pages/portal/PoolTablePage.tsx` — full page. Gold rank numbers for ranks 1-3 (amber-300), emerald-tinted "You" row, status pill (`Round in progress · GW2 of 4` vs `Final · Settled Sun 20 Sep`), `EmptyTable` covers both brand-new and settled-zero-entry pools (Rule #15), tie-break footer mirrors Decided Rule #10 verbatim including the `→ split` final step. Page-load + window-focus refetch; no polling.
-- `client/src/App.tsx` — `/pools/:competitionSlug/:poolId/table` registered **before** `/:poolId` in the Wouter Switch (more specific first or the wildcard swallows it).
-- `client/src/pages/portal/PoolDetailPage.tsx` — `SettledBanner` is now a real Link to the table; active state gets a subtle `View league table →` affordance below the saved-progress meta row.
-- `client/src/pages/portal/AccountHistoryPage.tsx` — disabled `[Table]` button replaced with a Link to the table route, matching the Results CTA styling.
-- `client/src/pages/portal/HomePage.tsx` — `LiveEntryCard` refactored from a wrapping `<Link>` into a card with two side-by-side CTAs (`[Predictions]` solid emerald + `[Table]` ghost) per arch §8.1 wireframe.
-- Pool meta on the table includes `settledAt` (sourced from `pools.updatedAt` — bumped during settlement, works for zero-entry pools too) and `currentMatchdayOrdinal` (1-indexed position within the Round, computed from a per-matchday `nonTerminalCount` rollup; null when every matchday is terminal).
+- `server/lib/portal-data.ts` — new `getPoolEntries(poolId, viewerUserId)` returning `{ pool, viewer, entries }`. Live ranking via `rankEntries()` (reused from `pool-settle.ts`). Settled pools use stored `pool_entries.finalRank` / `finalPoints`. Single grouped query: `pool_entries INNER JOIN users LEFT JOIN predictions` with SUM aggregates — three queries total (pool meta, matchday rollup, entries).
+- `server/routes/portal.ts` — new `GET /api/pools/:id/entries`. Gating at the route: 404 POOL_NOT_FOUND, 401 NOT_AUTHENTICATED (live pool, no session), 403 NOT_ENTRANT (live pool, signed in but not entered), 200 on success. Public when `pool.status='settled'`.
+- `client/src/lib/portal-api.ts` — `PoolEntry` / `PoolEntriesPayload` types + `fetchPoolEntries()`. Custom `FetchPoolEntriesError` carries the status code.
+- `client/src/pages/portal/PoolTablePage.tsx` — gold rank numbers for 1-3 (amber-300), emerald-tinted "You" row, status pill (`Round in progress · GW2 of 4` vs `Final · Settled DATE`), tie-break footer mirroring Decided Rule #10 verbatim including the `→ split` final step. Page-load + window-focus refetch; no polling.
+- `client/src/App.tsx` — `/pools/:competitionSlug/:poolId/table` registered before `/:poolId` in the Wouter Switch (specific first).
+- `client/src/pages/portal/PoolDetailPage.tsx` — `SettledBanner` is now a real Link to the table; active state gets `View league table →` affordance below the saved-progress meta row.
+- `client/src/pages/portal/AccountHistoryPage.tsx` — disabled `[Table]` replaced with a Link to the table route.
+- `client/src/pages/portal/HomePage.tsx` — `LiveEntryCard` refactored to two side-by-side CTAs (`[Predictions]` solid emerald + `[Table]` ghost) per arch §8.1.
 
 ### Step 2l — Football-data sync extended (fixture refresh) + legacy cleanup
-- `server/lib/fixture-sync.ts` — NEW. Shared FD→events upsert helper. Exports `FDStatus`, `FDMatch`, `InternalEventStatus`, `LOCK_LEAD_MS` (60 min, single source of truth for `predictionLockAt`), `mapFootballDataStatus()`, `fetchAllMatchesForSeason()`, `upsertEventFromFootballData()`. Used by both `outcome-sync.ts` (cron) and `seed.ts` (bootstrap) — no inline upsert in either caller anymore.
-- `upsertEventFromFootballData()` returns a discriminated `UpsertEventResult` action: `inserted` / `updated` / `unchanged` / `skipped_finished` / `skipped_no_stage`. Counters in the sync result tally each. Helper compares the existing row before writing — no-op UPDATEs short-circuit. **Finished events are terminal from this path** — never reverted to scheduled, even if football-data transiently re-emits one. Outcome corrections still go through the outcome-write path (first-write-wins) and remain a pre-launch follow-up.
-- `server/lib/outcome-sync.ts` — `fetchAllMatchesForSeason()` replaces the FINISHED-only filter (one HTTP call per competition, ~50KB response vs ~1KB before; still well under the 10/min free-tier budget). The loop now branches: fixture upsert for every match, outcome write for finished ones. `SyncResult` adds `fixturesInserted` / `fixturesUpdated` / `fixturesUnchanged` / `fixturesSkippedFinished` / `fixturesSkippedNoStage` alongside the existing outcome counters. New matches inserted by sync get their stageId from a matchday→round→stage map built per competition per run; matches outside the modelled Round structure get counted (`skipped_no_stage`), not raised.
-- `server/scripts/seed.ts` — inline `footballFetch` + `mapStatus` + per-event upsert replaced with the shared helper. Adds a batched `inArray` lookup of existing events before iterating per-Round so the helper sees current state on every call without per-row queries.
-- `server/scripts/sync-outcomes.ts` — summary log split into two lines (outcomes / fixtures) so cron logs surface both responsibilities clearly.
-- `server/index.ts` — removed legacy `footballFetch` + cache + `/api/fixtures`, `/api/fixtures/live`, `/api/fixtures/gameweek/:gw`, `/api/standings`, `/api/cache-status` (≈115 lines). These were rendered by the now-unmounted Dashboard.tsx; only consumer was `client/src/lib/footballService.ts`, also removed alongside `client/src/pages/Dashboard.tsx`. `FixturesPage.tsx` stays (still mounted at `/fixtures`, uses `mockData`, never called the proxy).
-- Docs updated: arch §9 + §10 + §11, roadmap (2k + 2l marked ✅, fixture-sync deviation added).
+- `server/lib/fixture-sync.ts` — NEW. Shared FD→events upsert helper. Exports `FDStatus`, `FDMatch`, `InternalEventStatus`, `LOCK_LEAD_MS` (60 min), `mapFootballDataStatus()`, `fetchAllMatchesForSeason()`, `upsertEventFromFootballData()`. Used by both `outcome-sync.ts` (cron) and `seed.ts` (bootstrap).
+- `upsertEventFromFootballData()` returns discriminated `UpsertEventResult` action: `inserted` / `updated` / `unchanged` / `skipped_finished` / `skipped_no_stage`. **Finished events are terminal from this path** — never reverted to scheduled, even if football-data transiently re-emits a different status. Outcome corrections still go through the outcome-write path (first-write-wins) and remain a pre-launch follow-up.
+- `server/lib/outcome-sync.ts` — `fetchAllMatchesForSeason()` replaces the FINISHED-only filter (one HTTP call per competition, ~50KB response). Loop branches: fixture upsert for every match, outcome write for finished ones. `SyncResult` adds `fixturesInserted` / `fixturesUpdated` / `fixturesUnchanged` / `fixturesSkippedFinished` / `fixturesSkippedNoStage` alongside the existing outcome counters.
+- `server/scripts/seed.ts` — inline `footballFetch` + `mapStatus` + per-event upsert replaced with the shared helper. Batched `inArray` existing-event lookup.
+- `server/scripts/sync-outcomes.ts` — two-line summary log (outcomes / fixtures).
+- `server/index.ts` — removed legacy `footballFetch` + cache + `/api/fixtures`, `/api/fixtures/live`, `/api/fixtures/gameweek/:gw`, `/api/standings`, `/api/cache-status` (≈115 lines). These were rendered by the now-unmounted `Dashboard.tsx`; only consumer was `client/src/lib/footballService.ts`, also retired. `FixturesPage.tsx` stays mounted at `/fixtures` (uses `mockData`, never called the proxy).
+- Verified working on Render: Wed 13 May 2026 Man City v Crystal Palace catch-up landed via the new fixture-refresh path (2 outcomes, 2 events marked finished, 1 prediction scored, 2 fixtures updated on first post-deploy run).
 
-### Live deployment state (post step 2l)
+### Step 2l.1 — Refresh-on-portal cold-start fix
+- Symptom: refreshing iPhone Safari on `/pools/...` URLs while Render's web service was cold-starting (>30s) dropped the session and dumped users on the marketing 404. A second bug — even with a valid cookie, logged-out users hitting portal URLs fell through to MarketingRouter → 404 with the marketing "Sign In" nav, making it look like a logout.
+- `client/src/contexts/AuthContext.tsx` — removed the 30s `AbortController` timeout (cold starts on Render free tier legitimately exceed it). New `loadCurrentUser()` retries 5xx/network failures (2s → 5s → 10s backoff, ~17s before giving up). A genuine 401 resolves immediately as "logged out", no retry. Registers `setUnauthorizedHandler` from portal-api.ts on mount.
+- `client/src/lib/portal-api.ts` — module-level `setUnauthorizedHandler` registry + `notify401IfNeeded(res)` called at every fetch site (getJson, fetchMyEntries, enterPool, savePrediction, fetchPoolEntries). Any post-boot 401 flips the auth context to logged-out, which the Router then redirects through `/login?redirect=<url>`.
+- `client/src/App.tsx` — new `isPortalPath()` regex (`/^\/(predict|pools|account)(\/|$)/`), new `RedirectToLogin` component. Router: logged-out + portal URL → `RedirectToLogin` with the original URL as `redirect` query param. Extended `LoadingSplash` with longer escalation: 2s "Loading…", 8s "Server is waking up", 30s "Still waking up", 60s + Reload button.
+- `client/src/pages/LoginPage.tsx` + `RegisterPage.tsx` — `readRedirectParam()` with open-redirect guard (must start with `/`, not `//`). On success, navigate to the redirect param if present, else `/`.
+
+### Live deployment state (post step 2l.1)
 - Render web service deployed at `https://predictor10.com`. Build green.
-- Render Postgres: 25 tables. 1 sport, 2 competitions, 5 tiers, 18 stages (9 Rounds × 2 comps), ~932 events, 5 open pools (PL Round 9 — see Championship gap below), `event_outcomes` rows now updated continuously by `syncOutcomes()`.
-- Wez has an entry in The Pound for Round 9 with `Aston Villa 2-2 Liverpool` saved (locks Fri 15 May 19:00 UK).
-- Round 9 league table viewable at `/pools/premier-league/{poolId}/table` — Wez sees himself ranked, emerald-highlighted.
-- Render env vars: `DATABASE_URL`, `FOOTBALL_API_KEY`, `NODE_ENV`, `BYPASS_LATE_ENTRY=true`, `ADMIN_SECRET` (32-char random string), `SESSION_SECRET`.
-- Node version pinned via `.nvmrc` (`22.20.0`) + `engines.node` in `package.json` after Render's default bumped to Node 24 and corepack broke on the read-only base image. Build now uses Node 22 LTS reliably.
-- `pnpm settle-pools` runs clean from Render shell. Latest run: 5 unsettled / 0 ready / 0 settled — confirms the Rule #13 gate is correctly blocking on Round 9's still-scheduled GW 37 & 38 matches. Real settlement won't fire until Round 9 finishes Sun 24 May.
-- `POST /api/admin/settle-pools` and `POST /api/admin/sync-outcomes` verified end-to-end: 401 without token, identical stats JSON to the CLI with token.
-- **No automated scheduler yet** — both sync and settle still run manually. Render Cron Jobs (5-min sync, 15-min settle) + tightened `--frozen-lockfile` build command is the next operational step; pure dashboard work, no code changes.
+- Render Postgres: 25 tables. 1 sport, 2 competitions, 5 tiers (Pound retiring per step 2m), 18 stages (9 Rounds × 2 comps), ~932 events, 5 open pools (PL Round 9), `event_outcomes` rows updated continuously by `syncOutcomes()`.
+- Wez has an entry in The Pound for Round 9 with `Aston Villa 2-2 Liverpool` saved. Round 9 settles Sun 24 May 2026.
+- Round 9 league table viewable at `/pools/premier-league/{poolId}/table`.
+- Render env vars: `DATABASE_URL`, `FOOTBALL_API_KEY`, `NODE_ENV`, `BYPASS_LATE_ENTRY=true`, `ADMIN_SECRET`, `SESSION_SECRET`.
+- Node pinned `22.20.0` via `.nvmrc` + `engines.node`. Build command still reads `corepack enable && pnpm install && pnpm build` — `--frozen-lockfile` tightening still pending dashboard config.
+- `pnpm settle-pools` runs clean. `POST /api/admin/settle-pools` and `POST /api/admin/sync-outcomes` verified end-to-end (401 without token, identical stats JSON to CLI with token).
+- **No automated scheduler yet** — both sync and settle still run manually. Render Cron Jobs (5-min sync, 15-min settle) is the next operational step; pure dashboard work.
+- **Chrome on iPhone refresh shows a blank white screen** — investigated, traced to the Manus runtime preview script being inlined into the Vite production build (`dist/public/index.html` is 368KB vs 1KB source, with a giant `<script id="manus-runtime">` block). Web-only artifact, doesn't affect Safari iPhone or any of the native app store builds. Carried forward as a pre-launch task.
 
 ## Decisions made in earlier chats — DO NOT relitigate
 
@@ -147,11 +153,11 @@ From arch doc Decided Rules §13 + decisions made in build chats:
 - Late entry allowed for 7 days after Round opens, with explicit warning modal.
 - Predictions lock 1 hour before each match's individual kickoff. Server rejects predictions for already-played matches with HTTP 403.
 - Tie-breaker: pts → exact-score count → correct-result count → split.
-- 5 tiers visible day one: The Pound (£1), The Fiver (£5), The Tenner (£10), The Pony (£25), The Big One (£50).
+- 4 tiers visible from Round 10 onwards: The Fiver (£5), The Tenner (£10), The Pony (£25), The Big One (£50). The Pound (£1) was in the original arch but retired in step 2m — see "Decisions made this session" below.
 - Multi-entry: one entry per pool, but multiple tiers and multiple competitions concurrent OK.
 - MVP competitions: Premier League + EFL Championship only. World Cup, League One, all other comps out of scope.
 - Settled pools archive immediately to `/account/history`.
-- Combined Pool/Predict screen on one URL: `/pools/:competitionSlug/:poolId`.
+- Combined Pool/Predict screen on one URL: was `/pools/:competitionSlug/:poolId`. Moved to `/predict/:entryId` in step 2m (so the bottom nav highlights Predict, not Pools, when a user is on the prediction screen).
 - Prize structure (% splits, operator commission): TBD — defer until pre-launch. Placeholder splits in seed.
 - **Settlement gate (Decided Rule #13)**: a pool settles when every event is `finished + outcome` OR `cancelled/void`. `postponed` blocks. Predictions on cancelled/void events keep `points_awarded = null`.
 - **Payout rounding (Decided Rule #14)**: line items rounded to 2dp, any residual penny goes to rank 1, books must balance to `pot × sum(splits)`.
@@ -163,19 +169,54 @@ From arch doc Decided Rules §13 + decisions made in build chats:
 - **`BYPASS_LATE_ENTRY=true` in Render env** allows entries after the 7-day late-entry window has closed. Used for testing Round 9 of 2025/26 right now (real window closed Apr 28). Per-match anti-cheat lock (Decided Rule #7) always on regardless.
 - **`ADMIN_SECRET` env var** gates `/api/admin/*` endpoints. Sent as `X-Admin-Token` header. Closed by default (401) if unset.
 
+### Decisions made this session (May 2026) — locked, DO NOT relitigate
+
+These are Wez's explicit choices from the IA redesign / Pound retirement / auth fix conversation. They override anything earlier in this doc that contradicts them.
+
+**Bottom nav becomes HOME / PREDICT / TABLES / ACCOUNT.** Pools tab is repurposed, not removed. Trophy icon stays, label changes from POOLS to TABLES.
+
+**Tier list reduced to 4 tiers from Round 10 onwards.** The Pound (£1) is retired. Reasoning: Stripe + merchant fees on a £1 entry leave negative margin after 90% prize-pool payout. Wez's existing Round 9 Pound entry plays out and settles normally on Sun 24 May 2026; the tier becomes inactive after that. Going forward, only Fiver (£5) / Tenner (£10) / Pony (£25) / Big One (£50).
+
+**PREDICT tab tap-through stays on Predict tab.** Today tapping an entry on `/predict` routes to `/pools/:slug/:poolId`, which highlights Pools in the bottom nav. The fix moves the prediction screen to `/predict/:entryId`. Same component, new URL path so the nav stays correct.
+
+**Pools-as-browse flow is killed.** `/pools`, `/pools/:competitionSlug`, and `/pools/:competitionSlug/:poolId` cease to exist as primary destinations. The first two are deleted outright; the third's component (PoolDetailPage) becomes the prediction screen at `/predict/:entryId`. Old URLs may need short-term redirects — TBD with Wez before implementation.
+
+**TABLES tab is the new Pools tab.** Design picked: Option C (sub-tabs, one tier at a time).
+- Top row: competition pills (Premier League, Championship, future comps added here).
+- Second row: tier sub-tabs (Fiver / Tenner / Pony / Big One).
+- A small emerald dot prefixes the sub-tab label when the viewer is entered in that tier for the current Round. Absent otherwise — at-a-glance summary of where you're in.
+- Header right-side widget switches on entry status:
+  - Entered: "You — Nth · X pts" in emerald (small two-line block).
+  - Not entered: solid emerald "Enter · £NN →" button. Tapping it goes into the entry flow.
+- Below: the standings table (#, Player, Ex, R, Pts columns; gold rank 1-3; emerald "You" row when entered; "↓ N more ↓" footer when truncated).
+- Default landing tier: leftmost where viewer is entered (Fiver if in, else Tenner if in, etc.); first tier if entered in none.
+
+**Entry CTAs now exist in two places, on purpose.**
+- Home shows "Play a Round" cards for *every* tier the viewer hasn't entered (sweep view).
+- Tables shows an entry CTA only for the tier you're currently looking at, when you're not entered (contextual). Not a duplicate — different intent.
+
+**Cold-start auth tolerance is locked.** `/api/auth/me` boot-time round-trip has no hard timeout. Retries 5xx/network up to 3 times (2s/5s/10s). 401 is immediate "logged-out", no retry. LoadingSplash escalates copy at 2s/8s/30s, surfaces a Reload button at 60s. Mid-session 401 anywhere in `portal-api.ts` flips the auth context to logged-out and triggers the redirect-to-login flow.
+
+**Logged-out users on portal URLs redirect to login.** `/predict/*`, `/pools/*` (legacy), `/account/*` all match the portal-URL regex. RedirectToLogin sends them to `/login?redirect=<original-url>`. LoginPage / RegisterPage read the param after success and bring the user back. Open-redirect guard: param must start with single `/`, not `//`.
+
 ## Known follow-ups / pre-launch flags
 
 Carry forward, none urgent for the next step:
 
 - **`pool_entries` has no `uniqueIndex(pool_id, user_id)`** — Decided Rule #2 enforcement at the DB layer. Pre-flight check in `enterPool` catches double-tap; a true concurrent race could still produce two rows. Schema migration needed before public launch.
-- **First-write-wins on `event_outcomes`** — score corrections from football-data are not re-recorded automatically. Step 2l added periodic fixture-metadata refresh; outcome reconciliation is still a separate pass needed before public launch.
-- **No `DELETE` for predictions** — overwrite-only after first save; "half-saved" is a UI-only state. Matches Decided Rule #12 wording. Confirm at pre-launch.
+- **First-write-wins on `event_outcomes`** — score corrections from football-data not re-recorded automatically. Step 2l added fixture-metadata refresh; outcome reconciliation is still a separate pass needed before public launch.
+- **No `DELETE` for predictions** — overwrite-only after first save; "half-saved" is a UI-only state. Matches Decided Rule #12. Confirm at pre-launch.
 - **Audit log volume** — every prediction save writes a `prediction.updated` row. Pool settlement writes one row per pool with full ranks + payouts in metadata. Indexed but disk grows. Revisit before public launch.
-- **`/api/pools`, `/api/tiers`, `/api/pools/competition/:slug` from arch §11** — collapsed into `/api/competitions`. Decide before pre-launch whether the separate endpoints are needed.
-- **No automated scheduler yet** — sync extended in 2l to handle both outcomes and fixture refresh in one job; settle-pools engine ready. Render Cron Jobs (5-min sync, 15-min settle) is the next config step. Pure dashboard work, no code changes pending.
-- **Championship seed gap** — `pickCurrentRound` in `seed.ts` requires `futureMatchesCount >= 5`. Championship 2025/26 ended early May, so no Champ Round qualifies as "current", so no Champ pools exist right now. Resolves naturally when 2026/27 fixtures load in August. Lower `MIN_FUTURE_MATCHES` temporarily if you need Champ pools for testing earlier.
-- **Render build command** still reads `corepack enable && pnpm install && pnpm build`. Should be tightened to `corepack enable && pnpm install --frozen-lockfile && pnpm build` in the same dashboard pass as the cron setup. Node version pinned via `.nvmrc` + `engines.node` so corepack works on Node 22.
-- **Stage reassignment on matchday change** — `upsertEventFromFootballData()` deliberately doesn't remap `events.stageId` when a match's matchday changes (rare; only matters if Round structure ever changes mid-season). Documented in the helper; revisit if real-world rescheduling pushes a match into a different Round.
+- **`/api/pools`, `/api/tiers`, `/api/pools/competition/:slug` from arch §11** — collapsed into `/api/competitions`. Decide before pre-launch whether separate endpoints are needed.
+- **No automated scheduler yet** — sync extended in 2l to handle outcomes + fixture refresh in one job; settle-pools engine ready. Render Cron Jobs (5-min sync, 15-min settle) is the next config step. Pure dashboard work.
+- **Championship seed gap** — `pickCurrentRound` requires `futureMatchesCount >= 5`. Champ 2025/26 ended early May, so no Champ Round qualifies as current, so no Champ pools exist right now. Resolves naturally when 2026/27 fixtures load in August.
+- **Render build command** still reads `corepack enable && pnpm install && pnpm build`. Tighten to `--frozen-lockfile` in the same dashboard pass as cron setup.
+- **Stage reassignment on matchday change** — `upsertEventFromFootballData()` doesn't remap `events.stageId` when football-data changes a match's matchday (rare; only matters if Round structure ever changes mid-season).
+- **401 interceptor is module-level singleton** — fine for the current single-AuthProvider app; flag if multiple providers ever spin up (tests, SSR).
+- **Cold-start retry tops out at ~17s elapsed** — beyond that, treated as logged-out (the redirect-to-login flow takes over). Bump the backoff schedule if legit cold starts routinely exceed that.
+- **Manus runtime inlined in Vite production builds** — the scaffolded `vite.config.ts` injects a ~250KB preview-mode runtime into every build's `index.html`. Causes a blank white screen on Chrome iPhone after refresh (not Safari). Doesn't affect native app store builds. Strip the plugin from `vite.config.ts` before public web launch.
+- **Resend / email templates** — still no transactional email. Signup creates an unverified account that can use the product. `RESEND_API_KEY` not in env yet.
+- **Old `/pools/...` URLs** — once step 2m ships and the prediction screen moves to `/predict/:entryId`, decide whether to add short-term redirects or hard-switch (existing share links / browser history will 404 otherwise).
 
 ## My working style
 
@@ -194,33 +235,59 @@ Carry forward, none urgent for the next step:
 - **Render deploys with `--frozen-lockfile`** (target — see follow-up flag above). Whenever `package.json` changes, ship `pnpm-lock.yaml` in the same batch or the build fails with `ERR_PNPM_OUTDATED_LOCKFILE`.
 - **Schema changes need `pnpm db:push` after deploy** (drizzle-kit syncs schema → live Postgres). Flag this explicitly whenever a step touches `server/db/schema/`. If matchday is missing or any new column is missing, the user has likely skipped this step.
 
-## What's next — Render Cron Jobs (operational, not code)
+## What's next — step 2m
 
-Step 2l shipped the code change that makes scheduled fixture refresh real. The remaining work is pure Render dashboard configuration — no code, no PR — to put the manual `pnpm sync-outcomes` and `pnpm settle-pools` runs on a schedule:
+**Menu / IA restructure + Pound retirement.** Three concurrent changes, one deploy:
 
-1. **Shared env group** — create `predictor10-shared` containing `DATABASE_URL`, `FOOTBALL_API_KEY`, `NODE_ENV`. Link to the web service; remove the duplicated service-level vars (leave `ADMIN_SECRET`, `SESSION_SECRET`, `BYPASS_LATE_ENTRY` service-level).
-2. **Tighten web service build command** — `corepack enable && pnpm install --frozen-lockfile && pnpm build` (retires the follow-up flag above).
-3. **Create `predictor10-sync-outcomes` Cron Job** — schedule `*/5 * * * *`, command `pnpm sync-outcomes`, attach the shared env group.
-4. **Create `predictor10-settle-pools` Cron Job** — schedule `*/15 * * * *`, command `pnpm settle-pools`, attach the shared env group.
-5. **Smoke test** — click "Trigger Run" on each cron, verify the summary logs.
+**1. PREDICT tab tap-through bug** — tapping an entry on the Predict tab today jumps to `/pools/<slug>/<id>`, which highlights Pools in the bottom nav. Fix: introduce `/predict/:entryId` route that renders the existing PoolDetailPage component. Update PredictPage's entry links to point there. Bottom nav highlighting is path-based, so the Predict tab stays lit.
 
-Once configured, the full pipeline runs unattended: fixture changes propagate within 5 min, settlement fires within 15 min of the last match in a Round going FT.
+**2. POOLS tab → TABLES tab (Option C, locked).** Repurpose the third bottom-nav slot. Route: `/tables` (with optional `/tables/:competitionSlug/:tier` deep links — TBD whether to expose those URLs or keep state in-page). Layout:
+- Competition pills row (Premier League, Championship — selected pill solid emerald, others faded).
+- Tier sub-tabs row (Fiver, Tenner, Pony, Big One — selected has emerald underline, entered tiers prefixed by emerald dot).
+- Header: tier name + meta line ("£10 · 32 players · £320 pot") on the left; right side shows either "You — Nth · X pts" (entered) or "Enter · £NN →" emerald button (not entered).
+- Standings table reusing the PoolTablePage component (gold 1-3, emerald "You", `↓ N more ↓` truncation footer).
+- Default landing tier: leftmost where viewer is entered; fallback to first tier if entered in none.
+- Bottom nav: change label/icon from "POOLS" to "TABLES" (trophy stays).
 
-Cost: ~$2/month total (Render minimum $1/mo per cron job, prorated by run-second).
+**3. Retire The Pound.**
+- Remove from `TIERS` array in `server/scripts/seed.ts`. From the next run onwards, no Pound pools get created.
+- Wez's existing Round 9 Pound entry plays out and settles normally on Sun 24 May 2026 (no migration needed — the row stays in the DB).
+- Remove the "Play The Pound" CTA from Home immediately on deploy.
+- Update marketing pages (`/rules`, `/leagues`) to show 4 tiers, not 5.
+- Don't drop the `leagues.slug='pound'` row from the DB — keep it for historical reference. Just deactivate it (set `is_active=false`).
 
-## After the cron is live — pre-launch hygiene pass
+**Routes after step 2m:**
+| URL | Page |
+|---|---|
+| `/` | Home (logged-in: portal Home; logged-out: marketing) |
+| `/predict` | Predict tab — list of entries |
+| `/predict/:entryId` | Prediction screen (was `/pools/:slug/:poolId`) |
+| `/tables` | Tables tab |
+| `/account`, `/account/history` | unchanged |
+| `/login`, `/register` | unchanged |
 
-When you're ready for the next *code* step (not blocking the cron):
+Files likely touched (verify before bulk-changing):
+- `client/src/App.tsx` — route map, bottom nav labels, `isPortalPath` regex (add `/tables`)
+- `client/src/components/predictor10/AppShell.tsx` — bottom nav definition
+- `client/src/pages/portal/PredictPage.tsx` — entry link target
+- `client/src/pages/portal/PoolDetailPage.tsx` — rename to `EntryPredictPage.tsx`? Or keep filename and just remap the route. Recommend keep filename.
+- `client/src/pages/portal/TablesPage.tsx` — NEW, replaces PoolsPage / PoolsCompetitionPage / standalone PoolTablePage uses.
+- `client/src/pages/portal/HomePage.tsx` — drop Pound CTA, update entry-link targets to `/predict/:entryId`
+- `client/src/pages/portal/AccountHistoryPage.tsx` — `[Results →]` and `[Table →]` link targets update
+- `server/scripts/seed.ts` — remove Pound from TIERS, or mark it `is_active=false`
+- `docs/pre-launch.md` — log Manus runtime removal as a launch blocker
 
-- **Schema migration**: add `uniqueIndex(pool_id, user_id)` on `pool_entries` per Decided Rule #2. Small Drizzle migration, `pnpm db:push`.
-- **Compliance scaffolding (Weeks 5-8 in roadmap)**: deposit limits, self-exclusion, reality checks, GAMSTOP/AML stubs. Heavier lift, UKGC-blocking, can wait until July per roadmap.
-- **`event_outcomes` score-correction reconciliation pass**: paired follow-up flag from 2l. Periodic job that diffs current football-data outcomes against stored ones and writes corrections (with audit log).
+Before bulk-changing, confirm with Wez:
+- Old `/pools/...` URLs — short-term redirect or hard-switch?
+- TablesPage default sub-tab when viewer is entered in nothing — which tier to land on?
+- Default landing tier when viewer is entered in multiple — leftmost-entered, or highest-stakes-entered?
 
 ## What to do first
 
-1. Read all three docs in `/docs/` (architecture first). Arch §9 + §10 + §11 changed in step 2l — read those especially carefully.
-2. Skim the recent file edits to understand the current shape — particularly `server/lib/fixture-sync.ts` (new shared helper), `server/lib/outcome-sync.ts` (rewritten in 2l), `server/scripts/seed.ts` (now uses the helper), and `server/lib/portal-data.ts` (note `getPoolEntries` for step 2k's league table).
-3. If the next request is the Render Cron walkthrough, no code is needed — work through the dashboard steps in "What's next" above and report back what the cron logs show.
-4. If the next request is the next code step (schema migration, score-correction reconciliation, compliance scaffolding), propose your file plan in tabular form with folder paths and wait for "go" before bulk-changing files.
+1. Read all three docs in `/docs/` (architecture first, especially §6-§8 which step 2m rewrites).
+2. Skim the recent file edits to understand the current shape — particularly `server/lib/portal-data.ts`, `client/src/pages/portal/PoolDetailPage.tsx`, `client/src/pages/portal/PoolTablePage.tsx`, `client/src/App.tsx`.
+3. Confirm Wez's three clarifying questions above before bulk-changing files.
+4. Propose your file plan for step 2m in tabular form with folder paths.
+5. Wait for "go" before bulk-changing files.
 
-Don't ask 5 clarifying questions before starting. Read the docs, make a recommendation, I'll push back if it's wrong.
+Don't ask 5 clarifying questions. Read the docs, ask the 3 above, make a recommendation, Wez will push back if it's wrong.

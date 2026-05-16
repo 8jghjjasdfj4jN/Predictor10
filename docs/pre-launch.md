@@ -93,6 +93,7 @@ Without these, the licence application has nothing to show. Closed test (Round 1
 - [ ] Performance — connection pool sizing, cache headers, bundle size analysis
 - [ ] Stripe Checkout integration in staging (off-by-default flag)
 - [ ] KYC provider sandbox setup
+- [ ] **Strip Manus runtime from Vite build** — `client/index.html` is 1KB source but `dist/public/index.html` builds to 368KB because a ~250KB `<script id="manus-runtime">` preview-mode block gets inlined by a plugin in `vite.config.ts`. Symptom: blank white screen on Chrome iPhone after refresh (Safari iPhone unaffected). Native app store builds bundle their own assets so this is a web-only artifact, but it must go before opening the web app to public traffic. Remove the plugin reference, rebuild, verify `dist/public/index.html` returns to ~1KB.
 
 ---
 
