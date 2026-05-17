@@ -19,11 +19,13 @@
     <title>Predictor10</title>
 
     <!--
-      Boot-time error reporter (step 2r).
-      Captures errors before / during React mount and renders them visibly in #root
-      when the app fails to paint. No-op for healthy boots (mount check short-
-      circuits the fallback once React fills #root). 10-second safety net catches
-      silent mount failures (blocked bundle, CSP, extension interference).
+      Boot-time error reporter (step 2r, tightened in step 2t).
+      - Uses capture-phase listener so script-load failures are caught
+        (those events don't bubble to window).
+      - Reads main.tsx checkpoints (__p10_bootStarted / __p10_renderStarted /
+        __p10_renderReturned) so the diagnostic says HOW FAR boot got, not just
+        "nothing happened".
+      No-op on healthy boots (mount check short-circuits the fallback).
     -->
     <script>
       (function () {
@@ -45,6 +47,44 @@
           return String(s).replace(/[&<>"']/g, function (c) {
             return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
           });
+        }
+
+        function bootStatus() {
+          var w = window;
+          return (
+            "bootStarted=" + (w.__p10_bootStarted === true) +
+            ", renderStarted=" + (w.__p10_renderStarted === true) +
+            ", renderReturned=" + (w.__p10_renderReturned === true)
+          );
+        }
+
+        function safetyNetExplanation() {
+          var w = window;
+          var secs = SAFETY_NET_MS / 1000;
+          if (w.__p10_renderReturned === true) {
+            return (
+              "App reached the end of createRoot.render() but #root is still empty after " +
+              secs +
+              " seconds. The initial render produced no output, or something replaced the root."
+            );
+          }
+          if (w.__p10_renderStarted === true) {
+            return (
+              "App reached createRoot.render() but it didn't complete within " +
+              secs +
+              " seconds. The render call may have thrown or hung."
+            );
+          }
+          if (w.__p10_bootStarted === true) {
+            return (
+              "main.tsx started executing but never reached createRoot.render(). An import or module-level statement is failing silently."
+            );
+          }
+          return (
+            "main.tsx never executed within " +
+            secs +
+            " seconds. The bundle either failed to load (404, network, CORS, content-security-policy) or hasn't finished parsing yet."
+          );
         }
 
         function fallbackCopy(text, done) {
@@ -71,11 +111,8 @@
           if (!r) return;
           rendered = true;
 
-          var detail = errors.length
-            ? errors.join("\n\n")
-            : "App did not mount within " +
-              SAFETY_NET_MS / 1000 +
-              " seconds. No JavaScript errors were captured. This usually means the main bundle failed to load (network, browser extension, or content-security-policy block).";
+          var body = errors.length ? errors.join("\n\n") : safetyNetExplanation();
+          var detail = body + "\n\n[boot] " + bootStatus();
 
           var wrapStyle = [
             "min-height:100vh",
@@ -164,15 +201,31 @@
           }, FALLBACK_DELAY_MS);
         }
 
-        window.addEventListener("error", function (e) {
-          var msg = (e && e.message) || "Unknown error";
-          var src = "";
-          if (e && e.filename) {
-            src = "\n  at " + e.filename + ":" + (e.lineno || "?") + ":" + (e.colno || "?");
-          }
-          var stk = e && e.error && e.error.stack ? "\n" + e.error.stack : "";
-          record("window.error", msg + src + stk);
-        });
+        // Capture phase = catches resource-load failures (<script>, <link>, <img>)
+        // that don't bubble to window. Also catches runtime errors targeted at window
+        // (capture listeners on window fire for window-targeted events too).
+        window.addEventListener(
+          "error",
+          function (e) {
+            // Resource load error: target is a DOM element, not window
+            if (e && e.target && e.target !== window && e.target.nodeType === 1) {
+              var t = e.target;
+              var url = t.src || t.href || "(unknown)";
+              var tag = (t.tagName || "?").toLowerCase();
+              record("resource load failed", "<" + tag + "> " + url);
+              return;
+            }
+            // Runtime JS error
+            var msg = (e && e.message) || "Unknown error";
+            var src = "";
+            if (e && e.filename) {
+              src = "\n  at " + e.filename + ":" + (e.lineno || "?") + ":" + (e.colno || "?");
+            }
+            var stk = e && e.error && e.error.stack ? "\n" + e.error.stack : "";
+            record("window.error", msg + src + stk);
+          },
+          true
+        );
 
         window.addEventListener("unhandledrejection", function (e) {
           var r = e && e.reason;
