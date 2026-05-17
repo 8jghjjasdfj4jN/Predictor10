@@ -169,14 +169,22 @@ React 19 + TypeScript + Vite + Tailwind v4 + shadcn/ui frontend · Express on Re
 - Deps: `node-cron@^4.0.0` (production), `@types/node-cron@^3.0.11` (dev). `pnpm-lock.yaml` regenerated and verified against `--frozen-lockfile`.
 - **No DB schema changes**. No `pnpm db:push` needed.
 
-### Step 2p — Manus runtime stripped from production build
+### Step 2q — Step 2p rolled back
+- `vite.config.ts` — restored to original form. All four Manus dev plugins (`jsxLocPlugin`, `vitePluginManusRuntime`, `vitePluginManusDebugCollector`, `vitePluginStorageProxy`) once again run in `pnpm build`. Production `index.html` is back to 368 KB (Manus runtime inlined).
+- **Why rolled back**: step 2p's tiny HTML broke the signed-in refresh path on iPhone (Safari + Chrome). Both browsers rendered a blank white screen on refresh whenever a session cookie was present. Signed-out refresh continued to work fine on every browser. No code-level cause was identifiable from inspection — the regression's exact mechanism is still under investigation, but the strong correlation with step 2p combined with the failure mode being browser/auth-state-specific points at the 367 KB script's inadvertent role in the load timing or error-suppression behaviour.
+- **Status of the cleanup goal**: still wanted. The Manus runtime is dev-tooling bloat; production users don't need it. Re-stripping it will be re-attempted once we understand why doing so broke iPhone signed-in users. Likely path: add an inline error reporter to `client/index.html` first (so a future strip surfaces any uncaught error visibly), then re-attempt the strip with that reporter in place.
+- **No DB schema changes**. No `pnpm db:push`. No new env vars. No new dependencies.
+- **Step 2o (scheduler) unaffected**: this revert touches `vite.config.ts` only. `server/lib/scheduler.ts`, `server/index.ts`, and the `node-cron` dependency from step 2o remain in place and continue running unchanged.
+
+### Step 2p — Manus runtime stripped from production build (ROLLED BACK in step 2q)
 - `vite.config.ts` — converted `defineConfig` to function form (`({ mode }) => ...`) and gated the four Manus dev plugins (`jsxLocPlugin`, `vitePluginManusRuntime`, `vitePluginManusDebugCollector`, `vitePluginStorageProxy`) so they only run when `mode !== "production"`. `pnpm build` → mode is `"production"` → none of them registered. `pnpm dev` → mode is `"development"` → all four registered, dev workflow unchanged.
 - **Impact**: `dist/public/index.html` drops from **368 KB** to **1.27 KB** (99.65% reduction). The 367 KB removed was a giant `<script id="manus-runtime">` block previously inlined into every page load.
 - **Bug this fixes**: Chrome on iPhone showed a white screen on refresh because the 368 KB HTML payload was large enough to freeze the render thread on a typical mobile connection before any of the actual app code ran. Also explained why some users saw the LoadingSplash escalate to "Server is waking up…" on legitimate paid-tier infrastructure — the HTML download alone was tripping the 8s threshold for that copy.
+- **Regression**: blank white screen on iPhone (Safari + Chrome) for signed-in users on refresh. Signed-out refresh kept working. Rolled back in step 2q while we instrument and re-attempt.
 - **No DB schema changes**. No `pnpm db:push`. No new env vars. No new dependencies.
 - **No effect on native app store builds** (web-only artifact).
 
-### Live deployment state (post step 2p)
+### Live deployment state (post step 2q)
 - Render web service deployed at `https://predictor10.com`. Build green.
 - **Render plan: Starter ($7/month)**. Always-on — no idle spin-down. Cold starts only occur on deploy / crash recovery, not on user idle. Single instance (no autoscaling).
 - Render Postgres: 25 tables. 1 sport, 2 competitions, 5 leagues — 4 active (Fiver / Tenner / Pony / Big One) + 1 inactive (Pound). 18 stages (9 Rounds × 2 comps), ~932 events, 5 open pools for PL Round 9 (one being The Pound, still settling 24 May), `event_outcomes` rows updated continuously by the in-process scheduler.
@@ -289,7 +297,9 @@ Carry forward, none urgent for the next step:
 
 ## What's next — TBD with Wez
 
-Steps 2m, 2n, 2o, and 2p are done. Open candidates for the next step (Wez picks):
+Steps 2m, 2n, 2o, and 2q are done (step 2p was rolled back). Open candidates for the next step (Wez picks):
+
+- **Re-attempt Manus runtime strip (with diagnostics)** — step 2p shipped a 99.6% smaller production HTML by gating the Manus dev plugins out of `vite build`, but it broke the signed-in refresh path on iPhone (Safari + Chrome). Step 2q rolled it back. Re-attempt path: first add an inline error reporter to `client/index.html` (catches `window.error` and `unhandledrejection` and renders them visibly on the page, before React mounts), then re-strip the runtime. If the strip surfaces an underlying error, the reporter will display it instead of leaving the user on a white screen. Likely candidates for the underlying error: a race condition or uncaught promise rejection in the cold-start auth path that was being silently swallowed by the Manus runtime's error interceptor.
 
 - **Tie-break visualisation in standings** — when two players have the same points, surface *why* one is ranked higher (more exact scores → more correct results → tied split). Currently the data is in the table (Exact / Res columns) and the tie-break rule is in the footer, but there's no visual cue tying them together. Add a subtle indicator (column highlight, tiny `↑`, or grouped bracket) for tied clusters in `PoolStandingsTable.tsx`. Discussed but deferred.
 - **Tables tab deep links** — `/tables/:competitionSlug/:tierSlug` (or `?comp=&tier=` query) so Home's Available Tier rows land on the right tier in one tap.

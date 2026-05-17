@@ -203,24 +203,10 @@ function vitePluginStorageProxy(): Plugin {
   };
 }
 
-const corePlugins = [react(), tailwindcss()];
-const manusDevPlugins = [
-  jsxLocPlugin(),
-  vitePluginManusRuntime(),
-  vitePluginManusDebugCollector(),
-  vitePluginStorageProxy(),
-];
+const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy()];
 
-// Manus plugins are dev-only — they inject a ~250KB preview-mode runtime
-// into index.html that is useful for the Manus preview environment but
-// catastrophic in production: a 368KB HTML file froze Chrome iPhone on
-// refresh and made every page load feel like a "server waking up" event.
-// We gate them off the Vite `mode` (set automatically: 'development' for
-// `vite`/`pnpm dev`, 'production' for `vite build`/`pnpm build`). Net
-// effect: local development unchanged, production HTML drops from ~368KB
-// to ~1KB. (Step 2p.)
-export default defineConfig(({ mode }) => ({
-  plugins: mode === "production" ? corePlugins : [...corePlugins, ...manusDevPlugins],
+export default defineConfig({
+  plugins,
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client", "src"),
@@ -261,4 +247,4 @@ export default defineConfig(({ mode }) => ({
       deny: ["**/.*"],
     },
   },
-}));
+});
