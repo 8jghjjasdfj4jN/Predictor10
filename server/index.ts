@@ -7,6 +7,7 @@ import { authMiddleware } from "./lib/auth-middleware";
 import authRouter from "./routes/auth";
 import portalRouter from "./routes/portal";
 import adminRouter from "./routes/admin";
+import { startScheduler } from "./lib/scheduler";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,6 +83,7 @@ async function startServer() {
     console.log(`Server on http://localhost:${port}`);
     console.log(`DATABASE_URL:    ${process.env.DATABASE_URL ? "✓ set" : "✗ MISSING"}`);
     console.log(`FOOTBALL_API_KEY: ${process.env.FOOTBALL_API_KEY ? "✓ set" : "✗ MISSING"}`);
+    startScheduler();
   });
 }
 

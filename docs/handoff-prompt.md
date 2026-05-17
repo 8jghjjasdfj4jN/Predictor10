@@ -159,17 +159,28 @@ React 19 + TypeScript + Vite + Tailwind v4 + shadcn/ui frontend · Express on Re
 - **Rounding behaviour**: settlement uses `Math.round` per place with residual penny to rank 1 (Decided Rule #14 unchanged). House fee uses `Math.floor` so players are never overpaid from sub-penny remainders. With current splits (60/25/15) and house fee (0.25), the math lands on whole pennies for any whole-pound gross pot — no quirks in practice.
 - **Operational note**: deploy alone doesn't change Round 9's pool structures. After deploy, `pnpm seed` must run once to push the new `prize_structure` JSON into the open pools. Until that runs, Tables would show breakdowns computed from the *old* `prize_structure` JSON (still works, just under the old splits).
 
-### Live deployment state (post step 2n)
+### Step 2o — In-process scheduler (auto sync + settle)
+- `server/lib/scheduler.ts` — NEW. Wires two `node-cron` schedules directly into the Express server process: `syncOutcomes()` every 5 minutes (`*/5 * * * *`), `settleAllReadyPools()` every 15 minutes (`*/15 * * * *`). Calls the same library functions the admin endpoints call — no HTTP overhead, same DB pool, same env vars.
+- `server/index.ts` — `startScheduler()` invoked from the `server.listen` callback so cron registration happens after the HTTP socket is open.
+- Concurrency guard: each job carries a `running` flag. If a tick fires while the previous run is still in flight, the new tick is skipped and a `[scheduler] X skipped — previous run still in flight` line is logged. Prevents pile-up on slow runs.
+- Gating: `NODE_ENV !== "production"` skips registration entirely (keeps `pnpm dev` / `tsx watch` from spawning duplicate schedulers and from spending football-data.org quota during development). `DISABLE_SCHEDULER=true` in Render env disables it in production too, falling back to manual triggering via the admin endpoints.
+- Logging: silent on no-op ticks (typical 95% of runs). Single summary line on any tick that writes outcomes, scores predictions, inserts/updates fixtures, settles a pool, or errors. Stream is `[scheduler] ...` so it greps cleanly out of the web service logs.
+- **Why in-process, not Render Cron Jobs**: Predictor10 runs on Render Starter ($7/mo) — the web service is always-on, no idle spin-down. The scheduler runs alongside the request handler in the same Node process. Saves $2/mo (Render charges $1/job/mo minimum × 2 jobs), keeps logs in one place, drops the need for a separate build per cron service. If we ever move to Standard with autoscaling, the scheduler must relocate (autoscaled instances would each fire the cron, causing duplicate runs).
+- Deps: `node-cron@^4.0.0` (production), `@types/node-cron@^3.0.11` (dev). `pnpm-lock.yaml` regenerated and verified against `--frozen-lockfile`.
+- **No DB schema changes**. No `pnpm db:push` needed.
+
+### Live deployment state (post step 2o)
 - Render web service deployed at `https://predictor10.com`. Build green.
-- Render Postgres: 25 tables. 1 sport, 2 competitions, 5 leagues — 4 active (Fiver / Tenner / Pony / Big One) + 1 inactive (Pound). 18 stages (9 Rounds × 2 comps), ~932 events, 5 open pools for PL Round 9 (one being The Pound, still settling 24 May), `event_outcomes` rows updated continuously by `syncOutcomes()`.
+- **Render plan: Starter ($7/month)**. Always-on — no idle spin-down. Cold starts only occur on deploy / crash recovery, not on user idle. Single instance (no autoscaling).
+- Render Postgres: 25 tables. 1 sport, 2 competitions, 5 leagues — 4 active (Fiver / Tenner / Pony / Big One) + 1 inactive (Pound). 18 stages (9 Rounds × 2 comps), ~932 events, 5 open pools for PL Round 9 (one being The Pound, still settling 24 May), `event_outcomes` rows updated continuously by the in-process scheduler.
 - **Active-tier prize structure** (post step 2n): 25% house fee, top 3 paid at 60/25/15 of the player pot. Fiver / Tenner / Pony / Big One all identical. **Pound's open pool still on legacy 70/20/10 with no commission** — deliberate, retired tier settles under original rules.
 - Wez has an entry in The Pound for Round 9 with `Aston Villa 2-2 Liverpool` saved. Round 9 settles Sun 24 May 2026. After 24 May, no Pound pool will ever be created again.
 - Round 9 league table viewable at `/pools/premier-league/{poolId}/table` (settled-table URL preserved post step 2m).
 - Bottom nav: HOME / PREDICT / TABLES / ACCOUNT. Trophy icon for Tables.
-- Render env vars: `DATABASE_URL`, `FOOTBALL_API_KEY`, `NODE_ENV`, `BYPASS_LATE_ENTRY=true`, `ADMIN_SECRET`, `SESSION_SECRET`.
+- Render env vars: `DATABASE_URL`, `FOOTBALL_API_KEY`, `NODE_ENV`, `BYPASS_LATE_ENTRY=true`, `ADMIN_SECRET`, `SESSION_SECRET`. Optional: `DISABLE_SCHEDULER=true` pauses the in-process scheduler (admin endpoints stay available for manual triggering).
 - Node pinned `22.20.0` via `.nvmrc` + `engines.node`. Build command still reads `corepack enable && pnpm install && pnpm build`.
 - `pnpm settle-pools` runs clean. `POST /api/admin/settle-pools` and `POST /api/admin/sync-outcomes` verified end-to-end (401 without token, identical stats JSON to CLI with token).
-- **No automated scheduler yet** — both sync and settle still run manually. Render Cron Jobs (5-min sync, 15-min settle) is the next operational step; pure dashboard work.
+- **Automated scheduler running in-process** (step 2o). Score sync every 5 min, pool settle every 15 min, both inside the Express server. CLI scripts + admin endpoints retained for manual triggering when needed.
 - **Chrome on iPhone refresh shows a blank white screen** — investigated, traced to the Manus runtime preview script being inlined into the Vite production build (`dist/public/index.html` is 368KB vs 1KB source, with a giant `<script id="manus-runtime">` block). Web-only artifact, doesn't affect Safari iPhone or any of the native app store builds. Carried forward as a pre-launch task.
 
 ## Decisions made in earlier chats — DO NOT relitigate
@@ -242,12 +253,11 @@ Carry forward, none urgent for the next step:
 - **No `DELETE` for predictions** — overwrite-only after first save; "half-saved" is a UI-only state. Matches Decided Rule #12. Confirm at pre-launch.
 - **Audit log volume** — every prediction save writes a `prediction.updated` row. Pool settlement writes one row per pool with full ranks + payouts in metadata. Indexed but disk grows. Revisit before public launch.
 - **`/api/pools`, `/api/tiers`, `/api/pools/competition/:slug` from arch §11** — collapsed into `/api/competitions`. Decide before pre-launch whether separate endpoints are needed.
-- **No automated scheduler yet** — sync extended in 2l to handle outcomes + fixture refresh in one job; settle-pools engine ready. Render Cron Jobs (5-min sync, 15-min settle) is the next config step. Pure dashboard work.
 - **Championship seed gap** — `pickCurrentRound` requires `futureMatchesCount >= 5`. Champ 2025/26 ended early May, so no Champ Round qualifies as current, so no Champ pools exist right now. Resolves naturally when 2026/27 fixtures load in August.
 - **Render build command** still reads `corepack enable && pnpm install && pnpm build`. Tighten to `--frozen-lockfile` in the same dashboard pass as cron setup.
 - **Stage reassignment on matchday change** — `upsertEventFromFootballData()` doesn't remap `events.stageId` when football-data changes a match's matchday (rare; only matters if Round structure ever changes mid-season).
 - **401 interceptor is module-level singleton** — fine for the current single-AuthProvider app; flag if multiple providers ever spin up (tests, SSR).
-- **Cold-start retry tops out at ~17s elapsed** — beyond that, treated as logged-out (the redirect-to-login flow takes over). Bump the backoff schedule if legit cold starts routinely exceed that.
+- **Cold-start retry tops out at ~17s elapsed** — beyond that, treated as logged-out (the redirect-to-login flow takes over). On Starter, cold starts only occur on deploy / crash recovery (not on idle), so this safety net is rarely exercised in practice. Bump the backoff schedule if a legit cold start ever exceeds it.
 - **Manus runtime inlined in Vite production builds** — the scaffolded `vite.config.ts` injects a ~250KB preview-mode runtime into every build's `index.html`. Causes a blank white screen on Chrome iPhone after refresh (not Safari). Doesn't affect native app store builds. Strip the plugin from `vite.config.ts` before public web launch.
 - **Resend / email templates** — still no transactional email. Signup creates an unverified account that can use the product. `RESEND_API_KEY` not in env yet.
 - **Legacy `/pools/*` redirects** — `/pools`, `/pools/:slug`, and `/pools/:slug/:poolId` all redirect to new step-2m URLs. Hard-switch (remove the redirect handlers) once inbound `/pools/*` traffic disappears from logs (~30 days post-launch). `/pools/:slug/:poolId/table` is NOT in the redirect set — PoolTablePage is mounted there and Account History's `[Table →]` still links to it.
@@ -273,15 +283,16 @@ Carry forward, none urgent for the next step:
 
 ## What's next — TBD with Wez
 
-Steps 2m and 2n are done. Open candidates for the next step (Wez picks):
+Steps 2m, 2n, and 2o are done. Open candidates for the next step (Wez picks):
 
-- **Render Cron Jobs** — automated outcome sync (5-min) + pool settle (15-min). Pure dashboard work, no new code; just configuration. The two CLI scripts (`pnpm sync-outcomes`, `pnpm settle-pools`) are ready and the admin endpoints are token-gated. Currently both run manually.
 - **Tie-break visualisation in standings** — when two players have the same points, surface *why* one is ranked higher (more exact scores → more correct results → tied split). Currently the data is in the table (Exact / Res columns) and the tie-break rule is in the footer, but there's no visual cue tying them together. Add a subtle indicator (column highlight, tiny `↑`, or grouped bracket) for tied clusters in `PoolStandingsTable.tsx`. Discussed but deferred.
 - **Tables tab deep links** — `/tables/:competitionSlug/:tierSlug` (or `?comp=&tier=` query) so Home's Available Tier rows land on the right tier in one tap.
 - **Resend + email verification** — signup currently creates an unverified account. Wire up `RESEND_API_KEY`, transactional templates, magic-link flow.
 - **`pool_entries` unique index `(pool_id, user_id)`** — DB-level Decided Rule #2 enforcement, closing the concurrent-double-tap race. Pre-launch blocker eventually.
 - **Marketing tier name alignment** — `leagueTiers` mock data still uses old branding (Matchday Five / Premier Ten / Grand Twenty / Elite Fifty at £5/£10/£20/£50). Should align with portal reality (Fiver / Tenner / Pony / Big One at £5/£10/£25/£50).
 - **Manus runtime strip from `vite.config.ts`** — fixes the blank Chrome iPhone refresh. Web-only; doesn't block native app builds.
+- **Live in-play scores** — currently locked matches stay locked through the match with no live score visible; users see their prediction then jump straight to FT result after the scheduler fires. Real in-play score display (HT, 60', live goals) is "step 2j+" per arch and worth queueing for pre-launch — it's the moment users naturally have the app open.
+- **App store wrap (Capacitor)** — eventually, for Google Play and Apple App Store delivery. Adds `ios/` and `android/` folders to the repo. Gated on UKGC licence, KYC, responsible-gambling tooling, and real payment integration. Don't start until those are in flight.
 
 Routes as of step 2m (unchanged in 2n):
 | URL | Page |
