@@ -203,48 +203,64 @@ function vitePluginStorageProxy(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy()];
+// Manus dev plugins are dev-tooling bloat (jsx-loc overlay, the 367 KB inlined
+// runtime, the debug log collector, and the storage proxy). They have no
+// purpose in a production build, so we gate them out by mode. Step 2p shipped
+// this gating, broke iPhone signed-in refresh for reasons step 2q couldn't
+// diagnose, and was rolled back. Step 2r added an inline boot-time error
+// reporter to client/index.html; if this re-attempt regresses again, the
+// reporter will paint the actual error on screen instead of a white void.
+export default defineConfig(({ mode }) => {
+  const isProduction = mode === "production";
+  const plugins = [
+    react(),
+    tailwindcss(),
+    ...(isProduction
+      ? []
+      : [jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy()]),
+  ];
 
-export default defineConfig({
-  plugins,
-  resolve: {
-    alias: {
-      "@": path.resolve(import.meta.dirname, "client", "src"),
-      "@shared": path.resolve(import.meta.dirname, "shared"),
-      "@assets": path.resolve(import.meta.dirname, "attached_assets"),
-    },
-  },
-  envDir: path.resolve(import.meta.dirname),
-  root: path.resolve(import.meta.dirname, "client"),
-  build: {
-    outDir: path.resolve(import.meta.dirname, "dist/public"),
-    emptyOutDir: true,
-  },
-  server: {
-    port: 3000,
-    strictPort: false, // Will find next available port if 3000 is busy
-    host: true,
-    proxy: {
-      // /api/* hits the Express server (port 3001 in dev). Cookies pass through
-      // both directions; with `changeOrigin: true` the browser stores the
-      // session cookie against localhost:3000 and forwards it on next request.
-      "/api": {
-        target: "http://localhost:3001",
-        changeOrigin: true,
+  return {
+    plugins,
+    resolve: {
+      alias: {
+        "@": path.resolve(import.meta.dirname, "client", "src"),
+        "@shared": path.resolve(import.meta.dirname, "shared"),
+        "@assets": path.resolve(import.meta.dirname, "attached_assets"),
       },
     },
-    allowedHosts: [
-      ".manuspre.computer",
-      ".manus.computer",
-      ".manus-asia.computer",
-      ".manuscomputer.ai",
-      ".manusvm.computer",
-      "localhost",
-      "127.0.0.1",
-    ],
-    fs: {
-      strict: true,
-      deny: ["**/.*"],
+    envDir: path.resolve(import.meta.dirname),
+    root: path.resolve(import.meta.dirname, "client"),
+    build: {
+      outDir: path.resolve(import.meta.dirname, "dist/public"),
+      emptyOutDir: true,
     },
-  },
+    server: {
+      port: 3000,
+      strictPort: false, // Will find next available port if 3000 is busy
+      host: true,
+      proxy: {
+        // /api/* hits the Express server (port 3001 in dev). Cookies pass through
+        // both directions; with `changeOrigin: true` the browser stores the
+        // session cookie against localhost:3000 and forwards it on next request.
+        "/api": {
+          target: "http://localhost:3001",
+          changeOrigin: true,
+        },
+      },
+      allowedHosts: [
+        ".manuspre.computer",
+        ".manus.computer",
+        ".manus-asia.computer",
+        ".manuscomputer.ai",
+        ".manusvm.computer",
+        "localhost",
+        "127.0.0.1",
+      ],
+      fs: {
+        strict: true,
+        deny: ["**/.*"],
+      },
+    },
+  };
 });
