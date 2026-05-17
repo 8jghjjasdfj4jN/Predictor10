@@ -19,18 +19,20 @@
     <title>Predictor10</title>
 
     <!--
-      Boot-time error reporter (step 2r, tightened in step 2t).
-      - Uses capture-phase listener so script-load failures are caught
-        (those events don't bubble to window).
-      - Reads main.tsx checkpoints (__p10_bootStarted / __p10_renderStarted /
-        __p10_renderReturned) so the diagnostic says HOW FAR boot got, not just
-        "nothing happened".
-      No-op on healthy boots (mount check short-circuits the fallback).
+      Boot-time error reporter (step 2r, tightened in 2t, fetch-status added 2u).
+      - Capture-phase listener catches script/link/img load failures.
+      - When one fires, immediately re-fetches the URL via fetch() to report the
+        actual HTTP status, content-type, and length. Tells us if the module
+        loader rejected a 200-OK file (MIME issue) versus the file genuinely
+        failing (4xx/5xx/network).
+      - Reads main.tsx checkpoints so the diagnostic says how far boot got.
+      No-op on healthy boots.
     -->
     <script>
       (function () {
         var FALLBACK_DELAY_MS = 200;
         var SAFETY_NET_MS = 10000;
+        var FETCH_TIMEOUT_MS = 6000;
         var errors = [];
         var rendered = false;
 
@@ -87,6 +89,62 @@
           );
         }
 
+        function composeDetail() {
+          var body = errors.length ? errors.join("\n\n") : safetyNetExplanation();
+          return body + "\n\n[boot] " + bootStatus();
+        }
+
+        function updateRenderedDetail() {
+          if (!rendered) return;
+          var pre = document.querySelector("#root pre");
+          if (pre) pre.textContent = composeDetail();
+        }
+
+        function fetchAndReport(url, label) {
+          if (!window.fetch || !url || url.indexOf("%") !== -1) return;
+
+          var controller = null;
+          if (typeof AbortController === "function") {
+            try { controller = new AbortController(); } catch (e) {}
+          }
+          var timeoutId = setTimeout(function () {
+            if (controller) {
+              try { controller.abort(); } catch (e) {}
+            }
+          }, FETCH_TIMEOUT_MS);
+
+          var opts = { method: "GET", cache: "no-store", credentials: "same-origin" };
+          if (controller) opts.signal = controller.signal;
+
+          try {
+            fetch(url, opts)
+              .then(function (res) {
+                clearTimeout(timeoutId);
+                var ct = res.headers.get("content-type") || "(none)";
+                var cl = res.headers.get("content-length") || "(none)";
+                var line =
+                  "[" + new Date().toISOString() + "] " + label +
+                  " fetch: status=" + res.status +
+                  ", content-type=" + ct +
+                  ", content-length=" + cl;
+                errors.push(line);
+                try { console.error("[p10-boot]", line); } catch (e) {}
+                updateRenderedDetail();
+              })
+              .catch(function (err) {
+                clearTimeout(timeoutId);
+                var line =
+                  "[" + new Date().toISOString() + "] " + label +
+                  " fetch threw: " + (err && err.message ? err.message : String(err));
+                errors.push(line);
+                try { console.error("[p10-boot]", line); } catch (e) {}
+                updateRenderedDetail();
+              });
+          } catch (e) {
+            clearTimeout(timeoutId);
+          }
+        }
+
         function fallbackCopy(text, done) {
           try {
             var ta = document.createElement("textarea");
@@ -111,8 +169,7 @@
           if (!r) return;
           rendered = true;
 
-          var body = errors.length ? errors.join("\n\n") : safetyNetExplanation();
-          var detail = body + "\n\n[boot] " + bootStatus();
+          var detail = composeDetail();
 
           var wrapStyle = [
             "min-height:100vh",
@@ -163,7 +220,7 @@
           if (copyBtn) {
             copyBtn.addEventListener("click", function () {
               var text =
-                detail +
+                composeDetail() +
                 "\n\nUA: " + (navigator.userAgent || "unknown") +
                 "\nURL: " + location.href +
                 "\nTime: " + new Date().toISOString();
@@ -201,9 +258,6 @@
           }, FALLBACK_DELAY_MS);
         }
 
-        // Capture phase = catches resource-load failures (<script>, <link>, <img>)
-        // that don't bubble to window. Also catches runtime errors targeted at window
-        // (capture listeners on window fire for window-targeted events too).
         window.addEventListener(
           "error",
           function (e) {
@@ -213,6 +267,7 @@
               var url = t.src || t.href || "(unknown)";
               var tag = (t.tagName || "?").toLowerCase();
               record("resource load failed", "<" + tag + "> " + url);
+              fetchAndReport(url, "<" + tag + ">");
               return;
             }
             // Runtime JS error
@@ -234,8 +289,6 @@
           record("unhandledrejection", msg + stk);
         });
 
-        // Safety net: render an explanatory message if React never mounted and no
-        // errors were captured (silent mount failure: blocked bundle, CSP, etc.).
         setTimeout(function () {
           if (!rootHasChildren() && errors.length === 0) {
             renderFallback();
