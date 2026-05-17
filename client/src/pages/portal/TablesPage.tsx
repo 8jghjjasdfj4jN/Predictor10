@@ -51,6 +51,7 @@ import {
   type Pool,
   type PoolDetail,
   type PoolEntriesPayload,
+  type PrizeBreakdownEntry,
   type UserEntry,
 } from "@/lib/portal-api";
 import {
@@ -76,11 +77,24 @@ function formatPlayerCount(n: number): string {
   return `${n.toLocaleString("en-GB")} players`;
 }
 
-function formatPot(entryCount: number, feeStr: string): string {
-  const fee = Number(feeStr);
-  if (!Number.isFinite(fee)) return "£—";
-  const pot = entryCount * fee;
-  return Number.isInteger(pot) ? `£${pot.toLocaleString("en-GB")}` : `£${pot.toFixed(2)}`;
+/**
+ * Render the per-place prize breakdown as a single line:
+ *   "1st £22.49 · 2nd £9.38 · 3rd £5.63"
+ *
+ * Returns "" when the breakdown is empty (zero-entry pool) so the calling
+ * component can hide the line entirely rather than show £0s. Ordinal labels
+ * are hard-coded to the first 5 — splits don't go deeper than that today.
+ */
+const ORDINAL_LABELS = ["1st", "2nd", "3rd", "4th", "5th"];
+
+function formatPrizeBreakdown(breakdown: PrizeBreakdownEntry[]): string {
+  if (breakdown.length === 0) return "";
+  return breakdown
+    .map((b) => {
+      const label = ORDINAL_LABELS[b.rank - 1] ?? `${b.rank}th`;
+      return `${label} £${b.amount}`;
+    })
+    .join(" · ");
 }
 
 function ordinalSuffix(n: number): string {
@@ -216,7 +230,12 @@ function TierHeader({
 }) {
   const feeLabel = formatFee(pool.tier.entryFee);
   const playerCount = pool.entryCount;
-  const potLabel = formatPot(playerCount, pool.tier.entryFee);
+
+  // Build the "1st £X · 2nd £Y · 3rd £Z" string. Server sends pence-rounded
+  // amounts that match what settlement will actually pay (step 2n). When
+  // entryCount=0 the server returns [] — show a placeholder rather than
+  // "1st £0.00 · 2nd £0.00 · 3rd £0.00".
+  const breakdownLabel = formatPrizeBreakdown(pool.prizeBreakdown);
 
   return (
     <div className="flex items-start justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-4">
@@ -228,8 +247,13 @@ function TierHeader({
           {pool.tier.name}
         </h2>
         <p className="font-['Manrope'] text-[0.75rem] text-white/55">
-          {feeLabel} · {formatPlayerCount(playerCount)} · {potLabel} pot
+          {feeLabel} · {formatPlayerCount(playerCount)}
         </p>
+        {breakdownLabel && (
+          <p className="font-['Manrope'] text-[0.72rem] tabular-nums text-emerald-200/80">
+            {breakdownLabel}
+          </p>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center">

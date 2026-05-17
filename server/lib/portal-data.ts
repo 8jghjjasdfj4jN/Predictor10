@@ -16,7 +16,7 @@ import { leagues } from "../db/schema/leagues";
 import { pools, poolEntries, predictions } from "../db/schema/pools";
 import { payments } from "../db/schema/payments";
 import { users } from "../db/schema/users";
-import { rankEntries, type EntryScore } from "./pool-settle";
+import { rankEntries, computeDisplayBreakdown, type EntryScore } from "./pool-settle";
 import { ROUNDS_BY_CODE } from "./rounds";
 
 // ─── API response shapes ──────────────────────────────────────────────────
@@ -38,6 +38,18 @@ export type TierDto = {
   ordinal: number;
 };
 
+/**
+ * Per-place prize amount for display (step 2n). Amounts are strings in
+ * pounds.pence ("22.49") so consumers don't have to track integer pence;
+ * server-side they're computed in integer pence and stringified once.
+ * Includes the houseFeePct applied — `amount` is what the player actually
+ * gets paid, NOT the gross share.
+ */
+export type PrizeBreakdownEntry = {
+  rank: number; // 1, 2, 3...
+  amount: string; // "22.49"
+};
+
 export type PoolDto = {
   id: string;
   name: string;
@@ -46,6 +58,13 @@ export type PoolDto = {
   closesAt: string; // ISO timestamp (late-entry close, opens + 7 days)
   entryCount: number;
   status: "draft" | "open" | "locked" | "settled" | "void";
+  /**
+   * Per-rank prize breakdown for the current entry count, net of house fee.
+   * Step 2n: all active tiers pay top 3 at 60/25/15 of the player pot
+   * (player pot = gross × (1 - houseFeePct)). Empty array when entryCount
+   * is 0 (no pot yet) or when prizeStructure is malformed.
+   */
+  prizeBreakdown: PrizeBreakdownEntry[];
 };
 
 export type CompetitionDto = {
@@ -57,6 +76,46 @@ export type CompetitionDto = {
   currentRound: CurrentRoundDto;
   pools: PoolDto[]; // active tiers only, ordered by ordinal (4 from step 2m)
 };
+
+/**
+ * Convert a pool's stored prizeStructure JSON + entry count + tier fee
+ * into the display-ready breakdown the API returns. Computes in integer
+ * pence and stringifies once. Returns an empty array if the structure is
+ * malformed, splits are empty, or the player pot is zero (entryCount=0
+ * or houseFeePct rounds the pot to zero) — those edge cases render as
+ * "no pot yet" on the client rather than a "£0.00 · £0.00 · £0.00" line.
+ */
+function buildPrizeBreakdown(
+  prizeStructureJson: unknown,
+  entryCount: number,
+  entryFeeDecimal: string,
+): PrizeBreakdownEntry[] {
+  if (entryCount <= 0) return [];
+  if (typeof prizeStructureJson !== "object" || prizeStructureJson === null) return [];
+  const rec = prizeStructureJson as Record<string, unknown>;
+  const splits = rec.splits;
+  if (!Array.isArray(splits) || splits.length === 0) return [];
+  if (!splits.every((s) => typeof s === "number")) return [];
+  const houseFeePctRaw = rec.houseFeePct;
+  const houseFeePct =
+    typeof houseFeePctRaw === "number" && Number.isFinite(houseFeePctRaw)
+      ? Math.min(Math.max(houseFeePctRaw, 0), 1)
+      : 0;
+
+  const tierFeePence = Math.round(parseFloat(entryFeeDecimal) * 100);
+  if (!Number.isFinite(tierFeePence) || tierFeePence <= 0) return [];
+  const grossPotPence = tierFeePence * entryCount;
+  // Same rounding rule settlement uses — Math.floor on house fee so we
+  // never overpay players from sub-penny remainders.
+  const houseFeePence = Math.floor(grossPotPence * houseFeePct);
+  const playerPotPence = grossPotPence - houseFeePence;
+
+  const lines = computeDisplayBreakdown(playerPotPence, splits as number[]);
+  return lines.map((l) => ({
+    rank: l.rank,
+    amount: (l.amountPence / 100).toFixed(2),
+  }));
+}
 
 export type UserEntryDto = {
   id: string;
@@ -101,6 +160,12 @@ export type PoolDetailDto = {
   matchesTotal: number;
   bypassActive: boolean;
   myEntry: { id: string; enteredAt: string } | null;
+  /**
+   * Same shape as PoolDto.prizeBreakdown. Lets the entry-confirm modal show
+   * "If you enter now you're playing for £X / £Y / £Z" with current numbers
+   * — useful context before the user commits.
+   */
+  prizeBreakdown: PrizeBreakdownEntry[];
 };
 
 export type EnterPoolError =
@@ -151,6 +216,7 @@ export async function getCompetitionsWithOpenPools(): Promise<CompetitionDto[]> 
       leagueName: leagues.name,
       leagueEntryFee: leagues.entryFee,
       leagueOrdinal: leagues.ordinal,
+      poolPrizeStructure: pools.prizeStructure,
     })
     .from(pools)
     .innerJoin(competitions, eq(pools.competitionId, competitions.id))
@@ -216,6 +282,11 @@ export async function getCompetitionsWithOpenPools(): Promise<CompetitionDto[]> 
       closesAt: r.poolClosesAt.toISOString(),
       entryCount: countByPool.get(r.poolId) ?? 0,
       status: r.poolStatus,
+      prizeBreakdown: buildPrizeBreakdown(
+        r.poolPrizeStructure,
+        countByPool.get(r.poolId) ?? 0,
+        r.leagueEntryFee,
+      ),
     });
   }
 
@@ -335,6 +406,7 @@ export async function getPoolDetail(
       leagueName: leagues.name,
       leagueEntryFee: leagues.entryFee,
       leagueOrdinal: leagues.ordinal,
+      poolPrizeStructure: pools.prizeStructure,
     })
     .from(pools)
     .innerJoin(competitions, eq(pools.competitionId, competitions.id))
@@ -437,6 +509,7 @@ export async function getPoolDetail(
     matchesTotal,
     bypassActive,
     myEntry,
+    prizeBreakdown: buildPrizeBreakdown(row.poolPrizeStructure, entryCount, row.leagueEntryFee),
   };
 }
 

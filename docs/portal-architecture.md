@@ -29,7 +29,7 @@ This doc describes the post-login user portal: navigation, pages, data, and the 
 | User's score guess for one match | `predictions` | **Prediction** | Liverpool 2-1 Arsenal |
 | Match | `events` | **Match** or **Fixture** | Liverpool vs Arsenal |
 
-**Refactor required:** today's frontend uses "League" for both Competition and Tier. Rename in UI copy. Schema unchanged. `LeaguesPage.tsx` becomes `PoolsPage.tsx`. The brand names ("The Pound", "The Tenner") become tier labels, not league names.
+**Refactor required:** today's frontend uses "League" for both Competition and Tier. Rename in UI copy. Schema unchanged. (Step 2m note: `LeaguesPage.tsx` originally became `PoolsPage.tsx` in step 2c then deleted entirely in step 2m when the Pools-as-browse flow was killed — Home + Tables cover it now.) The brand names ("The Fiver", "The Tenner") are tier labels, not league names.
 
 ---
 
@@ -76,9 +76,11 @@ From step 2m onwards there are **4 tiers per competition per Round**:
 | The Pony | £25 |
 | The Big One | £50 |
 
-**The Pound (£1) was retired in step 2m.** Reasoning: Stripe + merchant processing fees against the 90% prize-pool payout leave negative margin. Wez's existing Round 9 Pound entry plays out and settles normally on Sun 24 May 2026; from Round 10 onwards no Pound pools are created. The `leagues.slug='pound'` row stays in the DB for historical reference, marked `is_active=false`.
+**The Pound (£1) was retired in step 2m.** Reasoning: Stripe + merchant processing fees against the player-pool payout (now 75% of gross after step 2n's 25% commission) leave negative margin. Wez's existing Round 9 Pound entry plays out and settles normally on Sun 24 May 2026 under the original (pre-step 2n) 70/20/10 split with no commission; from Round 10 onwards no Pound pools are created. The `leagues.slug='pound'` row stays in the DB for historical reference, marked `is_active=false`.
 
 Tier visibility: all four tiers are visible to every user from day one. No progressive unlock. Tier choice is the user's.
+
+**Prize structure (step 2n, locked).** Every active tier carries a flat **25% operator commission** on the gross pot. The remaining 75% (the player pot) pays out top 3 at **60% / 25% / 15%**. So on a gross £100 pot, £25 goes to the operator and £75 splits as £45 / £18.75 / £11.25. Settlement applies the commission first then distributes the player pot per the splits — see §13 Decided Rules #9 / #14 for the exact rounding and Decided Rule #14 for residual-penny handling.
 
 ---
 
@@ -176,7 +178,7 @@ The third tab was originally "Pools" (browse + join flow). Step 2m repurposed it
 ```
 /                                       Home (live entries + Play CTAs for tiers not entered)
 /predict                                Open entries — tap → /predict/:entryId
-/predict/:entryId                       Combined Pool detail + Predict (canonical, formerly /pools/:slug/:poolId)
+/predict/:entryId                       Prediction screen (canonical, formerly /pools/:slug/:poolId)
 /tables                                 Tables tab — competition pills + tier sub-tabs
 
 /account                                Profile + summary
@@ -189,16 +191,19 @@ The third tab was originally "Pools" (browse + join flow). Step 2m repurposed it
 ```
 
 Step 2m retired these routes:
-- `/pools` (was: competition picker)
-- `/pools/:competitionSlug` (was: pools landing for one competition)
-- `/pools/:competitionSlug/:poolId` (was: canonical predict screen — moved to `/predict/:entryId`)
-- `/pools/:competitionSlug/:poolId/table` (was: league table — folded into `/tables`)
+- `/pools` (was: competition picker) — now 302 to `/tables`
+- `/pools/:competitionSlug` (was: pools landing for one competition) — now 302 to `/tables`
+- `/pools/:competitionSlug/:poolId` (was: canonical predict screen) — now resolves to `/predict/:entryId` via `LegacyPoolRedirect` (falls back to `/tables` if no entry)
 
-The combined Pool/Predict screen is unified — one URL, one layout, state changes by entry status:
-- **Pre-entry**: shows fixtures grouped by GW, empty score boxes, "Enter — £X" CTA at bottom
-- **Post-entry**: same screen, score boxes editable (auto-save), no big CTA, "Auto-saving" footer
-- **Round in progress**: locked matches show FT score + your prediction + points pill; future matches still editable
-- **Round settled**: read-only mode; banner at top "Final results — view league table"; pool moves to `/account/history` archive after a few days
+Step 2m retained:
+- `/pools/:competitionSlug/:poolId/table` — standalone league table view; still mounted on `PoolTablePage`. Account History's `[Table →]` button links here for settled pools.
+
+The `/predict/:entryId` screen is **entered-state only** post step 2m — by the time a user is on this URL they've already entered the pool. State varies by Round phase:
+- **Round in progress, before all matches lock**: editable score boxes, auto-save on change, "Auto-saving" footer
+- **Round in progress, matches kicked off**: locked rows show FT score + your prediction + points pill; future matches still editable
+- **Round settled**: read-only mode; banner at top "Round complete · View league table"; pool moves to `/account/history` archive after a few days
+
+The **pre-entry flow** (browsing a tier, late-entry modal, "Enter — £X" CTA, POST to `/api/pools/:id/enter`) lives on the **Tables tab** (§8.6). Tapping the "Enter · £NN →" button there walks through the same entry confirmation that used to live on the combined screen, then navigates to `/predict/:entryId` on success.
 
 ---
 
@@ -221,16 +226,20 @@ The Home tab unifies "your live entries in this round" with "tiers still availab
 │ └─────────────────────────────┘ │
 ├─────────────────────────────────┤
 │ AVAILABLE TIERS                 │
-│ The Pound      £1   24 entries  │
 │ The Fiver      £5   18 entries  │
+│ 1st £40.50 · 2nd £16.87 · 3rd £10.12│
+│ The Tenner    £10   12 entries  │
+│ 1st £54.00 · 2nd £22.50 · 3rd £13.50│
 │ The Pony      £25    4 entries  │
+│ 1st £45.00 · 2nd £18.75 · 3rd £11.25│
 │ The Big One   £50    1 entry    │
+│ 1st £22.50 · 2nd £9.37 · 3rd £5.63│
 └─────────────────────────────────┘
 ```
 
 Two sections, each can be empty:
 - **Your live entries** — one card per pool the user is in for the current round. Two CTAs per card: jump to predictions, jump to live league table.
-- **Available tiers** — tiers in the current round the user has NOT yet entered. New users see all 5.
+- **Available tiers** — tiers in the current round the user has NOT yet entered. Each row shows the current per-rank prize breakdown (step 2n) under the entry count. New users see all 4 tiers; users entered in some see only the remainder.
 
 Empty-state combinations:
 - 0 live entries + N available = new or returning user (welcome copy + "Pick your first Tier")
@@ -265,61 +274,25 @@ Lists every open entry the user holds, grouped by close time. Each card is a dee
 └─────────────────────────────────┘
 ```
 
-Empty state: "No open entries. Browse pools →" linking to `/pools`.
+Empty state: "No open entries. Browse tables →" linking to `/tables`.
 
-Tapping a card routes to `/pools/:competitionSlug/:poolId` — the same URL as the Pool detail / Predict screen.
+Tapping a card routes to `/predict/:entryId` — the canonical prediction screen (Section 8.5). Step 2m introduced this URL so the Predict bottom-nav tab stays highlighted while the user is making picks (previously the URL was `/pools/:competitionSlug/:poolId`, which highlighted Pools).
 
-### 8.3 Pools landing (`/pools`)
+### 8.3 Pools landing (`/pools`) — REMOVED in step 2m
 
-Competition picker at top. Body shows currently-relevant pools across all competitions.
+The standalone competition-picker landing page was killed in step 2m. The browse-tier flow now lives on Home (sweep view of Available Tiers across all active competitions) and the Tables tab (one tier at a time with the contextual entry CTA — §8.6). The legacy URL 302-redirects to `/tables` for any old bookmarks; the `PoolsPage.tsx` file is deleted.
 
-```
-┌─────────────────────────────────┐
-│ [Premier League]  [Championship]│
-├─────────────────────────────────┤
-│ OPEN NOW                        │
-│ Premier League · Round 12       │
-│ Closes Fri 18:00 · 5 tiers      │
-│ [ See pools → ]                 │
-├─────────────────────────────────┤
-│ Championship · Round 38         │
-│ Closes Sat 14:30 · 5 tiers      │
-│ [ See pools → ]                 │
-└─────────────────────────────────┘
-```
+### 8.4 Pools by competition (`/pools/:competitionSlug`) — REMOVED in step 2m
 
-### 8.4 Pools by competition (`/pools/:competitionSlug`)
+The per-competition tier-listing page was killed in step 2m alongside §8.3. Same rationale: Home and Tables together cover everything this page did. The legacy URL 302-redirects to `/tables`; the `PoolsCompetitionPage.tsx` file is deleted.
+
+### 8.5 Prediction screen (`/predict/:entryId`) — CANONICAL
+
+This is the canonical prediction screen (the single most important screen in the product). Step 2m made it entered-state only — by the time a user is here, they have an entry. Top-tab GW navigation (Variant B refined). See Decided Rule #12 for the locked-in design choices.
 
 ```
 ┌─────────────────────────────────┐
-│ ← Premier League                │
-├─────────────────────────────────┤
-│ 🔴 LIVE NOW (if applicable)     │
-│ Liverpool 2-1 Arsenal · 67'     │
-├─────────────────────────────────┤
-│ ROUND 12 · CLOSES FRI 18:00     │
-│ ┌─────────────────────────────┐ │
-│ │ ● The Pound      £1   42 in │ │
-│ │ ● The Fiver      £5   28 in │ │
-│ │ ● The Tenner    £10   18 in │ │
-│ │ ● The Pony      £25    9 in │ │
-│ │ ● The Big One   £50    3 in │ │
-│ └─────────────────────────────┘ │
-│                                  │
-│ ROUND 13 · OPENS MON            │
-│ (preview, no enter button yet)  │
-└─────────────────────────────────┘
-```
-
-Tier rows show entry-fee, current entry count, prize pool. Tap → pool detail.
-
-### 8.5 Pool detail / Predict (`/pools/:competitionSlug/:poolId`) — CANONICAL
-
-This is the single most important screen in the product. Pre-entry browsing AND post-entry predicting use the same URL and the same layout, with state changes by entry status. Top-tab GW navigation (Variant B refined). See Decided Rule #12 for the locked-in design choices.
-
-```
-┌─────────────────────────────────┐
-│ ← Pools                         │
+│ ← Home                          │
 │ PL · The Tenner · Round 1       │
 │ 36 pts total · Rank 8 of 50     │
 ├─────────────────────────────────┤
@@ -342,13 +315,12 @@ This is the single most important screen in the product. Pre-entry browsing AND 
 └─────────────────────────────────┘
 ```
 
-**State transitions:**
+**State transitions** (post step 2m, entered-state only — pre-entry lives on Tables now):
 
 | State | Top section | Match rows | Bottom |
 |---|---|---|---|
-| Pre-entry (browsing) | Pool meta + entry stats (entry £X · N entrants) | Empty score boxes, "Tap to predict" hint | `[ Enter — £X ]` CTA |
-| Post-entry, round not started | "0/40 saved" | Editable boxes | Auto-save indicator |
-| Post-entry, round in progress | "X pts total · Rank Y of Z" | Mix of finished + live + locked + editable | Auto-save indicator |
+| Entered, round not started | "0/40 saved" | Editable boxes | Auto-save indicator |
+| Entered, round in progress | "X pts total · Rank Y of Z" | Mix of finished + live + locked + editable | Auto-save indicator |
 | Round settled | "Final: X pts · Y of Z · view table" banner | Read-only: FT scores, your predictions, points pills | "View league table" link |
 
 **Match row variants:**
@@ -392,11 +364,11 @@ Same screen, but every match is read-only. Tabs all show checkmarks and per-GW t
 └─────────────────────────────────┘
 ```
 
-Routing: settled pools remain accessible at the same URL but are reached primarily via `/account/history` (Section 8.8) since they no longer surface on Home or Pools.
+Routing: settled pools' prediction screens remain accessible at `/predict/:entryId` but are reached primarily via `/account/history` (Section 8.8) since they no longer surface on Home or Tables.
 
 ### 8.6 Tables tab (`/tables`)
 
-Replaces the old Pools-browse flow and the standalone per-pool league table page. One destination for "how am I doing across every tier and competition." Read-only — no entry actions on this tab (Home is the sole sweep entry point; Tables shows a contextual entry CTA only for the tier the user is currently viewing when they aren't entered in it).
+Replaces the old Pools-browse flow and the standalone per-pool league table page. One destination for "how am I doing across every tier and competition." Standings are entrant-only (per the `/api/pools/:id/entries` access rule from step 2k); non-entrants see the header with the contextual `Enter · £NN →` button and the prize breakdown line but no standings table.
 
 Layout (top to bottom):
 
@@ -408,10 +380,11 @@ Layout (top to bottom):
 ├─────────────────────────────────┤
 │ ●Fiver  ●Tenner  Pony  Big One  │ ← tier sub-tabs; dot = you're entered
 ├─────────────────────────────────┤
+│ ROUND 9                         │
 │ The Tenner            ┌───────┐ │
 │ £10 · 32 players      │ You   │ │
-│ £320 pot              │ 4th · │ │
-│                       │ 19pts │ │
+│ 1st £144 · 2nd £60    │ 4th · │ │
+│      · 3rd £36        │ 19pts │ │
 │                       └───────┘ │
 ├─────────────────────────────────┤
 │ # │ Player   │ Ex │ R │ Pts    │
@@ -421,7 +394,7 @@ Layout (top to bottom):
 │ 4 │ You      │  2 │ 3 │ 19     │ ← emerald row
 │ 5 │ Sam T.   │  1 │ 5 │ 15     │
 │ ...                             │
-│ ↓ 27 more ↓                     │
+│ ↓ 22 more ↓                     │
 └─────────────────────────────────┘
 ```
 
@@ -429,23 +402,24 @@ Not-entered state (same tier sub-tab tapped, viewer is not in this tier):
 
 ```
 ┌─────────────────────────────────┐
+│ ROUND 9                         │
 │ The Pony              ┌───────┐ │
 │ £25 · 18 players      │Enter ·│ │ ← solid emerald button
-│ £450 pot              │£25 →  │ │
-│                       └───────┘ │
+│ 1st £202.50           │£25 →  │ │
+│ · 2nd £84.37          └───────┘ │
+│ · 3rd £50.63                    │
 ├─────────────────────────────────┤
-│ # │ Player   │ Ex │ R │ Pts    │
-│ 1 │ Tom W.   │  5 │ 3 │ 31     │
-│ ... (standings shown normally)  │
+│ (standings hidden — entrant-    │
+│ only per arch §8.6 access rule) │
 └─────────────────────────────────┘
 ```
 
 Rules:
 - **Competition pills**: one per active competition. Selected pill is solid emerald (#34d399 fill, dark text). Others are faded ghost style. Pills are tappable to switch.
 - **Tier sub-tabs**: one per tier in the current Round for the selected competition. From step 2m onwards that's four tiers (Fiver / Tenner / Pony / Big One). Selected sub-tab has an emerald underline. A small emerald dot prefixes the label when the viewer is entered in that tier for the current Round; absent otherwise.
-- **Header right-side widget**:
+- **Header**: Round label (small eyebrow) + tier name (h2) + meta line (`£NN · N players`) + per-rank prize breakdown line (`1st £X · 2nd £Y · 3rd £Z`, step 2n — amounts net of 25% commission). Header right-side widget:
   - Entered: small two-line block — uppercase eyebrow "YOU" + emerald "Nth · X pts".
-  - Not entered: solid emerald button "Enter · £NN →". Tap navigates into the entry flow (same flow Home's "Play a Round" cards use).
+  - Not entered: solid emerald button "Enter · £NN →". Tap walks through the entry flow (window check → late-entry modal if needed → POST `/api/pools/:id/enter` → navigate to `/predict/:entryId`).
 - **Standings table**: same component used in step 2k's PoolTablePage. Five columns (# / Player / Exact / Result / Pts). Gold rank numbers for 1-3 (amber-300). Emerald-tinted row for the viewer when entered. `↓ N more ↓` footer when truncated; tap expands inline (or the page scrolls, depending on what fits — implementation choice). Tie-break footer copy mirrors Decided Rule #10 verbatim per step 2k.
 - **Default landing tier** when arriving at `/tables`: leftmost sub-tab where the viewer is entered. If entered in none, fall back to the first tier (Fiver). Persists across navigations within the same session.
 - **Default landing competition** when arriving at `/tables`: leftmost pill where the viewer has at least one entry. If none, Premier League.
@@ -472,7 +446,7 @@ Endpoint: existing `GET /api/pools/:id/entries` (built in step 2k). Tables fetch
 
 ### 8.8 History — settled rounds archive (`/account/history`)
 
-When a Round settles, its pools disappear from Home and Pools (active surfaces). They land here. Per-user archive: every pool the user ever entered, with their final stats and a link back to the read-only Pool detail and League Table for that pool.
+When a Round settles, its pools disappear from Home and Tables (active surfaces). They land here. Per-user archive: every pool the user ever entered, with their final stats and a link back to the read-only prediction screen and league table for that pool.
 
 ```
 ┌─────────────────────────────────┐
@@ -490,7 +464,7 @@ When a Round settles, its pools disappear from Home and Pools (active surfaces).
 │ │ [Results →]  [Table →]      │ │
 │ └─────────────────────────────┘ │
 │ ┌─────────────────────────────┐ │
-│ │ Champ · The Pound · No prize│ │
+│ │ Champ · The Fiver · No prize│ │
 │ │ 64 pts · 5 of 30            │ │
 │ │ [Results →]  [Table →]      │ │
 │ └─────────────────────────────┘ │
@@ -505,10 +479,10 @@ When a Round settles, its pools disappear from Home and Pools (active surfaces).
 
 - **Header stat summary** — three cells: total settled rounds played, total cashes (any podium finish), best-ever rank. Stat copy/labels are still under review (see Section 14).
 - **Grouped by Round, newest first.** Round headers show round number + month/year.
-- **Per-pool card** — pool name (competition · tier), final stats (pts, rank, prize/no-prize), two CTAs: Results (read-only Pool detail with FT scores + your predictions + points) and Table (read-only League Table).
+- **Per-pool card** — pool name (competition · tier), final stats (pts, rank, prize/no-prize), two CTAs: `Results →` (read-only prediction screen at `/predict/:entryId` with FT scores + your predictions + points) and `Table →` (standalone league table at `/pools/:slug/:poolId/table`).
 - **Cashed pools** (1st/2nd/3rd) get an amber-tinted card + trophy badge with rank label. "No prize" pools stay neutral.
 - **Empty state**: "No settled rounds yet. Your first results will appear here when Round 1 settles."
-- **Settlement → archive timing**: a pool moves to the archive immediately on settlement. The Pool detail URL stays valid but discoverability is via the archive (decided rule #11).
+- **Settlement → archive timing**: a pool moves to the archive immediately on settlement. The prediction screen URL stays valid but discoverability is via the archive (decided rule #11).
 
 ### 8.9 Responsible gambling (`/account/responsible-gambling`)
 
@@ -529,7 +503,7 @@ Required page from day one (LCCP foundation). UI fully built; backend writes to 
 | Surface | Trigger | Content |
 |---|---|---|
 | Top-bar badge | Any match in-play across active competitions | Count + bottom-sheet of all live matches |
-| Pools competition page | In-play match in that competition | Strip above pool list |
+| Tables tab | In-play match for the selected competition + tier | Strip above the standings table |
 | Home hero (State C) | User has predictions on currently-live matches | Match-by-match: prediction vs live score, points-on-pace |
 | Predict detail (after lock) | After `predictionLockAt`, if matches live | Read-only "Watch" view |
 
@@ -555,23 +529,26 @@ football-data.org → internal:
 
 ## 10. Seed data plan
 
-Run once, server-side, on first deploy:
+Run via `pnpm seed`, idempotent across re-runs:
 
 ```
 sports        : ['football']
-competitions  : ['premier-league', 'championship', 'world-cup-2026']
+competitions  : ['premier-league', 'championship']
                   + extId mapping to football-data.org codes
-leagues       : 5 tier rows
-                  - The Pound  £1   prize=top_3 split [70/20/10]
-                  - The Fiver  £5   prize=top_3 split [70/20/10]
-                  - The Tenner £10  prize=top_3 split [70/20/10]
-                  - The Pony   £25  prize=top_5 split [50/25/15/7/3]
-                  - The Big One £50 prize=top_5 split [50/25/15/7/3]
+                  (World Cup deferred — see Decided Rule #4)
+leagues       : 4 active tier rows + 1 retired (step 2n splits)
+                  Active:
+                  - The Fiver  £5   splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
+                  - The Tenner £10  splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
+                  - The Pony   £25  splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
+                  - The Big One £50 splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
+                  Retired (is_active=false, kept for historical entries):
+                  - The Pound  £1   splits=[0.70, 0.20, 0.10]  (no houseFeePct)
 ```
 
-`stages` and `events` populated by sync cron (Render Cron Jobs) calling football-data.org.
+`stages` and `events` populated by the fixture-sync inside `pnpm seed` itself (calls football-data.org once per competition; well under the 10 req/min free-tier ceiling).
 
-`pools` created by cron when a stage opens: 5 tiers × 1 stage × 1 competition per cron run = 5 rows. Cron runs per competition stage transition.
+`pools` created by the same seed run for the **current Round only** (the lowest-ordinal Round still having at least 5 future kickoffs). 4 active tier pools × 1 stage × 1 competition per run = 4 rows per competition with an open Round. The seed also re-syncs `prize_structure` JSON on any existing open pools to match the current tier value (step 2n) — settled pools are deliberately left alone (Decided Rule #14: payouts immutable once banked).
 
 ---
 
@@ -595,7 +572,9 @@ This section is a living map of endpoints. Status markers: **✓** = shipped, **
 ```
 ✓  GET    /api/competitions   → competitions with an open Round, each with
                                  their current stage and embedded pool list
-                                 (5 tiers per competition × Round). Public.
+                                 (4 active tiers per competition × Round —
+                                 retired tiers filtered out via
+                                 leagues.is_active). Public.
 ✓  GET    /api/pools/:id      → full pool detail (round meta, tier meta,
                                  entry count, late-entry window state,
                                  matchesLocked/Total, bypassActive flag;
@@ -707,12 +686,12 @@ These resolve previously-open questions. They flow into build:
 6. **Round structure.** A Round is a multi-gameweek tournament block. PL: 9 Rounds (4-4-4-4-4-4-4-5-5 GWs). Champ: 9 Rounds (5-5-5-5-5-5-5-5-6 MDs). See Section 3 for the full schedule. **Entry fee covers the whole Round** — one stake, all matches in the Round.
 7. **Per-match prediction lock.** Each match's predictions lock 1 hour before its individual kickoff. A user can edit predictions for un-kicked-off matches at any time. Predictions for already-played matches are never accepted — server enforces by rejecting with HTTP 403. Prevents cheating via late entry seeing results.
 8. **Late-entry window.** Pool entry stays open for **exactly 7 days after the Round's first match kicks off**. Late entrants must confirm a warning modal explaining the handicap (forfeited matches = 0 pts) before payment. After +7 days, pool is closed; server rejects new entries.
-9. **Prize structure — TBD.** Top 3 per pool win money; specific splits and operator commission are not yet decided and will be finalised before public launch. Splits stored in `pools.prizeStructure` jsonb so they can be tuned per-tier or per-promotion later. **Test mode behaviour:** all transactions recorded as `payments.mode = 'mock'` — no real money charged, no real money paid. Prize calculations and "winners" still compute and display in UI for end-to-end testing of the settlement engine. At licence flip, the same code path becomes real: charges via Stripe, payouts via configured rail, commission posted to operator account.
+9. **Prize structure (locked in step 2n).** Top 3 per pool win money. Splits applied to the **player pot** (= gross pot × 0.75 after the 25% operator commission): 60% / 25% / 15%. Identical across all four active tiers. Splits + houseFeePct stored in `pools.prizeStructure` jsonb (snapshotted at pool creation) so tier-level changes can be tuned later without retroactive effects on settled pools. **Test mode behaviour:** all transactions recorded as `payments.mode = 'mock'` — no real money charged, no real money paid. Prize calculations and "winners" still compute and display in UI for end-to-end testing of the settlement engine. At licence flip, the same code path becomes real: charges via Stripe, payouts via configured rail, commission posted to operator account. **Retired tiers (Pound):** keep their original `prizeStructure` snapshot (70/20/10, no houseFeePct) so existing open pools settle under the rules they were opened under.
 10. **Tie-breaker.** Order of comparison when entries are tied on points: (1) **Total exact-score predictions** (5pt entries) — more wins. (2) **Total correct-result predictions** (2pt entries) — more wins. (3) Still tied → split prize evenly between tied entries.
-11. **Settled rounds → archive.** Once a Round settles, its pools no longer appear in the active Pools tab or Home tab. They move to `/account/history` — a per-user archive of every pool the user entered, with their final rank, points, and any payout. The Pool detail URL stays accessible in read-only mode so users can deep-link to old results, but discoverability is via the archive, not the active surfaces.
-12. **Predict screen design — locked.** Combined Pool detail + Predict on a single URL (`/pools/:competitionSlug/:poolId`). Top tabs for each Gameweek in the Round (e.g. `GW1 24 pts ✓ | GW2 5/10 | GW3 0/10 | GW4 0/10`). Default tab on load = the current Gameweek (the first GW that hasn't fully completed). All matches in the selected GW shown in full — no "+N more" truncation. Day groupers within a GW for chronology (Sat/Sun/Mon). Match rows render four states: **finished** (FT score + your prediction + points pill), **saved & locked** (kickoff <1hr away, no edits), **half-saved** (one score entered), **editable** (empty boxes, "tap to predict"). Auto-save on every input change (debounced ~800ms) with a footer indicator confirming persistence. No manual "Save" button.
+11. **Settled rounds → archive.** Once a Round settles, its pools no longer appear in the active Tables tab or Home tab. They move to `/account/history` — a per-user archive of every pool the user entered, with their final rank, points, and any payout. The prediction screen (`/predict/:entryId`) stays accessible in read-only mode so users can deep-link to old results, but discoverability is via the archive, not the active surfaces. The settled-pool league table URL (`/pools/:slug/:poolId/table`) is also preserved as the `[Table →]` target from Account History.
+12. **Predict screen design — locked.** Entered-state-only screen at `/predict/:entryId` (step 2m URL — keeps the Predict bottom-nav tab highlighted; was `/pools/:competitionSlug/:poolId` pre-step-2m, which mixed pre-entry and post-entry states). Top tabs for each Gameweek in the Round (e.g. `GW1 24 pts ✓ | GW2 5/10 | GW3 0/10 | GW4 0/10`). Default tab on load = the current Gameweek (the first GW that hasn't fully completed). All matches in the selected GW shown in full — no "+N more" truncation. Day groupers within a GW for chronology (Sat/Sun/Mon). Match rows render four states: **finished** (FT score + your prediction + points pill), **saved & locked** (kickoff <1hr away, no edits), **half-saved** (one score entered), **editable** (empty boxes, "tap to predict"). Auto-save on every input change (debounced ~800ms) with a footer indicator confirming persistence. No manual "Save" button. The pre-entry flow (window check → late-entry modal → POST `/enter`) lives on the Tables tab now (§8.6).
 13. **Settlement gate for non-played fixtures.** A pool settles when every event in its Round is either `finished` with an `event_outcomes` row, OR in a terminal non-played state (`cancelled` / `void`). `Postponed` events still block settlement — they may yet be rescheduled inside the Round window. Predictions on cancelled or void events keep `points_awarded = null` and render as "Missed — 0 pts" (no match means no score to compare against). Without this rule, a single postponement could deadlock a pool indefinitely.
-14. **Payout rounding.** Each rank's payout is computed as `pot × split ÷ tied_count`, rounded to 2 decimal places at storage. After all line items are computed, any 1-2p rounding residual goes to rank 1 — line items must sum exactly to `pot × sum(splits)` so the books balance. This is cosmetic precision for `mode='mock'`; real-money operation post-licence will switch to integer-pence arithmetic for proper accounting.
+14. **Payout rounding.** Operator commission is computed first (`houseFeePence = floor(grossPotPence × houseFeePct)`, so players are never overpaid from sub-penny remainders). The remaining `playerPotPence` is split across paying ranks: `playerPot × split ÷ tied_count`, rounded to 2 decimal places at storage. After all line items are computed, any 1-2p rounding residual goes to rank 1 — line items must sum exactly to `playerPotPence × sum(splits)` so the books balance. The same `computeDisplayBreakdown` helper feeds both settlement and the API display amounts, so the breakdown shown on Tables / Home matches what actually gets paid to the penny. Cosmetic precision for `mode='mock'`; real-money operation post-licence switches to integer-pence arithmetic throughout.
 15. **Zero-entry pools settle silently.** A pool reaching its settlement gate with `entry_count = 0` still gets marked `settled` — pot is 0, no `payments` rows are written, audit log records the settlement with `entryCount: 0`. Handles the rare race between the stale-pool cleanup script and outcome sync, and gives the settlement engine a single uniform exit path.
 
 ---
@@ -721,21 +700,22 @@ These resolve previously-open questions. They flow into build:
 
 ### Deferred until pre-launch (gating public launch)
 
-1. **Prize splits and operator commission.** Top 3 paid (Decided #9), but exact percentages TBD. Affects test-mode display copy and post-licence go-live calculations. Decision needed before Round 2 public launch.
-2. **Default tab on settled-state Pool/Predict screen.** Currently defaults to GW1 (chronological start). Alternatives: last-viewed (sticky), highest-scoring GW (lead with user's best), or most recent GW (last week's matches still in memory).
-3. **Archive header stats.** Currently shows `Rounds played · Cashes · Best rank`. Alternatives: best round (pts), highest tier won, longest cashing streak. Three-cell space available, copy and metrics under review.
-4. **"Cashed" copy** on archive cards. Used while payouts are TBD; once operator commission and prize amounts are decided, may switch to specific amount or "1st place · £X" format.
-5. **Settlement → archive timing.** Currently moves immediately on settlement. Consider a 24-48hr "fresh results" grace period where settled pools stay on Home with a "Round X complete" hero, then move to archive. Improves engagement on settlement day.
+1. **Default tab on settled-state Prediction screen.** Currently defaults to GW1 (chronological start). Alternatives: last-viewed (sticky), highest-scoring GW (lead with user's best), or most recent GW (last week's matches still in memory).
+2. **Archive header stats.** Currently shows `Rounds played · Cashes · Best rank`. Alternatives: best round (pts), highest tier won, longest cashing streak. Three-cell space available, copy and metrics under review.
+3. **"Cashed" copy** on archive cards. Now that step 2n locked prize amounts (60/25/15 of player pot, 25% commission), this could switch to a specific value — e.g. `1st · £22.49` — instead of the generic "Cashed" pill. Decision pending visual design pass.
+4. **Settlement → archive timing.** Currently moves immediately on settlement. Consider a 24-48hr "fresh results" grace period where settled pools stay on Home with a "Round X complete" hero, then move to archive. Improves engagement on settlement day.
+5. **Tie-break visualisation in standings.** Two players with equal points are ranked by exact-score count → correct-result count, but the table doesn't currently surface *why* one is higher. Add a subtle column highlight or `↑` marker for the deciding column in `PoolStandingsTable.tsx`. Spec'd but deferred.
+6. **Tables tab deep links.** Add `/tables/:competitionSlug/:tierSlug` (or `?comp=&tier=` query) so Home's Available Tier rows can land on the right tier in one tap. Currently they all land on plain `/tables` and require manual sub-tab selection.
 
 ### Deferred to post-launch / Week 5+ build
 
-6. **Push and email notifications.** Round-opens, late-entry-window-closing, predictions-due-soon (per-match lock approaching), results-in. Out of scope for portal architecture; spec needed in Week 5+ build.
-7. **Multi-competition Home behaviour.** When a user has live entries in PL Round 1 AND Champ Round 1 simultaneously, how does Home present them? Options: tabbed by competition, both visible stacked, default to whichever has more pressing deadline. Defer until we have multi-comp users to learn from.
-8. **Live scores polling cadence.** Currently 60s server cache, 30s client refresh on visible pages. May tighten during in-play windows. Decision after first round operations.
+7. **Push and email notifications.** Round-opens, late-entry-window-closing, predictions-due-soon (per-match lock approaching), results-in. Out of scope for portal architecture; spec needed in Week 5+ build.
+8. **Multi-competition Home behaviour.** When a user has live entries in PL Round 1 AND Champ Round 1 simultaneously, how does Home present them? Options: tabbed by competition, both visible stacked, default to whichever has more pressing deadline. Defer until we have multi-comp users to learn from.
+9. **Live scores polling cadence.** Currently 60s server cache, 30s client refresh on visible pages. May tighten during in-play windows. Decision after first round operations.
 
 ### Deferred to Q4 2026 (post-licence)
 
-9. **GAMSTOP integration cadence.** Current scaffolding runs nightly sync; UKGC may require more frequent checks during sessions. Confirm with compliance counsel.
-10. **AML rule thresholds.** Velocity, single-transaction size, deposit-to-stake ratios — specific numbers tuned during licence application review.
-11. **KYC provider selection.** Onfido / Veriff / GBG / Jumio. Decision after sandbox evaluations in Weeks 9-11.
-12. **Per-user `real_money_enabled` rollout strategy.** Big-bang on licence day, or gradual cohort-by-cohort. Probably gradual for risk control.
+10. **GAMSTOP integration cadence.** Current scaffolding runs nightly sync; UKGC may require more frequent checks during sessions. Confirm with compliance counsel.
+11. **AML rule thresholds.** Velocity, single-transaction size, deposit-to-stake ratios — specific numbers tuned during licence application review.
+12. **KYC provider selection.** Onfido / Veriff / GBG / Jumio. Decision after sandbox evaluations in Weeks 9-11.
+13. **Per-user `real_money_enabled` rollout strategy.** Big-bang on licence day, or gradual cohort-by-cohort. Probably gradual for risk control.

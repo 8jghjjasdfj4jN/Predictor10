@@ -13,7 +13,7 @@ Target launch: **No hard date.** Earliest-possible: Round 1 of PL 2026/27 (Sat 2
 1. **Build the real flow, mock the money.** Every screen, endpoint and ledger entry behaves as if real money is moving. Behind the scenes, payments are recorded with `mode = "mock"` and never hit a PSP. When the UKGC licence lands, the same code paths flip to `mode = "live"`.
 2. **Compliance-ready schema from day one — no structural migrations at licence flip.** All tables a licensed operator needs (KYC, AML, withdrawals, customer interactions, GAMSTOP, payment provider events) are in the schema from the first migration. They sit dormant during V1; the licensed work populates them rather than creating them.
 3. **Simplest viable architecture.** Single repo. Render hosting. Postgres + Drizzle. No Redis, no queue infrastructure — Render Cron Jobs handle settlement. The existing `football-data.org` feed stays untouched.
-4. **One product, one scoring rule.** Match-by-match score prediction. 5 points for exact score, 2 for correct result, 0 otherwise. Five tiers from £1 to £50, named The Pound / The Fiver / The Tenner / The Pony / The Big One.
+4. **One product, one scoring rule.** Match-by-match score prediction. 5 points for exact score, 2 for correct result, 0 otherwise. Four tiers from £5 to £50 — The Fiver / The Tenner / The Pony / The Big One. (The Pound (£1) was in the original five-tier plan but retired in step 2m — see Build progress below.)
 5. **Round = multi-gameweek tournament block.** PL: 9 Rounds of 4-5 GWs each (38 GWs total). Champ: 9 Rounds of 5-6 MDs each (46 MDs total). One stake per Round; user predicts every match across all GWs in that Round. See architecture doc Section 3.
 6. **Anti-cheat by design.** Predictions for matches already kicked off are never accepted. Late entry is allowed up to 7 days into a Round but with explicit warning that already-played matches score 0. Lock = kickoff minus 1 hour, server-enforced.
 
@@ -37,7 +37,8 @@ The calendar weeks below were the original plan. Reality ran roughly to schedule
 - **Step 2k** (League Table page — `/pools/:competitionSlug/:poolId/table`, `GET /api/pools/:id/entries`, gold top-3, emerald "You" row, tie-break footer mirroring Rule #10 verbatim, two-CTA live-entry cards on Home, `[Table]` deep-links from History): ✅
 - **Step 2l** (Football-data sync extended to refresh scheduled fixtures, not just outcomes — shared `fixture-sync.ts` helper, finished-is-terminal safety rail, legacy `/api/fixtures*` proxy + `footballService.ts` + unmounted `Dashboard.tsx` removed): ✅ code shipped. Render Cron Jobs (5-min sync, 15-min settle) + tighter build command pending dashboard configuration before public launch.
 - **Step 2l.1** (Refresh-on-portal cold-start fix — 30s `AbortController` removed, retry-on-network in `loadCurrentUser`, 401 interceptor in portal-api.ts, `RedirectToLogin` component, `LoginPage`/`RegisterPage` `?redirect=` handling, longer `LoadingSplash` escalation with 60s Reload button): ✅
-- **Step 2m** (Menu / IA restructure + Pound retirement — bottom nav becomes HOME/PREDICT/TABLES/ACCOUNT, prediction screen moves to `/predict/:entryId`, Pools tab repurposed as TABLES with competition pills + tier sub-tabs + entry CTA, Pound tier retired from Round 10 onwards): planned, not started. Design locked per handoff-prompt §"Decisions made this session".
+- **Step 2m** (Menu / IA restructure + Pound retirement — bottom nav becomes HOME/PREDICT/TABLES/ACCOUNT, prediction screen moves to `/predict/:entryId`, Pools tab repurposed as TABLES with competition pills + tier sub-tabs + entry CTA, Pound tier retired from Round 10 onwards): ✅
+- **Step 2n** (Prize splits standardised + commission + per-rank breakdown UI — all four active tiers move to 60/25/15 splits on the player pot with 25% operator commission, prize breakdowns surface on Tables and Home as "1st £X · 2nd £Y · 3rd £Z" lines computed live from current entry counts, settlement applies commission before payouts): ✅
 - **Compliance build-out (Weeks 5-8)**: not started
 - **Resend / email templates**: deferred to pre-launch
 
@@ -45,7 +46,7 @@ Notable deviations from the original weekly schedule:
 - **League Table page** (originally Week 3) deferred to step 2k after settlement landed first. The settled-state read-only PoolDetailPage took priority because it consumes the same settlement output and validates the data model before the live-table query is built.
 - **Football-data sync as fixture+outcome job** (not in original plan as a distinct step): the rebuild's outcome-only sync left a gap — rescheduled / postponed / newly-added matches silently dropped out of the DB until someone re-seeded by hand. Surfaced in step 2l by a real-world miss (Wed 13 May 2026 Man City v Crystal Palace catch-up not showing in Round 9). Fix landed as `server/lib/fixture-sync.ts` shared helper + extended `syncOutcomes()`; both seed and cron now upsert events through one implementation. Legacy `footballFetch` cache + `/api/fixtures*` proxy + unmounted Dashboard removed in the same step.
 - **Cold-start auth tolerance** (step 2l.1, not in original plan): the 30s `AbortController` in `AuthContext.tsx` was dropping valid sessions when Render's free-tier web service took longer than 30s to wake. Symptoms: iPhone Safari refresh on a portal URL showed the marketing 404 with "Sign In" nav, looking like a forced logout. Fix removes the hard timeout, adds retry-on-network, and routes logged-out users on portal URLs to `/login?redirect=<url>` via the new `RedirectToLogin` component.
-- **The Pound tier retirement** (step 2m, not in original plan): the £1 tier loses money after Stripe + merchant fees against the 90% prize-pool payout. Removed from Round 10 onwards. Wez's existing Round 9 Pound entry settles normally on Sun 24 May 2026.
+- **The Pound tier retirement** (step 2m, not in original plan): the £1 tier loses money after Stripe + merchant fees against the player-pool payout (75% of gross after step 2n's 25% commission). Removed from Round 10 onwards. Wez's existing Round 9 Pound entry settles normally on Sun 24 May 2026 under the original (pre-step 2n) 70/20/10 rules.
 - **Pool generation cron** (originally Week 2): replaced by an idempotent one-shot in the seed script. Pools for the current Round are generated by re-running `pnpm seed`. A cron job becomes useful when seasons roll over and new Rounds need pools as the previous ones settle; nothing forces that decision now.
 - **Settlement worker** (originally Week 4 at 5-min cron): engine built and verified, but scheduler not wired. Manual runs via CLI and admin endpoint are sufficient until real-money — Round 9 doesn't even settle until Sun 24 May. Render Cron config is the immediate next operational step now that 2l shipped.
 - **`PUT /api/predictions/:id`** (originally Week 2) was replaced by `PUT /api/entries/:entryId/predictions/:eventId` — predictions have no stable id before first save, `(entry, event)` is the natural unique key. Arch §11 updated.
@@ -60,7 +61,7 @@ The schema lives in `server/db/schema/` split across seven files. Every table th
 
 **Active in V1** — written to during normal test-mode operation:
 - `users`, `sessions`, `email_verifications`, `password_resets` — auth
-- `leagues` — the five tier definitions (Kickoff One through Elite Fifty)
+- `leagues` — the four active tier definitions (The Fiver / The Tenner / The Pony / The Big One) plus one retired (The Pound, `is_active=false`)
 - `sports`, `competitions`, `stages`, `events`, `event_outcomes` — fixture data
 - `pools`, `pool_entries`, `predictions` — gameplay
 - `payments` — every entry and every payout, in mock mode
@@ -113,6 +114,8 @@ That's the test. If at licence-grant we have to rebuild a major subsystem, the p
 ---
 
 ## Week 1 — May 10 to 17
+
+> **Note (May 2026):** The weekly sections below describe the *original build plan*. Reality diverged in places — see "Build progress" and "Notable deviations" above for current state. Endpoints, page names, and tier counts here reflect intent at the time of planning, not the shipped system. The Build progress section above is authoritative for what's actually in production.
 
 **Foundation: database, auth, payments scaffolding.**
 

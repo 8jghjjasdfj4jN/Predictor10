@@ -46,11 +46,17 @@ const SEASON = 2025; // football-data convention: starting year → 2025/26
 // merchant fees on a £1 entry leave negative margin after 90% prize-pool
 // payout. Removed here so seedTiers() doesn't recreate it and
 // seedPoolsForCurrentRound() doesn't open new Pound pools.
+//
+// Step 2n: standardised prize structure across all 4 tiers — 25% house fee,
+// top 3 paid at 60/25/15 of the player pot. Settlement applies the house
+// fee first then distributes the player pot per `splits`. See pool-settle.ts
+// for the math and Decided Rule #14 for residual-penny handling (goes to
+// rank 1).
 const TIERS = [
-  { slug: "fiver",   name: "The Fiver",   entryFee: "5.00",  ordinal: 2, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.70, 0.20, 0.10] } },
-  { slug: "tenner",  name: "The Tenner",  entryFee: "10.00", ordinal: 3, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.70, 0.20, 0.10] } },
-  { slug: "pony",    name: "The Pony",    entryFee: "25.00", ordinal: 4, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.50, 0.25, 0.15, 0.07, 0.03] } },
-  { slug: "big-one", name: "The Big One", entryFee: "50.00", ordinal: 5, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.50, 0.25, 0.15, 0.07, 0.03] } },
+  { slug: "fiver",   name: "The Fiver",   entryFee: "5.00",  ordinal: 2, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
+  { slug: "tenner",  name: "The Tenner",  entryFee: "10.00", ordinal: 3, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
+  { slug: "pony",    name: "The Pony",    entryFee: "25.00", ordinal: 4, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
+  { slug: "big-one", name: "The Big One", entryFee: "50.00", ordinal: 5, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
 ] as const;
 
 // Retired tiers — kept in the DB for historical reference, deactivated by
@@ -427,6 +433,59 @@ async function seedPoolsForCurrentRound(
   }
 }
 
+// ─── Phase 5b — sync open-pool prizeStructure to current tier values ────
+
+/**
+ * Pool rows snapshot the tier's `prizeStructure` JSON at creation time so
+ * settled-pool payouts stay tied to whatever rules were in force when the
+ * pool opened (Decided Rule #14). For OPEN pools, though, we want changes
+ * to tier prize rules (e.g. the step-2n move to 60/25/15 + 25% house fee)
+ * to flow through retroactively — those pools haven't paid out yet, so
+ * there's no immutability concern.
+ *
+ * This step iterates each active tier, finds every open pool tied to that
+ * tier, and updates the pool's prize_structure JSON to match the tier's
+ * current value if they differ. Settled pools are deliberately left alone.
+ *
+ * Retired tiers (RETIRED_TIER_SLUGS) are skipped entirely — their existing
+ * open pools (if any) stay on their original prize structure to settle
+ * under the rules they were created with.
+ */
+async function syncOpenPoolPrizeStructure(
+  tiersBySlug: Map<string, string>,
+): Promise<void> {
+  log("syncing open-pool prizeStructure to active tier values…");
+  let synced = 0;
+  let skippedAlreadyMatching = 0;
+
+  for (const tier of TIERS) {
+    const tierId = tiersBySlug.get(tier.slug);
+    if (!tierId) continue;
+
+    const openPools = await db
+      .select({ id: pools.id, name: pools.name, prizeStructure: pools.prizeStructure })
+      .from(pools)
+      .where(and(eq(pools.leagueId, tierId), eq(pools.status, "open")));
+
+    for (const p of openPools) {
+      const currentJson = JSON.stringify(p.prizeStructure);
+      const desiredJson = JSON.stringify(tier.prizeStructure);
+      if (currentJson === desiredJson) {
+        skippedAlreadyMatching++;
+        continue;
+      }
+      await db
+        .update(pools)
+        .set({ prizeStructure: tier.prizeStructure })
+        .where(eq(pools.id, p.id));
+      log(`    updated ${p.name} → splits=[${tier.prizeStructure.splits.join(", ")}], houseFeePct=${tier.prizeStructure.houseFeePct}`);
+      synced++;
+    }
+  }
+
+  log(`  ${synced} pool(s) updated, ${skippedAlreadyMatching} already matching`);
+}
+
 // ─── Orchestration ────────────────────────────────────────────────────────
 
 async function main() {
@@ -438,6 +497,7 @@ async function main() {
   const tiersBySlug = await seedTiers();
   const stagesByCode = await syncFixtures(competitionsByCode);
   await seedPoolsForCurrentRound(competitionsByCode, stagesByCode, tiersBySlug);
+  await syncOpenPoolPrizeStructure(tiersBySlug);
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   log(`done in ${elapsed}s ✓`);

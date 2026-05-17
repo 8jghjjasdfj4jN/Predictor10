@@ -147,14 +147,27 @@ React 19 + TypeScript + Vite + Tailwind v4 + shadcn/ui frontend · Express on Re
 - **PORTAL_PATH regex** in `App.tsx` extended to include `/tables`. Legacy `/pools` paths still match so logged-out users hitting old URLs go through the redirect-to-login flow with the return URL preserved.
 - **Link target updates**: HomePage's live-entry "Predictions" button → `/predict/:entryId`; Available Tier rows → `/tables`. PredictPage's entry cards → `/predict/:entryId`. AccountHistoryPage's `[Results →]` → `/predict/:entryId`; `[Table →]` unchanged (still legacy `/pools/.../table`).
 
-### Live deployment state (post step 2m)
+### Step 2n — Prize splits standardised + commission + per-rank breakdown UI
+- **Commercial model**: 25% operator commission on every tier's gross pot. Player pot = gross × 0.75. Splits: 60% / 25% / 15% across top 3, applied to player pot (= 45% / 18.75% / 11.25% of gross). Standardised across all four active tiers — Fiver / Tenner / Pony / Big One — replacing the prior mix of top-3 (70/20/10) and top-5 (50/25/15/7/3).
+- **`server/scripts/seed.ts`** — TIERS rewritten: all four get `prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 }`. New `syncOpenPoolPrizeStructure()` step iterates active tiers, finds open pools, updates each pool's `prize_structure` JSON to match the current tier value (open pools only — settled pools immutable per Decided Rule #14). Retired tiers (Pound) skipped — its open Round 9 pool keeps the original 70/20/10 with no commission so Wez's entry settles under the rules it was opened under.
+- **`server/lib/pool-settle.ts`** — `PrizeStructure` type gains optional `houseFeePct: number` field. `isPrizeStructure` validates `[0, 1)` range. Settlement applies `houseFeePence = floor(grossPotPence × houseFeePct)` then passes `playerPotPence = grossPotPence - houseFeePence` to `computePayouts`. Audit metadata gains `houseFeePct`, `houseFeePence`, `playerPotPence` alongside the existing `potPence` (now gross). Missing `houseFeePct` defaults to 0 — preserves legacy Pound payout math.
+- **`server/lib/pool-settle.ts` new export `computeDisplayBreakdown(playerPotPence, splits)`** — pure helper mirroring `computePayouts`'s rounding rule (Math.round per place, residual to rank 1 per Decided Rule #14). Used by `portal-data.ts` so display amounts match settlement to the penny.
+- **`server/lib/portal-data.ts`** — new `PrizeBreakdownEntry = { rank, amount: "22.49" }` type. Added `prizeBreakdown: PrizeBreakdownEntry[]` to both `PoolDto` and `PoolDetailDto`. New private `buildPrizeBreakdown(prizeStructureJson, entryCount, entryFeeDecimal)` helper computes per-rank amounts from the pool's stored `prize_structure` JSON and the current entry count. Empty array when entryCount=0.
+- **`client/src/lib/portal-api.ts`** — mirrored `PrizeBreakdownEntry`, added `prizeBreakdown` to `Pool` and `PoolDetail`.
+- **`client/src/pages/portal/TablesPage.tsx`** — `TierHeader` meta line split: "£5 · 10 players" on line 1, "1st £22.49 · 2nd £9.38 · 3rd £5.63" on line 2 (emerald-tinted, tabular-nums). Old `£X pot` copy removed. New `formatPrizeBreakdown` helper handles the rendering; ordinal labels hard-coded `1st/2nd/3rd/4th/5th`. `formatPot` helper deleted as unused.
+- **`client/src/pages/portal/HomePage.tsx`** — `AvailableTierRow` gains a third line under the entry count showing the same breakdown in a slightly more muted emerald (text-emerald-200/70). Same `formatPrizeBreakdown` helper duplicated locally — trivial and only used in one place per file.
+- **Rounding behaviour**: settlement uses `Math.round` per place with residual penny to rank 1 (Decided Rule #14 unchanged). House fee uses `Math.floor` so players are never overpaid from sub-penny remainders. With current splits (60/25/15) and house fee (0.25), the math lands on whole pennies for any whole-pound gross pot — no quirks in practice.
+- **Operational note**: deploy alone doesn't change Round 9's pool structures. After deploy, `pnpm seed` must run once to push the new `prize_structure` JSON into the open pools. Until that runs, Tables would show breakdowns computed from the *old* `prize_structure` JSON (still works, just under the old splits).
+
+### Live deployment state (post step 2n)
 - Render web service deployed at `https://predictor10.com`. Build green.
 - Render Postgres: 25 tables. 1 sport, 2 competitions, 5 leagues — 4 active (Fiver / Tenner / Pony / Big One) + 1 inactive (Pound). 18 stages (9 Rounds × 2 comps), ~932 events, 5 open pools for PL Round 9 (one being The Pound, still settling 24 May), `event_outcomes` rows updated continuously by `syncOutcomes()`.
-- Wez has an entry in The Pound for Round 9 with `Aston Villa 2-2 Liverpool` saved. Round 9 settles Sun 24 May 2026. After 24 May, no Pound pool will ever be created again — `seedTiers()` flips `is_active=false` and `seedPoolsForCurrentRound()` only iterates active TIERS.
+- **Active-tier prize structure** (post step 2n): 25% house fee, top 3 paid at 60/25/15 of the player pot. Fiver / Tenner / Pony / Big One all identical. **Pound's open pool still on legacy 70/20/10 with no commission** — deliberate, retired tier settles under original rules.
+- Wez has an entry in The Pound for Round 9 with `Aston Villa 2-2 Liverpool` saved. Round 9 settles Sun 24 May 2026. After 24 May, no Pound pool will ever be created again.
 - Round 9 league table viewable at `/pools/premier-league/{poolId}/table` (settled-table URL preserved post step 2m).
 - Bottom nav: HOME / PREDICT / TABLES / ACCOUNT. Trophy icon for Tables.
 - Render env vars: `DATABASE_URL`, `FOOTBALL_API_KEY`, `NODE_ENV`, `BYPASS_LATE_ENTRY=true`, `ADMIN_SECRET`, `SESSION_SECRET`.
-- Node pinned `22.20.0` via `.nvmrc` + `engines.node`. Build command still reads `corepack enable && pnpm install && pnpm build` — `--frozen-lockfile` tightening still pending dashboard config.
+- Node pinned `22.20.0` via `.nvmrc` + `engines.node`. Build command still reads `corepack enable && pnpm install && pnpm build`.
 - `pnpm settle-pools` runs clean. `POST /api/admin/settle-pools` and `POST /api/admin/sync-outcomes` verified end-to-end (401 without token, identical stats JSON to CLI with token).
 - **No automated scheduler yet** — both sync and settle still run manually. Render Cron Jobs (5-min sync, 15-min settle) is the next operational step; pure dashboard work.
 - **Chrome on iPhone refresh shows a blank white screen** — investigated, traced to the Manus runtime preview script being inlined into the Vite production build (`dist/public/index.html` is 368KB vs 1KB source, with a giant `<script id="manus-runtime">` block). Web-only artifact, doesn't affect Safari iPhone or any of the native app store builds. Carried forward as a pre-launch task.
@@ -214,6 +227,12 @@ These are Wez's explicit choices from the IA redesign / Pound retirement / auth 
 
 **Logged-out users on portal URLs redirect to login.** `/predict/*`, `/pools/*` (legacy), `/account/*` all match the portal-URL regex. RedirectToLogin sends them to `/login?redirect=<original-url>`. LoginPage / RegisterPage read the param after success and bring the user back. Open-redirect guard: param must start with single `/`, not `//`.
 
+**Operator commission = 25% of every tier's gross pot.** Player pot is whatever's left (75%). Locked across all four active tiers. Retired Pound pool unaffected — it settles under the rules it was opened under (no commission, 70/20/10).
+
+**Top-3 prize split = 60 / 25 / 15 of the player pot.** Locked across all four active tiers — Fiver, Tenner, Pony, and Big One all use the same structure. The prior Pony / Big One top-5 split (50/25/15/7/3) is retired. Reasoning: simpler model, easier marketing, 3rd place still covers entry (15% of 75% × £entry ≈ stake), 1st feels rewarding at ~4.5× entry.
+
+**Tables and Home show per-rank £ amounts, not gross pot or percentages.** Display format: "1st £22.49 · 2nd £9.38 · 3rd £5.63". Numbers are live — recompute every time `/api/competitions` or `/api/pools/:id` is hit, reflecting current entry count. Server and settlement share the same rounding helper (`computeDisplayBreakdown` in `pool-settle.ts`) so displayed amounts match payouts to the penny.
+
 ## Known follow-ups / pre-launch flags
 
 Carry forward, none urgent for the next step:
@@ -254,16 +273,17 @@ Carry forward, none urgent for the next step:
 
 ## What's next — TBD with Wez
 
-Step 2m is done. Open candidates for the next step (Wez picks):
+Steps 2m and 2n are done. Open candidates for the next step (Wez picks):
 
 - **Render Cron Jobs** — automated outcome sync (5-min) + pool settle (15-min). Pure dashboard work, no new code; just configuration. The two CLI scripts (`pnpm sync-outcomes`, `pnpm settle-pools`) are ready and the admin endpoints are token-gated. Currently both run manually.
+- **Tie-break visualisation in standings** — when two players have the same points, surface *why* one is ranked higher (more exact scores → more correct results → tied split). Currently the data is in the table (Exact / Res columns) and the tie-break rule is in the footer, but there's no visual cue tying them together. Add a subtle indicator (column highlight, tiny `↑`, or grouped bracket) for tied clusters in `PoolStandingsTable.tsx`. Discussed but deferred.
 - **Tables tab deep links** — `/tables/:competitionSlug/:tierSlug` (or `?comp=&tier=` query) so Home's Available Tier rows land on the right tier in one tap.
 - **Resend + email verification** — signup currently creates an unverified account. Wire up `RESEND_API_KEY`, transactional templates, magic-link flow.
 - **`pool_entries` unique index `(pool_id, user_id)`** — DB-level Decided Rule #2 enforcement, closing the concurrent-double-tap race. Pre-launch blocker eventually.
 - **Marketing tier name alignment** — `leagueTiers` mock data still uses old branding (Matchday Five / Premier Ten / Grand Twenty / Elite Fifty at £5/£10/£20/£50). Should align with portal reality (Fiver / Tenner / Pony / Big One at £5/£10/£25/£50).
 - **Manus runtime strip from `vite.config.ts`** — fixes the blank Chrome iPhone refresh. Web-only; doesn't block native app builds.
 
-Routes as of step 2m:
+Routes as of step 2m (unchanged in 2n):
 | URL | Page |
 |---|---|
 | `/` | Home (logged-in: portal Home; logged-out: marketing) |
@@ -279,7 +299,7 @@ Routes as of step 2m:
 ## What to do first
 
 1. Read all three docs in `/docs/` (architecture first).
-2. Skim the recent file edits — `server/lib/portal-data.ts`, `client/src/pages/portal/TablesPage.tsx`, `client/src/pages/portal/PoolDetailPage.tsx`, `client/src/App.tsx`.
+2. Skim the recent file edits — `server/lib/portal-data.ts`, `server/lib/pool-settle.ts`, `client/src/pages/portal/TablesPage.tsx`, `client/src/pages/portal/HomePage.tsx`.
 3. Ask Wez what's next.
 4. Propose your file plan in tabular form with folder paths.
 5. Wait for "go" before bulk-changing files.

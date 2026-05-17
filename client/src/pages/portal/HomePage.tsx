@@ -17,6 +17,7 @@ import {
   fetchMyEntries,
   type Competition,
   type Pool,
+  type PrizeBreakdownEntry,
   type UserEntry,
 } from "@/lib/portal-api";
 
@@ -49,6 +50,23 @@ function formatEntryCount(n: number): string {
   if (n === 0) return "No entries yet";
   if (n === 1) return "1 entry";
   return `${n.toLocaleString("en-GB")} entries`;
+}
+
+/**
+ * Render the per-place prize breakdown as a single line. Mirrors
+ * TablesPage.formatPrizeBreakdown — kept duplicated rather than extracted
+ * since both files only use it in one place and the helper is trivial.
+ */
+const ORDINAL_LABELS = ["1st", "2nd", "3rd", "4th", "5th"];
+
+function formatPrizeBreakdown(breakdown: PrizeBreakdownEntry[]): string {
+  if (breakdown.length === 0) return "";
+  return breakdown
+    .map((b) => {
+      const label = ORDINAL_LABELS[b.rank - 1] ?? `${b.rank}th`;
+      return `${label} £${b.amount}`;
+    })
+    .join(" · ");
 }
 
 // ─── Round header ────────────────────────────────────────────────────────
@@ -196,6 +214,7 @@ function LiveEntriesSection({
 // ─── Available tiers section ─────────────────────────────────────────────
 
 function AvailableTierRow({ pool, competitionSlug }: { pool: Pool; competitionSlug: string }) {
+  const breakdownLabel = formatPrizeBreakdown(pool.prizeBreakdown);
   return (
     <Link
       href="/tables"
@@ -212,6 +231,11 @@ function AvailableTierRow({ pool, competitionSlug }: { pool: Pool; competitionSl
         <p className="font-['Manrope'] text-[0.75rem] text-white/45">
           {formatEntryCount(pool.entryCount)}
         </p>
+        {breakdownLabel && (
+          <p className="font-['Manrope'] text-[0.7rem] tabular-nums text-emerald-200/70">
+            {breakdownLabel}
+          </p>
+        )}
       </div>
       <div className="flex flex-shrink-0 items-center gap-2.5">
         <span className="font-['Barlow_Condensed'] text-[1.2rem] font-extrabold text-emerald-300">

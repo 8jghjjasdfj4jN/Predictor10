@@ -31,6 +31,19 @@ export type Pool = {
   closesAt: string;
   entryCount: number;
   status: "draft" | "open" | "locked" | "settled" | "void";
+  /**
+   * Per-rank prize amounts for the current entry count, net of house fee
+   * (step 2n — 25% commission, top 3 at 60/25/15). Amounts are pounds.pence
+   * strings ready for display ("22.49"). Empty when entryCount=0 — no pot
+   * yet. Settlement uses the same rounding so these numbers match what
+   * actually gets paid out.
+   */
+  prizeBreakdown: PrizeBreakdownEntry[];
+};
+
+export type PrizeBreakdownEntry = {
+  rank: number;
+  amount: string; // "22.49"
 };
 
 export type Competition = {
@@ -81,6 +94,8 @@ export type PoolDetail = {
   matchesTotal: number;
   bypassActive: boolean;
   myEntry: { id: string; enteredAt: string } | null;
+  /** Same shape as Pool.prizeBreakdown. */
+  prizeBreakdown: PrizeBreakdownEntry[];
 };
 
 export type EnterPoolResponse = {

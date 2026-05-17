@@ -56,12 +56,60 @@ export type SettleResult = {
 type PrizeStructure = {
   model: string;
   splits: number[];
+  /**
+   * Operator commission as a 0..1 fraction of the gross pot. Step 2n: every
+   * active tier carries `houseFeePct: 0.25`. Older snapshots from before
+   * step 2n omit this — when missing, treated as 0 so legacy pools settle
+   * at gross pot (preserving the rules they were opened under). The Pound's
+   * retired Round 9 pool is the practical case for this fallback.
+   */
+  houseFeePct?: number;
 };
 
 function isPrizeStructure(v: unknown): v is PrizeStructure {
   if (typeof v !== "object" || v === null) return false;
   const rec = v as Record<string, unknown>;
-  return Array.isArray(rec.splits) && rec.splits.every((s) => typeof s === "number");
+  if (!Array.isArray(rec.splits) || !rec.splits.every((s) => typeof s === "number")) return false;
+  // houseFeePct optional; if present, must be a finite number in [0, 1).
+  if (rec.houseFeePct !== undefined) {
+    if (typeof rec.houseFeePct !== "number") return false;
+    if (!Number.isFinite(rec.houseFeePct)) return false;
+    if (rec.houseFeePct < 0 || rec.houseFeePct >= 1) return false;
+  }
+  return true;
+}
+
+/**
+ * Pure helper for non-settlement consumers (portal-data.ts, mostly) that
+ * need to display the prize-per-rank breakdown for an open pool before
+ * any settlement has run. Mirrors the rounding rule used by
+ * `computePayouts` so display amounts agree with what the user will
+ * actually be paid to the penny — including the Decided Rule #14
+ * residual-to-rank-1 quirk.
+ *
+ * Inputs are the *player pot* (already net of house fee) and the same
+ * `splits` array stored on the pool. Returns one entry per split slot.
+ * Empty result if pot ≤ 0 or splits is empty.
+ *
+ * Pure function — no I/O, safe to call hot from API handlers.
+ */
+export function computeDisplayBreakdown(
+  playerPotPence: number,
+  splits: number[],
+): { rank: number; amountPence: number }[] {
+  if (playerPotPence <= 0 || splits.length === 0) return [];
+  const lines: { rank: number; amountPence: number }[] = [];
+  let splitsSum = 0;
+  for (let i = 0; i < splits.length; i++) {
+    lines.push({ rank: i + 1, amountPence: Math.round(playerPotPence * splits[i]) });
+    splitsSum += splits[i];
+  }
+  // Residual → rank 1 (Decided Rule #14, mirrors computePayouts exactly).
+  const expected = Math.round(playerPotPence * splitsSum);
+  const got = lines.reduce((acc, l) => acc + l.amountPence, 0);
+  const residual = expected - got;
+  if (residual !== 0) lines[0].amountPence += residual;
+  return lines;
 }
 
 export type EntryScore = {
@@ -281,6 +329,9 @@ async function settleOnePool(poolId: string): Promise<SettleOnePoolOutcome> {
       );
     }
     const splits = locked.prizeStructure.splits;
+    // Step 2n: operator commission, applied to gross pot before payouts.
+    // Missing on legacy snapshots → 0 (Pound's retired pool settles at gross).
+    const houseFeePct = locked.prizeStructure.houseFeePct ?? 0;
     const tierFeePence = Math.round(parseFloat(locked.tierFee) * 100);
 
     // Aggregate scores per entry. LEFT JOIN predictions so entries with zero
@@ -319,6 +370,13 @@ async function settleOnePool(poolId: string): Promise<SettleOnePoolOutcome> {
     }
 
     const potPence = tierFeePence * entryCount;
+    // House fee taken off the top (Decided Rule #14 + step 2n). Math.floor
+    // so we never overpay players — sub-penny remainder stays on the
+    // operator side, which matches how a real merchant statement would
+    // round. With current splits all four tiers settle exactly: gross
+    // £NN.00 × 0.25 lands on whole pennies.
+    const houseFeePence = Math.floor(potPence * houseFeePct);
+    const playerPotPence = potPence - houseFeePence;
 
     const scores: EntryScore[] = scoreList.map((r) => ({
       entryId: r.entryId,
@@ -328,7 +386,7 @@ async function settleOnePool(poolId: string): Promise<SettleOnePoolOutcome> {
       results: Number(r.results),
     }));
     const ranked = rankEntries(scores);
-    const payoutLines = computePayouts(ranked, potPence, splits);
+    const payoutLines = computePayouts(ranked, playerPotPence, splits);
 
     // Write credit-direction `payments` rows for paying ranks only.
     // amount is decimal(14,2) — converted from integer pence at insert time.
@@ -388,6 +446,9 @@ async function settleOnePool(poolId: string): Promise<SettleOnePoolOutcome> {
       metadata: {
         entryCount,
         potPence,
+        houseFeePct,
+        houseFeePence,
+        playerPotPence,
         ranks: ranked.map((r) => ({
           entryId: r.entryId,
           userId: r.userId,

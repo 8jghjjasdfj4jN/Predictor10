@@ -29,29 +29,33 @@ These must be decided before public registration opens. If undecided by mid-July
 
 | # | Decision | Default if not decided | Source |
 |---|---|---|---|
-| 1.1.a | Prize split (1st / 2nd / 3rd %) | TBD | arch §13 #9 |
-| 1.1.b | Operator commission % | TBD | arch §13 #9 |
-| 1.1.c | Default tab on settled-state Pool screen (GW1 / last-viewed / highest-scoring) | GW1 chronological (default already shipped in step 2j) | arch §14 #2 |
-| 1.1.d | Archive header stats (3 cells) — current: Rounds / Cashes / Best rank | Keep current | arch §14 #3 |
-| 1.1.e | Settled-pool "Cashed" copy — keep generic or show £ amount | Keep "Cashed" generic until commission % settled | arch §14 #4 |
-| 1.1.f | Settlement → archive grace period (immediate / 24h / 48h) | Immediate | arch §14 #5 |
+| 1.1.a | Default tab on settled-state Prediction screen (GW1 / last-viewed / highest-scoring) | GW1 chronological (default already shipped in step 2j) | arch §14 #1 |
+| 1.1.b | Archive header stats (3 cells) — current: Rounds / Cashes / Best rank | Keep current | arch §14 #2 |
+| 1.1.c | Settled-pool "Cashed" copy — keep generic or show actual £ amount (commission/splits now locked in step 2n: 25% / 60-25-15, so real amounts are knowable) | Switch to "1st · £X" format | arch §14 #3 |
+| 1.1.d | Settlement → archive grace period (immediate / 24h / 48h) | Immediate | arch §14 #4 |
+| 1.1.e | Tie-break visualisation in standings (column highlight / `↑` marker / leave as-is) | Leave as-is | arch §14 #5 |
+| 1.1.f | Tables tab deep links from Home (`/tables/:slug/:tier` or query params) | Plain `/tables`, user picks sub-tab | arch §14 #6 |
+
+**Resolved in step 2n** (kept here for traceability — no longer blocking):
+- ~~Prize split (1st / 2nd / 3rd %)~~ → **60 / 25 / 15** of the player pot
+- ~~Operator commission %~~ → **25%** of gross pot
 
 ### 1.2 Post-launch / Week 5+ build
 
 | # | Decision | Owner | Source |
 |---|---|---|---|
-| 1.2.a | Push/email notification triggers, copy, frequency | Solo dev | arch §14 #6 |
-| 1.2.b | Multi-competition Home behaviour when user has live entries in PL + Champ | Solo dev | arch §14 #7 |
-| 1.2.c | Live scores polling cadence (currently 60s server / 30s client) | Solo dev, after R1 ops | arch §14 #8 |
+| 1.2.a | Push/email notification triggers, copy, frequency | Solo dev | arch §14 #7 |
+| 1.2.b | Multi-competition Home behaviour when user has live entries in PL + Champ | Solo dev | arch §14 #8 |
+| 1.2.c | Live scores polling cadence (currently 60s server / 30s client) | Solo dev, after R1 ops | arch §14 #9 |
 
 ### 1.3 Q4 2026 / post-licence
 
 | # | Decision | Owner | Source |
 |---|---|---|---|
-| 1.3.a | GAMSTOP integration cadence | Compliance counsel | arch §14 #9 |
-| 1.3.b | AML rule thresholds | Compliance counsel | arch §14 #10 |
-| 1.3.c | KYC provider selection (Onfido / Veriff / GBG / Jumio) | Solo dev after sandboxes | arch §14 #11 |
-| 1.3.d | Real-money rollout strategy at licence flip (big-bang / cohort) | Solo dev + counsel | arch §14 #12 |
+| 1.3.a | GAMSTOP integration cadence | Compliance counsel | arch §14 #10 |
+| 1.3.b | AML rule thresholds | Compliance counsel | arch §14 #11 |
+| 1.3.c | KYC provider selection (Onfido / Veriff / GBG / Jumio) | Solo dev after sandboxes | arch §14 #12 |
+| 1.3.d | Real-money rollout strategy at licence flip (big-bang / cohort) | Solo dev + counsel | arch §14 #13 |
 
 ---
 
@@ -60,9 +64,9 @@ These must be decided before public registration opens. If undecided by mid-July
 These ship the playable product end-to-end. Without these, no closed test.
 
 - [x] **Week 1 — DB and auth** — Render Postgres provisioned · Drizzle migrations applied · sign-up / login / logout working · audit log middleware wired *(email verification deferred — Resend not yet in env, signup creates an unverified account that can use the product)*
-- [x] **Week 2 — Tiers, pools, predictions** — 5 tiers seeded · PL + Championship competitions and stages synced · 9 Rounds per competition generated · current-Round pool generation in idempotent seed script (cron deferred — re-run `pnpm seed` to generate) · `/api/pools/:id/enter` endpoint with mock-payment + late-entry 7-day check · `PUT /api/entries/:entryId/predictions/:eventId` with anti-cheat 403 enforcement · auto-save debounced 800ms
-- [ ] **Week 3 — UI build** — *Mostly done:* Home ✅ · canonical Pool/Predict screen with GW tabs ✅ · History archive page ✅ · late-entry warning modal ✅ · **League Table page — step 2k (in progress)**
-- [ ] **Week 4 — Settlement and basic RG** — *Partial:* settlement engine ✅ (CLI + admin endpoint, idempotent, tie-breaker enforced, Rules #13-15 applied, pool moves to archive on settlement) · **settlement cron not yet scheduled** (manual CLI/admin endpoint runs for now) · **deposit limits + self-exclusion UI not started** · email templates not started (Resend deferred) · Sentry not started
+- [x] **Week 2 — Tiers, pools, predictions** — tiers seeded (5 originally; Pound retired in step 2m, 4 active from Round 10) · PL + Championship competitions and stages synced · 9 Rounds per competition generated · current-Round pool generation in idempotent seed script (cron deferred — re-run `pnpm seed` to generate) · `/api/pools/:id/enter` endpoint with mock-payment + late-entry 7-day check · `PUT /api/entries/:entryId/predictions/:eventId` with anti-cheat 403 enforcement · auto-save debounced 800ms
+- [x] **Week 3 — UI build** — Home ✅ · prediction screen with GW tabs ✅ · History archive page ✅ · late-entry warning modal ✅ · League Table page ✅ (step 2k) · IA restructure to HOME/PREDICT/TABLES/ACCOUNT ✅ (step 2m) · prize breakdown display ✅ (step 2n)
+- [ ] **Week 4 — Settlement and basic RG** — *Partial:* settlement engine ✅ (CLI + admin endpoint, idempotent, tie-breaker enforced, Rules #13-15 applied, 25% commission applied in step 2n, pool moves to archive on settlement) · **settlement cron not yet scheduled** (manual CLI/admin endpoint runs for now) · **deposit limits + self-exclusion UI not started** · email templates not started (Resend deferred) · Sentry not started
 
 ---
 
@@ -111,7 +115,7 @@ Without these, the licence application has nothing to show. Closed test (Round 1
 To start the closed test:
 
 - [ ] PL Round 1 stage row created in DB with all GW 1-4 events
-- [ ] 5 PL tier pools generated for Round 1 (Pound / Fiver / Tenner / Pony / Big One)
+- [ ] 4 PL tier pools generated for Round 1 (Fiver / Tenner / Pony / Big One — Pound retired in step 2m)
 - [ ] Championship Round 1 stage + pools generated
 - [ ] Late-entry warning flow tested end-to-end
 - [ ] Settlement worker idempotency verified by deliberate double-run
