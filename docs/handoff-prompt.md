@@ -169,7 +169,14 @@ React 19 + TypeScript + Vite + Tailwind v4 + shadcn/ui frontend · Express on Re
 - Deps: `node-cron@^4.0.0` (production), `@types/node-cron@^3.0.11` (dev). `pnpm-lock.yaml` regenerated and verified against `--frozen-lockfile`.
 - **No DB schema changes**. No `pnpm db:push` needed.
 
-### Live deployment state (post step 2o)
+### Step 2p — Manus runtime stripped from production build
+- `vite.config.ts` — converted `defineConfig` to function form (`({ mode }) => ...`) and gated the four Manus dev plugins (`jsxLocPlugin`, `vitePluginManusRuntime`, `vitePluginManusDebugCollector`, `vitePluginStorageProxy`) so they only run when `mode !== "production"`. `pnpm build` → mode is `"production"` → none of them registered. `pnpm dev` → mode is `"development"` → all four registered, dev workflow unchanged.
+- **Impact**: `dist/public/index.html` drops from **368 KB** to **1.27 KB** (99.65% reduction). The 367 KB removed was a giant `<script id="manus-runtime">` block previously inlined into every page load.
+- **Bug this fixes**: Chrome on iPhone showed a white screen on refresh because the 368 KB HTML payload was large enough to freeze the render thread on a typical mobile connection before any of the actual app code ran. Also explained why some users saw the LoadingSplash escalate to "Server is waking up…" on legitimate paid-tier infrastructure — the HTML download alone was tripping the 8s threshold for that copy.
+- **No DB schema changes**. No `pnpm db:push`. No new env vars. No new dependencies.
+- **No effect on native app store builds** (web-only artifact).
+
+### Live deployment state (post step 2p)
 - Render web service deployed at `https://predictor10.com`. Build green.
 - **Render plan: Starter ($7/month)**. Always-on — no idle spin-down. Cold starts only occur on deploy / crash recovery, not on user idle. Single instance (no autoscaling).
 - Render Postgres: 25 tables. 1 sport, 2 competitions, 5 leagues — 4 active (Fiver / Tenner / Pony / Big One) + 1 inactive (Pound). 18 stages (9 Rounds × 2 comps), ~932 events, 5 open pools for PL Round 9 (one being The Pound, still settling 24 May), `event_outcomes` rows updated continuously by the in-process scheduler.
@@ -258,7 +265,6 @@ Carry forward, none urgent for the next step:
 - **Stage reassignment on matchday change** — `upsertEventFromFootballData()` doesn't remap `events.stageId` when football-data changes a match's matchday (rare; only matters if Round structure ever changes mid-season).
 - **401 interceptor is module-level singleton** — fine for the current single-AuthProvider app; flag if multiple providers ever spin up (tests, SSR).
 - **Cold-start retry tops out at ~17s elapsed** — beyond that, treated as logged-out (the redirect-to-login flow takes over). On Starter, cold starts only occur on deploy / crash recovery (not on idle), so this safety net is rarely exercised in practice. Bump the backoff schedule if a legit cold start ever exceeds it.
-- **Manus runtime inlined in Vite production builds** — the scaffolded `vite.config.ts` injects a ~250KB preview-mode runtime into every build's `index.html`. Causes a blank white screen on Chrome iPhone after refresh (not Safari). Doesn't affect native app store builds. Strip the plugin from `vite.config.ts` before public web launch.
 - **Resend / email templates** — still no transactional email. Signup creates an unverified account that can use the product. `RESEND_API_KEY` not in env yet.
 - **Legacy `/pools/*` redirects** — `/pools`, `/pools/:slug`, and `/pools/:slug/:poolId` all redirect to new step-2m URLs. Hard-switch (remove the redirect handlers) once inbound `/pools/*` traffic disappears from logs (~30 days post-launch). `/pools/:slug/:poolId/table` is NOT in the redirect set — PoolTablePage is mounted there and Account History's `[Table →]` still links to it.
 - **`/tables` deep links** — Tables tab currently has no URL state for the selected (comp, tier). Home's Available Tier rows all land on plain `/tables` and require the user to manually tap the right sub-tab to enter. Add `/tables/:competitionSlug/:tierSlug` or `?comp=&tier=` query support so the Home flow is one-tap end-to-end. Low priority — Fiver (the default) is also the most common entry tier.
@@ -283,14 +289,13 @@ Carry forward, none urgent for the next step:
 
 ## What's next — TBD with Wez
 
-Steps 2m, 2n, and 2o are done. Open candidates for the next step (Wez picks):
+Steps 2m, 2n, 2o, and 2p are done. Open candidates for the next step (Wez picks):
 
 - **Tie-break visualisation in standings** — when two players have the same points, surface *why* one is ranked higher (more exact scores → more correct results → tied split). Currently the data is in the table (Exact / Res columns) and the tie-break rule is in the footer, but there's no visual cue tying them together. Add a subtle indicator (column highlight, tiny `↑`, or grouped bracket) for tied clusters in `PoolStandingsTable.tsx`. Discussed but deferred.
 - **Tables tab deep links** — `/tables/:competitionSlug/:tierSlug` (or `?comp=&tier=` query) so Home's Available Tier rows land on the right tier in one tap.
 - **Resend + email verification** — signup currently creates an unverified account. Wire up `RESEND_API_KEY`, transactional templates, magic-link flow.
 - **`pool_entries` unique index `(pool_id, user_id)`** — DB-level Decided Rule #2 enforcement, closing the concurrent-double-tap race. Pre-launch blocker eventually.
 - **Marketing tier name alignment** — `leagueTiers` mock data still uses old branding (Matchday Five / Premier Ten / Grand Twenty / Elite Fifty at £5/£10/£20/£50). Should align with portal reality (Fiver / Tenner / Pony / Big One at £5/£10/£25/£50).
-- **Manus runtime strip from `vite.config.ts`** — fixes the blank Chrome iPhone refresh. Web-only; doesn't block native app builds.
 - **Live in-play scores** — currently locked matches stay locked through the match with no live score visible; users see their prediction then jump straight to FT result after the scheduler fires. Real in-play score display (HT, 60', live goals) is "step 2j+" per arch and worth queueing for pre-launch — it's the moment users naturally have the app open.
 - **App store wrap (Capacitor)** — eventually, for Google Play and Apple App Store delivery. Adds `ios/` and `android/` folders to the repo. Gated on UKGC licence, KYC, responsible-gambling tooling, and real payment integration. Don't start until those are in flight.
 
