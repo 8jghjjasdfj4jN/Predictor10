@@ -42,6 +42,11 @@ The calendar weeks below were the original plan. Reality ran roughly to schedule
 - **Step 2o** (In-process scheduler — `server/lib/scheduler.ts` runs `syncOutcomes()` every 5 min and `settleAllReadyPools()` every 15 min directly inside the Express server. `node-cron` dep added. Gated on `NODE_ENV=production`; `DISABLE_SCHEDULER=true` env flag for emergency pause. Picked over Render Cron Jobs because Starter ($7/mo) keeps the web service always-on — saves $2/mo and keeps logs in one place): ✅
 - **Step 2p** (Manus runtime stripped from production build — `vite.config.ts` switched to function-form `defineConfig` so the four Manus dev plugins only register when `mode !== "production"`. Production `index.html` dropped from 368 KB to 1.27 KB. **ROLLED BACK in step 2q** — broke the signed-in refresh path on iPhone for reasons not yet fully understood): ↩️
 - **Step 2q** (Reverted step 2p — `vite.config.ts` restored to original form, Manus dev plugins back in production builds, `index.html` back to 368 KB. Step 2o scheduler untouched. Re-attempting the strip is a candidate for a later step, this time with an inline error reporter in `client/index.html` so any underlying error surfaces visibly): ✅
+- **Step 2r** (Inline boot-time error reporter in `client/index.html` — captures `window.error` + `unhandledrejection` before React mounts, renders a visible dark-themed fallback into `#root` with stack + UA + Reload + Copy-diagnostic when boot fails. 200ms mount-check guard means healthy boots are a no-op. Adds ~7 KB of inline HTML/JS. Designed to make any future failed boot diagnosable instead of presenting a white screen): ✅
+- **Step 2s** (Re-attempted the Manus strip — same `vite.config.ts` change as step 2p, now safe because the 2r reporter is in place. Production HTML drops from 376 KB → 8.84 KB. Step 2p's signed-in-iPhone bug returned; the reporter caught it this time with `bootStarted=false` + a `<script>` resource-load failure or a 10-second silent stall): ✅
+- **Step 2t** (Reporter tightened — error listener gains `useCapture: true` so script-load failures (which target the `<script>` element, don't bubble to window) are caught. `main.tsx` gains three boot checkpoints `__p10_bootStarted` / `__p10_renderStarted` / `__p10_renderReturned`; reporter reads them and reports how far boot got. Safety-net diagnostic copy adapts to which checkpoint was reached): ✅
+- **Step 2u** (Reporter adds fetch-status follow-up — on a captured resource error, the reporter immediately re-fetches the same URL via `fetch()` and appends `status / content-type / content-length` to the diagnostic. Distinguishes server failure (4xx/5xx) from browser module-load rejection (200 OK with wrong MIME, etc.). First step that produced a confirmed remote-resource failure log on a real iPhone refresh): ✅
+- **Step 2v** (Stripped `crossorigin` attribute from Vite's emitted `<script type="module">` and `<link rel="stylesheet">` in production HTML via a `transformIndexHtml` post-order plugin. Vite emits this by default for CDN/cross-origin asset hosting; Predictor10 serves all assets same-origin from Express, so the attribute is unnecessary. On iOS WebKit it can trigger a silent CORS-adjacent failure mode where module scripts stall without firing `error` events — caught in 2u's diagnostics. Safety net also enhanced to auto-fetch the bundle URL when fires + main.tsx never executed. Step 3a-onwards iPhone refresh failures now diagnose to specific HTTP responses rather than white-screening): ✅ *(monitored — intermittent residual reported via WhatsApp 20 May; reporter remains in place to capture recurrence)*
 - **Compliance build-out (Weeks 5-8)**: not started
 - **Resend / email templates**: deferred to pre-launch
 
@@ -55,6 +60,33 @@ Notable deviations from the original weekly schedule:
 - **`PUT /api/predictions/:id`** (originally Week 2) was replaced by `PUT /api/entries/:entryId/predictions/:eventId` — predictions have no stable id before first save, `(entry, event)` is the natural unique key. Arch §11 updated.
 - **`/api/pools`, `/api/tiers`, `/api/pools/competition/:slug`** (originally Week 2) collapsed into `/api/competitions` — pools and tiers are always queried in competition context. Bring back as separate endpoints only if a future surface needs them.
 - **Bottom nav rename — Pools → Tables** (step 2m): with the entry flow consolidated onto Home and pools-as-browse killed, the third bottom-nav slot is repurposed for league standings.
+
+---
+
+## Step 3a — World Cup 2026 + Home / Predict redesign
+
+**Adds the World Cup 2026 as Predictor10's third competition and resolves the multi-competition Home design that's been deferred since step 2c.** Locks the answers in arch §3 / §8.1 / §8.2 / §8.6.1 / §10 / §13 Rules #4 + #16-#18.
+
+### Scope
+
+- **Schema**: add `competitions.postponedPolicy` (`'wait' | 'forfeit'`, default `'wait'`) and seed-define the three competition policies (PL/Champ: `'wait'`; WC: `'forfeit'`). No other schema change — the existing `competitions` + `stages` + `events` + `pools` shape already supports tournament-style competitions. Migration file added.
+- **Seed**: extend `COMPETITIONS` in `server/scripts/seed.ts` with WC (`code: "WC"`, `slug: "world-cup-2026"`, `externalSeasonId: "2026"`). Extend `TIERS` with the dedicated WC tier (`slug: "world-cup-2026"`, £30, 60/25/15, 25% house). Seed creates the single WC pool (whole-tournament Round × dedicated tier) when WC's first matchday is < 7 days away. Re-seedable / idempotent like the rest.
+- **Sync**: `outcome-sync.ts` and `fixture-sync.ts` need no logical changes — they already iterate `competitions.isActive=true` and upsert by `external_id`. Verify behaviour against the WC `/v4/competitions/WC/matches` endpoint with a one-shot smoke run, including placeholder-team fixture upserts. Settlement gate (`settle-pools.ts`) gains the per-comp policy branch (Rule #16): for `postponedPolicy='forfeit'` competitions, a POSTPONED-without-future-kickoff event counts as "accounted for" with 0 pts written to every entry's prediction for that event.
+- **Predict UI per Rule #17**: prediction availability gated on (a) both team fields non-placeholder AND (b) per-match 1hr lock not passed. Placeholder fixtures render with "Awaiting teams" copy + disabled input boxes. As football-data populates real teams, those fixtures unlock automatically on next portal refresh.
+- **Home (`/`) — redesign per §8.1**: replace the single-competition Round hero + live entries + tier list with a list of competition cards (one per open competition). PL/Champ cards route to the tier picker; WC card routes to `/enter/world-cup-2026`. Live entries removed entirely from this surface.
+- **WC entry confirm screen — new (§8.6.1)**: `/enter/:competitionSlug` route. Single-screen explainer + Enter CTA + dynamic prize breakdown computed from current pool entry count. POST-entry → `/predict/:entryId` redirect. Already-entered → 302 to existing entry. Late-entry-closed → CTA disabled.
+- **Predict (`/predict`) — refresh per §8.2**: add persistent top header "YOUR LIVE ENTRIES". Add the "TOURNAMENT" section group below "THIS ROUND". WC entry cards surface current stage state ("Group Stage · MD2 in play", "Knockouts · QFs", "Knockouts · Final"). Empty-state copy updated to direct users to Home.
+
+### Definition of done
+
+- A user can sign in, see PL + WC cards on Home, tap WC, read the explainer, enter for £30 (mock), see their WC entry appear in the new TOURNAMENT section of Predict, open it, predict every group-stage match (with placeholder knockout rows rendered as "Awaiting teams"). Group matches lock 1hr before each kickoff. When a group match is marked POSTPONED in football-data, it shows "0 pts — postponed" on the predict screen; when it's rescheduled to a future kickoff, predictions reopen and the user can edit. The WC pool settles within ~20 min of the Final's full-time whistle, with payouts to top 3.
+- PL's existing flow is unaffected. Championship's existing flow is unaffected. The retired Pound tier remains retired.
+
+### Risks / open items at scoping time
+
+- **football-data placeholder format unverified end-to-end**: we know the API supports WC + the v4 endpoint shape, but the exact `homeTeam`/`awayTeam` field representation for unresolved knockout slots isn't documented anywhere we've checked. Plan: seed against the live endpoint as the first step of 3a, log the actual payload shape, then build the placeholder-detection logic against real data. Low-risk because worst case is one extra polish-pass after first observation.
+- **Per-competition policy table proliferation**: `postponedPolicy` is the first per-competition behavioural flag. If 3+ accumulate, consider a single `behaviorPolicy` jsonb column instead of one column per rule. Defer the refactor until 3+ exist.
+- **WC entry count assumptions**: prize-breakdown copy says "47 players so far" in the §8.6.1 mock. At 30 entries (~£900 gross), the 3rd-place share is ~£100; at 100 (~£3,000), 3rd is ~£330. Both feel proportionate. Worth surfacing the WhatsApp-discussed "100 at £30" target on the Home WC card if marketing thinks it helps drive entries — but copy decision deferred until first invited-tester reactions.
 
 ---
 
@@ -338,8 +370,7 @@ The dormant tables in `licensed.ts` get their UI and write paths. Enforcement po
 
 ## What's NOT in V1 (and why)
 
-- **Bracket pools, survivor pools, top-scorer side markets.** Skill-and-feature creep. One product type means less to test, less to break, less to explain.
-- **World Cup pools.** Dropped from MVP scope.
+- **Bracket pools, survivor pools, top-scorer side markets.** Skill-and-feature creep. One product type means less to test, less to break, less to explain. ~~**World Cup pools** dropped from MVP scope.~~ Added back as step 3a (tournament-style competition, single £30 tier, retires post-Final). Future tournaments (Euros 2028, etc.) will reuse the same pattern.
 - **EFL League One.** Not covered by `football-data.org` free tier; deferred until a second provider integration is justified.
 - **Bonuses, referrals, social features, friend-leagues.** Earnable with growth later.
 - **Mobile app.** Web app is mobile-responsive; native app is V3+.

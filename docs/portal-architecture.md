@@ -39,6 +39,7 @@ This doc describes the post-login user portal: navigation, pages, data, and the 
 |---|---|---|---|
 | Premier League | `PL` | ✅ Free tier | Year-round backbone. Already integrated. |
 | EFL Championship | `ELC` | ✅ Free tier | Add alongside PL. |
+| World Cup 2026 | `WC` | ✅ Free tier | Added step 3a. Runs 11 Jun → 19 Jul 2026. Tournament-style: one whole-tournament Round, single tier, bracket fills in progressively. Retires post-final via `RETIRED_TIER_SLUGS` (`world-cup-2026`). See Round structure below + Decided Rules #16-#18. |
 
 Free-tier rate limit: 10 req/min. Existing 1-hour cache (`TTL` in `server/index.ts`) keeps usage well under budget. Live cache is 60s.
 
@@ -63,11 +64,23 @@ Free-tier rate limit: 10 req/min. Existing 1-hour cache (`TTL` in `server/index.
 | 1-8 | varies | 5 each | ~60 each |
 | 9 | last 6 MDs | 6 | ~72 |
 
-A user enters a Round once (one stake) and predicts every match across all GWs / MDs in that Round.
+### Round structure — World Cup 2026 (104 matches, 1 Round)
+
+| Stage | Match count | Dates (UTC) | Notes |
+|---|---|---|---|
+| Group Stage (MD 1-3) | 72 | 11 Jun → 27 Jun | 12 groups of 4. All teams known up front. |
+| Round of 32 | 16 | 27 Jun → 1 Jul | Top 2 per group + 8 best 3rd-placed. Placeholder teams until groups resolve. |
+| Round of 16 | 8 | 4 Jul → 7 Jul | Placeholder until R32 resolves. |
+| Quarter-finals | 4 | 9 Jul → 11 Jul | Placeholder until R16 resolves. |
+| Semi-finals | 2 | 14 Jul → 15 Jul | Placeholder until QFs resolve. |
+| 3rd Place Final | 1 | 18 Jul | Placeholder until SFs resolve. |
+| Final | 1 | 19 Jul | Placeholder until SFs resolve. |
+
+A user enters a Round once (one stake) and predicts every match across all GWs / MDs / Stages in that Round. For WC, "every match" = the 104-match bracket that fills in over the tournament.
 
 ### Tiers (entry prices)
 
-From step 2m onwards there are **4 tiers per competition per Round**:
+From step 2m onwards there are **4 tiers per competition per Round** for league-style competitions (PL, Champ):
 
 | Tier | Entry |
 |---|---|
@@ -76,11 +89,13 @@ From step 2m onwards there are **4 tiers per competition per Round**:
 | The Pony | £25 |
 | The Big One | £50 |
 
+**Tournament competitions (WC 2026) carry a single dedicated tier** (`world-cup-2026`, £30) — one Enter button, no tier choice. Reasoning: a tournament-length pool is itself the commitment, and splitting 100 expected entrants across 4 tier-pools dilutes pots to the point where most settle near zero. One pool keeps the WC pot meaningful. The WC tier is retired via `RETIRED_TIER_SLUGS` after the Final settles (~22 July 2026).
+
 **The Pound (£1) was retired in step 2m.** Reasoning: Stripe + merchant processing fees against the player-pool payout (now 75% of gross after step 2n's 25% commission) leave negative margin. Wez's existing Round 9 Pound entry plays out and settles normally on Sun 24 May 2026 under the original (pre-step 2n) 70/20/10 split with no commission; from Round 10 onwards no Pound pools are created. The `leagues.slug='pound'` row stays in the DB for historical reference, marked `is_active=false`.
 
-Tier visibility: all four tiers are visible to every user from day one. No progressive unlock. Tier choice is the user's.
+Tier visibility: all four PL/Champ tiers are visible to every user from day one. No progressive unlock. Tier choice is the user's.
 
-**Prize structure (step 2n, locked).** Every active tier carries a flat **25% operator commission** on the gross pot. The remaining 75% (the player pot) pays out top 3 at **60% / 25% / 15%**. So on a gross £100 pot, £25 goes to the operator and £75 splits as £45 / £18.75 / £11.25. Settlement applies the commission first then distributes the player pot per the splits — see §13 Decided Rules #9 / #14 for the exact rounding and Decided Rule #14 for residual-penny handling.
+**Prize structure (step 2n, locked).** Every active tier carries a flat **25% operator commission** on the gross pot. The remaining 75% (the player pot) pays out top 3 at **60% / 25% / 15%**. So on a gross £100 pot, £25 goes to the operator and £75 splits as £45 / £18.75 / £11.25. WC inherits the same 60/25/15 + 25% pattern. Settlement applies the commission first then distributes the player pot per the splits — see §13 Decided Rules #9 / #14 for the exact rounding and Decided Rule #14 for residual-penny handling.
 
 ---
 
@@ -211,72 +226,101 @@ The **pre-entry flow** (browsing a tier, late-entry modal, "Enter — £X" CTA, 
 
 ### 8.1 Home (`/`)
 
-The Home tab unifies "your live entries in this round" with "tiers still available to enter" into one continuous view. State emerges from data, not a discrete state machine.
+**Redesigned in step 3a.** Home is the entry-discovery surface: every competition currently available to enter. Live entries moved entirely to the Predict tab (§8.2) — Home no longer duplicates them.
 
 ```
 ┌─────────────────────────────────┐
-│ Round 1 · Premier League        │
-│ GWs 1-4 · Closes Sat 29 Aug     │
-├─────────────────────────────────┤
-│ YOUR LIVE ENTRIES               │
+│ COMPETITIONS                    │
+│                                 │
 │ ┌─────────────────────────────┐ │
-│ │ PL · The Tenner             │ │
-│ │ 12/40 saved · in play       │ │
-│ │ [Predictions]    [Table]    │ │
+│ │ PREMIER LEAGUE              │ │
+│ │ 2026/27 · Round 1           │ │
+│ │ GWs 1-4 · Closes Sat 29 Aug │ │
+│ │ 4 tiers from £5             │ │
+│ │ [ Choose your tier → ]      │ │
 │ └─────────────────────────────┘ │
-├─────────────────────────────────┤
-│ AVAILABLE TIERS                 │
-│ The Fiver      £5   18 entries  │
-│ 1st £40.50 · 2nd £16.87 · 3rd £10.12│
-│ The Tenner    £10   12 entries  │
-│ 1st £54.00 · 2nd £22.50 · 3rd £13.50│
-│ The Pony      £25    4 entries  │
-│ 1st £45.00 · 2nd £18.75 · 3rd £11.25│
-│ The Big One   £50    1 entry    │
-│ 1st £22.50 · 2nd £9.37 · 3rd £5.63│
+│                                 │
+│ ┌─────────────────────────────┐ │
+│ │ WORLD CUP 2026              │ │
+│ │ 11 Jun → 19 Jul · 104 matches│ │
+│ │ One bracket, one £30 entry  │ │
+│ │ Late entry closes 18 Jun    │ │
+│ │ [ Enter World Cup → ]       │ │
+│ └─────────────────────────────┘ │
 └─────────────────────────────────┘
 ```
 
-Two sections, each can be empty:
-- **Your live entries** — one card per pool the user is in for the current round. Two CTAs per card: jump to predictions, jump to live league table.
-- **Available tiers** — tiers in the current round the user has NOT yet entered. Each row shows the current per-rank prize breakdown (step 2n) under the entry count. New users see all 4 tiers; users entered in some see only the remainder.
+Each card represents one open competition the user can enter. Cards display:
 
-Empty-state combinations:
-- 0 live entries + N available = new or returning user (welcome copy + "Pick your first Tier")
-- N live entries + 0 available = "All tiers entered for Round 1 · Round 2 opens [date]"
-- 0 + 0 = no current open round (show next round's expected open date)
+- **Competition name** (Barlow Condensed, uppercase, accent).
+- **Period / scope** (current Round for league-style, tournament dates for WC).
+- **Entry summary**: "4 tiers from £5" for PL/Champ, "One bracket, one £30 entry" for WC.
+- **Late-entry deadline** when the window is open or closing soon.
+- **CTA**: "Choose your tier →" routes to the tier picker (Tables tab with the competition pre-selected). "Enter World Cup →" routes to the single-tier confirm screen (§8.6.1).
 
-Home shows the **current round only**. Settled rounds live in `/account/history` (Section 8.8).
+Card behaviour by competition type:
+
+- **League-style (PL / Champ)** — taps the card → tier picker. Same 4 tiers / pool-card layout as today's Tables tab, scoped to the chosen competition's current Round. Each tier card shows live entry count and per-rank prize breakdown computed from the current pot.
+- **Tournament-style (WC)** — taps the card → single-screen confirm (§8.6.1) with the explainer copy (FT scores only, postponement rule, bracket fills progressively, late-entry deadline). One [ Enter — £30 ] button, mock-money entry, user is in the pool.
+
+Hiding rules:
+- A competition disappears from Home once the user has entered every active pool in it (e.g. user entered PL Fiver+Tenner+Pony+Big One, no more PL tiers to choose → PL card hides). They access their live entries via the Predict tab.
+- WC card disappears once entered (only one pool to be in) or once the late-entry window closes without entry.
+- Competition with `is_active=false` (e.g. retired tournament) never shows.
+
+Empty states:
+- 0 competitions to enter + 0 live entries (Predict empty too) = "Nothing open right now. Round 1 of PL 2026/27 opens [date]."
+- 0 competitions to enter + N live entries = "All current competitions entered. Head to Predict to make your picks." with a link.
+- N competitions + N live entries = both surfaces have content; no special copy.
+
+Home shows currently-open competitions only. Settled history lives at `/account/history` (§8.8).
 
 ### 8.2 Predict (`/predict`)
 
-Lists every open entry the user holds, grouped by close time. Each card is a deep-link into the canonical combined Pool / Predict screen (Section 8.5) for that entry's pool.
+**Refreshed in step 3a.** Predict is the active-play surface — every open entry the user holds. Live entries moved here from Home (§8.1); Predict gains a clearer top-of-screen identity.
 
 ```
 ┌─────────────────────────────────┐
+│ YOUR LIVE ENTRIES               │
+├─────────────────────────────────┤
 │ CLOSING SOON                    │
 │ ┌─────────────────────────────┐ │
-│ │ Championship · Big One      │ │
+│ │ Championship · The Big One  │ │
 │ │ Round 1 · 60 matches        │ │
 │ │ ⏱ Late entry closes 2h 14m  │ │
 │ │ 12/60 predictions saved     │ │
-│ │ [   Continue   ]            │ │
+│ │ [   Open   ]                │ │
 │ └─────────────────────────────┘ │
-│                                  │
+│                                 │
 │ THIS ROUND                      │
 │ ┌─────────────────────────────┐ │
 │ │ PL · The Tenner             │ │
 │ │ Round 1 · 40 matches        │ │
 │ │ Round closes Sat 19 Sep     │ │
 │ │ 24/40 predictions saved     │ │
-│ │ [   Continue   ]            │ │
+│ │ [   Open   ]                │ │
+│ └─────────────────────────────┘ │
+│                                 │
+│ TOURNAMENT                      │
+│ ┌─────────────────────────────┐ │
+│ │ World Cup 2026              │ │
+│ │ Group Stage · MD2 in play   │ │
+│ │ 38/72 predictions saved     │ │
+│ │ Knockout bracket: locked    │ │
+│ │ [   Open   ]                │ │
 │ └─────────────────────────────┘ │
 └─────────────────────────────────┘
 ```
 
-Empty state: "No open entries. Browse tables →" linking to `/tables`.
+Persistent screen header "YOUR LIVE ENTRIES" (Barlow Condensed, uppercase). Below it, entries are grouped by status; sections only render when they have entries:
 
-Tapping a card routes to `/predict/:entryId` — the canonical prediction screen (Section 8.5). Step 2m introduced this URL so the Predict bottom-nav tab stays highlighted while the user is making picks (previously the URL was `/pools/:competitionSlug/:poolId`, which highlighted Pools).
+- **CLOSING SOON** — late-entry window closes < 48h. Sorted by close time, soonest first.
+- **THIS ROUND** — currently-playing league-style Rounds (PL / Champ).
+- **TOURNAMENT** — currently-playing tournament-style competitions (WC). Card line 2 surfaces the current stage / state ("Group Stage · MD2 in play", "Knockouts · QFs", "Knockouts · Final").
+
+Each card includes a single [Open] CTA routing to `/predict/:entryId` — the canonical prediction screen (§8.5). Step 2m introduced this URL so the Predict bottom-nav tab stays highlighted while the user is making picks.
+
+Empty state: "No live entries. Head to Home to pick a competition →" linking to `/`.
 
 ### 8.3 Pools landing (`/pools`) — REMOVED in step 2m
 
@@ -428,6 +472,56 @@ Rules:
 
 Endpoint: existing `GET /api/pools/:id/entries` (built in step 2k). Tables fetches per (competition, tier) pair. The portal API needs no schema changes for this surface — only routing on the client.
 
+### 8.6.1 Tournament entry confirm (`/enter/:competitionSlug`) — step 3a
+
+Single-screen entry flow for tournament-style competitions (WC). Linked from the WC card on Home (§8.1). Replaces the tier picker for competitions where there's only one pool.
+
+```
+┌─────────────────────────────────┐
+│ ← Home                          │
+│                                 │
+│ WORLD CUP 2026                  │
+│ 11 Jun → 19 Jul · 104 matches   │
+│                                 │
+│ One entry. £30. Whole tournament│
+│ across group stage and          │
+│ knockouts. Top 3 win money from │
+│ the pot.                        │
+│                                 │
+│ HOW IT WORKS                    │
+│ • Predict every match's full-   │
+│   time score (90 min only — no  │
+│   extra time, no penalties).    │
+│ • 5 pts for exact score, 2 pts  │
+│   for correct result.           │
+│ • Knockout fixtures fill in as  │
+│   the tournament progresses —   │
+│   you'll predict each round as  │
+│   the teams resolve.            │
+│ • Predictions lock 1 hour       │
+│   before each kickoff.          │
+│ • Postponed matches score 0     │
+│   unless rescheduled — then     │
+│   they reopen for prediction.   │
+│ • Late entry closes Thu 18 Jun  │
+│   (7 days after first kickoff). │
+│                                 │
+│ PRIZE BREAKDOWN                 │
+│ £30 entry · 47 players so far   │
+│ Gross pot £1,410 · House £352.50│
+│ 1st £634.50 · 2nd £264.37       │
+│ 3rd £158.63                     │
+│                                 │
+│ [    Enter — £30    ]           │
+└─────────────────────────────────┘
+```
+
+Behaviour:
+- Static explainer above the dynamic prize breakdown. Copy locked in step 3a; live amounts computed live from current pool entry count.
+- Single CTA. Tap → late-entry window check → POST `/api/pools/:id/enter` (mock-money) → navigate to `/predict/:entryId`.
+- Once user has entered, this route 302-redirects to `/predict/:entryId` for that user's WC entry. Home's WC card is hidden for the user (no further action available there).
+- Late-entry window closed (>7 days after first kickoff): CTA disabled, copy switches to "Late entry closed — see the live table in Tables tab", link out.
+
 ### 8.7 Account (`/account`)
 
 ```
@@ -533,22 +627,29 @@ Run via `pnpm seed`, idempotent across re-runs:
 
 ```
 sports        : ['football']
-competitions  : ['premier-league', 'championship']
-                  + extId mapping to football-data.org codes
-                  (World Cup deferred — see Decided Rule #4)
-leagues       : 4 active tier rows + 1 retired (step 2n splits)
-                  Active:
+competitions  : ['premier-league', 'championship', 'world-cup-2026']
+                  + extId mapping to football-data.org codes (PL / ELC / WC)
+                  + externalSeasonId for season-bound API queries
+                  + postponedPolicy per competition:
+                      premier-league   : 'wait'    (arch §13 Rule #13)
+                      championship     : 'wait'    (arch §13 Rule #13)
+                      world-cup-2026   : 'forfeit' (arch §13 Rule #16)
+leagues       : 5 active tier rows + 1 retired
+                  Active (league-style — PL/Champ pools use these 4):
                   - The Fiver  £5   splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
                   - The Tenner £10  splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
                   - The Pony   £25  splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
                   - The Big One £50 splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
+                  Active (tournament — WC 2026 pool uses this single tier):
+                  - World Cup 2026  £30  splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
+                                         (slug='world-cup-2026', retires after Final settles)
                   Retired (is_active=false, kept for historical entries):
                   - The Pound  £1   splits=[0.70, 0.20, 0.10]  (no houseFeePct)
 ```
 
-`stages` and `events` populated by the fixture-sync inside `pnpm seed` itself (calls football-data.org once per competition; well under the 10 req/min free-tier ceiling).
+`stages` and `events` populated by the fixture-sync inside `pnpm seed` itself (calls football-data.org once per competition; well under the 10 req/min free-tier ceiling). For WC, the sync also picks up placeholder fixtures for unresolved knockout slots ("Group A Winner vs Best Third Placed") and updates them as the tournament progresses — see §13 Rule #17.
 
-`pools` created by the same seed run for the **current Round only** (the lowest-ordinal Round still having at least 5 future kickoffs). 4 active tier pools × 1 stage × 1 competition per run = 4 rows per competition with an open Round. The seed also re-syncs `prize_structure` JSON on any existing open pools to match the current tier value (step 2n) — settled pools are deliberately left alone (Decided Rule #14: payouts immutable once banked).
+`pools` created by the same seed run for the **current Round only** (the lowest-ordinal Round still having at least 5 future kickoffs). For PL/Champ: 4 active tier pools × 1 stage × 1 competition per run. For WC: 1 pool (the single dedicated tier × the tournament-Round) created when the tournament becomes the current Round. The seed also re-syncs `prize_structure` JSON on any existing open pools to match the current tier value (step 2n) — settled pools are deliberately left alone (Decided Rule #14: payouts immutable once banked).
 
 ---
 
@@ -681,7 +782,7 @@ These resolve previously-open questions. They flow into build:
 1. **Settlement timing.** A pool settles automatically when **all** its matches have full-time scores from football-data.org. Implementation: settlement cron polls every 5 minutes, finds pools where every match status is `FINISHED` and `event_outcomes` rows exist, computes ranks, writes mock payouts, marks pool `settled`. Idempotent — re-running must not double-pay.
 2. **Multi-entry rule.** A user may hold concurrent entries across multiple Tiers and multiple Competitions. **Cap: one entry per Pool per user.** Since Pool = Competition × Tier × Round, this means a user can simultaneously hold (PL · Fiver · R1) + (PL · Tenner · R1) + (Champ · Tenner · R1) — three pools, three entries — but never two entries in the same pool.
 3. **Tier visibility.** All 4 tiers (Fiver, Tenner, Pony, Big One) are visible to every user from day one. No progressive unlock. £5 is the natural starter tier; choice is the user's. The Pound (£1) was retired in step 2m.
-4. **Competitions in MVP.** Premier League and EFL Championship only. World Cup dropped from scope. League One deferred (no provider coverage on free tier).
+4. **Competitions in MVP.** Premier League, EFL Championship, and World Cup 2026. **WC added in step 3a** as a tournament-style competition (single Round = whole tournament, single dedicated `world-cup-2026` £30 tier, retired post-Final). League One deferred (no provider coverage on free tier). Future tournaments (Euros 2028, etc.) will follow the same single-tier + retire-after pattern.
 5. **Launch plan.** No hard launch date — public launch happens when the build is ready and the operator is ready. Earliest-possible target: Round 1 of PL 2026/27 (Sat 22 Aug → ~Sat 19 Sep 2026) as a closed test for invited users; public launch (mock-money) at the start of Round 2 (~Sat 26 Sep 2026). Both dates slide if not ready. See `roadmap.md` for the build phases that gate readiness.
 6. **Round structure.** A Round is a multi-gameweek tournament block. PL: 9 Rounds (4-4-4-4-4-4-4-5-5 GWs). Champ: 9 Rounds (5-5-5-5-5-5-5-5-6 MDs). See Section 3 for the full schedule. **Entry fee covers the whole Round** — one stake, all matches in the Round.
 7. **Per-match prediction lock.** Each match's predictions lock 1 hour before its individual kickoff. A user can edit predictions for un-kicked-off matches at any time. Predictions for already-played matches are never accepted — server enforces by rejecting with HTTP 403. Prevents cheating via late entry seeing results.
@@ -693,6 +794,9 @@ These resolve previously-open questions. They flow into build:
 13. **Settlement gate for non-played fixtures.** A pool settles when every event in its Round is either `finished` with an `event_outcomes` row, OR in a terminal non-played state (`cancelled` / `void`). `Postponed` events still block settlement — they may yet be rescheduled inside the Round window. Predictions on cancelled or void events keep `points_awarded = null` and render as "Missed — 0 pts" (no match means no score to compare against). Without this rule, a single postponement could deadlock a pool indefinitely.
 14. **Payout rounding.** Operator commission is computed first (`houseFeePence = floor(grossPotPence × houseFeePct)`, so players are never overpaid from sub-penny remainders). The remaining `playerPotPence` is split across paying ranks: `playerPot × split ÷ tied_count`, rounded to 2 decimal places at storage. After all line items are computed, any 1-2p rounding residual goes to rank 1 — line items must sum exactly to `playerPotPence × sum(splits)` so the books balance. The same `computeDisplayBreakdown` helper feeds both settlement and the API display amounts, so the breakdown shown on Tables / Home matches what actually gets paid to the penny. Cosmetic precision for `mode='mock'`; real-money operation post-licence switches to integer-pence arithmetic throughout.
 15. **Zero-entry pools settle silently.** A pool reaching its settlement gate with `entry_count = 0` still gets marked `settled` — pot is 0, no `payments` rows are written, audit log records the settlement with `entryCount: 0`. Handles the rare race between the stale-pool cleanup script and outcome sync, and gives the settlement engine a single uniform exit path.
+16. **Postponed-event policy is per-competition (step 3a).** `competitions.postponedPolicy` is one of `'wait'` (default — current PL/Champ behaviour, Rule #13) or `'forfeit'` (WC). Under `'forfeit'`: a postponed match counts as 0 pts for every prediction until/unless football-data emits a future kickoff for the same fixture. If a future kickoff appears, the match returns to normal predict flow (per-match 1hr lock applies) and any final FT result re-scores the prediction. If no future kickoff is ever issued, the 0 stands and the match counts as "accounted for" by the settlement gate (Rule #17). Reasoning: a 104-match tournament-Round cannot afford a single postponement to deadlock the pool for weeks; forfeit-then-reopen-if-rescheduled is the cleanest user-facing model.
+17. **Tournament-style competition behaviour (step 3a).** Competitions flagged tournament-style (currently: WC) deviate from league-style behaviour in three ways. (a) **Single Round = whole tournament.** One pool per dedicated tier, all matches in one stake. (b) **Bracket fills progressively.** Knockout fixtures exist with placeholder team names from day one ("Group A Winner vs Best Third Placed"); football-data updates team fields as winners are determined; outcome-sync's existing newly-added/changed-match upsert handles this with no extra code. Predict UI gates the predict window on **both teams being non-placeholder AND the per-match 1hr lock not yet passed**. Placeholder matches render visibly in the Predict screen with "Awaiting teams" copy so players see the road ahead but can't predict blind. (c) **Settlement gate uses Rule #16's policy.** A WC pool settles when every match is either FINISHED-with-outcomes OR POSTPONED-without-future-kickoff. No grace window — the cron's existing 15-min cadence handles tail-end propagation from football-data within ~20 minutes of the Final's full-time whistle.
+18. **Home / Predict separation (step 3a).** Home is entry discovery only — one card per competition currently open for entry, no live-entry duplication. Tapping a league-style card routes to the tier picker; tapping a tournament-style card routes to a single-Enter confirm screen (§8.6.1). Predict is the active-play surface — every open entry the user holds, grouped by status (Closing Soon / This Round / Tournament), each card linking to `/predict/:entryId`. Pre-step-3a, both surfaces showed entries; the duplication is removed. The Tables tab continues to list per-pool league standings independently and is unchanged by this rule.
 
 ---
 
@@ -710,7 +814,7 @@ These resolve previously-open questions. They flow into build:
 ### Deferred to post-launch / Week 5+ build
 
 7. **Push and email notifications.** Round-opens, late-entry-window-closing, predictions-due-soon (per-match lock approaching), results-in. Out of scope for portal architecture; spec needed in Week 5+ build.
-8. **Multi-competition Home behaviour.** When a user has live entries in PL Round 1 AND Champ Round 1 simultaneously, how does Home present them? Options: tabbed by competition, both visible stacked, default to whichever has more pressing deadline. Defer until we have multi-comp users to learn from.
+8. ~~**Multi-competition Home behaviour.**~~ **Resolved in step 3a.** Home no longer shows live entries — it's pure entry-discovery (one card per open competition). The "PL Round 1 AND Champ Round 1 simultaneously" problem dissolves: those become two cards on Home → two cards on Predict once entered. The deferred design tension is gone.
 9. **Live scores polling cadence.** Currently 60s server cache, 30s client refresh on visible pages. May tighten during in-play windows. Decision after first round operations.
 
 ### Deferred to Q4 2026 (post-licence)
