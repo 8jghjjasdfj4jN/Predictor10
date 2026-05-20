@@ -774,6 +774,7 @@ export async function getEntryDetail(
       competitionName: competitions.name,
       competitionShortName: competitions.shortName,
       competitionExternalId: competitions.externalId,
+      competitionPostponedPolicy: competitions.postponedPolicy,
       stageId: stages.id,
       stageName: stages.name,
       stageOrdinal: stages.ordinal,
@@ -868,9 +869,19 @@ export async function getEntryDetail(
         : null,
   }));
 
-  // GW tab summary — group by matchday (null → -1 "Unscheduled" bucket).
+  // GW tab summary — group by matchday (null → -1 sentinel bucket).
+  //   League comps: -1 means a match has no matchday (rare data issue) →
+  //                 label "Unscheduled", placed at the end so the regular
+  //                 GW1..GWN sequence reads left-to-right unaffected.
+  //   Tournament comps: -1 is the normal home of every knockout fixture
+  //                 (football-data sends null matchday for unresolved
+  //                 brackets). Label "Knockout Stages", placed at the end
+  //                 so the group-stage matchdays read in chronological
+  //                 order on the left.
   const externalCode = row.competitionExternalId ?? "";
   const matchdayLabel = externalCode === "ELC" ? "MD" : "GW";
+  const isTournamentStyle = row.competitionPostponedPolicy === "forfeit";
+  const nullBucketLabel = isTournamentStyle ? "Knockout Stages" : "Unscheduled";
 
   const byMatchday = new Map<number, EntryMatchDto[]>();
   for (const m of matches) {
@@ -880,10 +891,15 @@ export async function getEntryDetail(
     byMatchday.set(key, list);
   }
   const gameweeks: EntryGameweekDto[] = Array.from(byMatchday.entries())
-    .sort(([a], [b]) => a - b)
+    .sort(([a], [b]) => {
+      // -1 bucket (null matchday) always trails the numbered matchdays.
+      if (a < 0 && b >= 0) return 1;
+      if (b < 0 && a >= 0) return -1;
+      return a - b;
+    })
     .map(([matchday, group]) => ({
       matchday,
-      label: matchday < 0 ? "Unscheduled" : `${matchdayLabel} ${matchday}`,
+      label: matchday < 0 ? nullBucketLabel : `${matchdayLabel} ${matchday}`,
       matchCount: group.length,
       predictionCount: group.filter((m) => m.prediction !== null).length,
       lockedCount: group.filter((m) => m.isLocked).length,
