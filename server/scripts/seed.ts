@@ -40,7 +40,9 @@ import {
   type InternalEventStatus,
 } from "../lib/fixture-sync";
 
-const SEASON = 2025; // football-data convention: starting year → 2025/26
+// Per-competition season is set in COMPETITIONS below (step 3a.3). The
+// global SEASON constant was removed when WC was added — its 2025 default
+// no longer applies to all comps.
 
 // Active tiers from step 2m onwards. The Pound (£1) is retired — Stripe +
 // merchant fees on a £1 entry leave negative margin after 90% prize-pool
@@ -53,10 +55,14 @@ const SEASON = 2025; // football-data convention: starting year → 2025/26
 // for the math and Decided Rule #14 for residual-penny handling (goes to
 // rank 1).
 const TIERS = [
-  { slug: "fiver",   name: "The Fiver",   entryFee: "5.00",  ordinal: 2, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
-  { slug: "tenner",  name: "The Tenner",  entryFee: "10.00", ordinal: 3, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
-  { slug: "pony",    name: "The Pony",    entryFee: "25.00", ordinal: 4, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
-  { slug: "big-one", name: "The Big One", entryFee: "50.00", ordinal: 5, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
+  { slug: "fiver",          name: "The Fiver",      entryFee: "5.00",  ordinal: 2,  accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
+  { slug: "tenner",         name: "The Tenner",     entryFee: "10.00", ordinal: 3,  accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
+  { slug: "pony",           name: "The Pony",       entryFee: "25.00", ordinal: 4,  accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
+  { slug: "big-one",        name: "The Big One",    entryFee: "50.00", ordinal: 5,  accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
+  // Tournament-style dedicated tier (step 3a, arch §3 + §13 Rule #4). Used by
+  // World Cup 2026 only — one Enter button, no tier choice. Retires via
+  // RETIRED_TIER_SLUGS after the tournament settles (~22 July 2026).
+  { slug: "world-cup-2026", name: "World Cup 2026", entryFee: "30.00", ordinal: 10, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
 ] as const;
 
 // Retired tiers — kept in the DB for historical reference, deactivated by
@@ -64,9 +70,47 @@ const TIERS = [
 // without losing past pool/entry/payment rows tied to it.
 const RETIRED_TIER_SLUGS = ["pound"] as const;
 
+// Per-competition metadata. `tiers` lists which TIER slugs apply (PL/Champ
+// use the 4 league-style tiers; WC uses its single dedicated tier).
+// `season` is football-data's season identifier — for league comps the
+// starting year of the season (2025 = 2025/26); for tournaments the
+// tournament year (2026 = WC 2026). `postponedPolicy` is enforced
+// server-side at settlement time (arch §13 Rule #16). `isActive` controls
+// whether seed runs the fixture sync + pool generation for the competition.
 const COMPETITIONS = [
-  { code: "PL",  slug: "premier-league", name: "Premier League",   shortName: "PL",            countryCode: "GB" },
-  { code: "ELC", slug: "championship",   name: "EFL Championship", shortName: "Championship",  countryCode: "GB" },
+  {
+    code: "PL",
+    slug: "premier-league",
+    name: "Premier League",
+    shortName: "PL",
+    countryCode: "GB",
+    season: 2025,
+    postponedPolicy: "wait" as const,
+    tiers: ["fiver", "tenner", "pony", "big-one"],
+    isActive: true,
+  },
+  {
+    code: "ELC",
+    slug: "championship",
+    name: "EFL Championship",
+    shortName: "Championship",
+    countryCode: "GB",
+    season: 2025,
+    postponedPolicy: "wait" as const,
+    tiers: ["fiver", "tenner", "pony", "big-one"],
+    isActive: true,
+  },
+  {
+    code: "WC",
+    slug: "world-cup-2026",
+    name: "World Cup 2026",
+    shortName: "World Cup",
+    countryCode: null,
+    season: 2026,
+    postponedPolicy: "forfeit" as const,
+    tiers: ["world-cup-2026"],
+    isActive: true, // step 3a.3 — turned on with tournament fixture handling
+  },
 ] as const;
 
 function log(msg: string) {
@@ -93,10 +137,32 @@ async function seedCompetitions(sportId: number): Promise<Map<string, string>> {
   log("competitions…");
   const byCode = new Map<string, string>();
   for (const def of COMPETITIONS) {
+    // Use the per-competition season identifier set in COMPETITIONS.
+    // PL/Champ use the league starting year (2025 = 2025/26); WC uses the
+    // tournament year (2026 = WC 2026).
+    const seasonStr = String(def.season);
+
     const [existing] = await db.select().from(competitions).where(eq(competitions.slug, def.slug));
     if (existing) {
       byCode.set(def.code, existing.id);
-      log(`  ${def.name} already exists`);
+      // Idempotent re-sync of fields that may have changed in COMPETITIONS:
+      // postponedPolicy (step 3a addition) and isActive. Other fields stay
+      // immutable — slug/name/shortName/countryCode aren't expected to change.
+      const drifted =
+        existing.postponedPolicy !== def.postponedPolicy ||
+        existing.isActive !== def.isActive;
+      if (drifted) {
+        await db
+          .update(competitions)
+          .set({
+            postponedPolicy: def.postponedPolicy,
+            isActive: def.isActive,
+          })
+          .where(eq(competitions.id, existing.id));
+        log(`  ${def.name} already exists (re-synced policy/isActive)`);
+      } else {
+        log(`  ${def.name} already exists`);
+      }
       continue;
     }
     const [row] = await db
@@ -104,15 +170,17 @@ async function seedCompetitions(sportId: number): Promise<Map<string, string>> {
       .values({
         sportId,
         externalId: def.code,
-        externalSeasonId: String(SEASON),
+        externalSeasonId: seasonStr,
         slug: def.slug,
         name: def.name,
         shortName: def.shortName,
         countryCode: def.countryCode,
+        postponedPolicy: def.postponedPolicy,
+        isActive: def.isActive,
       })
       .returning();
     byCode.set(def.code, row.id);
-    log(`  inserted ${def.name}`);
+    log(`  inserted ${def.name} (postponedPolicy=${def.postponedPolicy}, isActive=${def.isActive})`);
   }
   return byCode;
 }
@@ -195,19 +263,36 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
   const now = new Date();
 
   for (const def of COMPETITIONS) {
+    if (!def.isActive) {
+      log(`  ${def.name}: isActive=false — skipping fixture sync`);
+      continue;
+    }
     const compId = competitionsByCode.get(def.code);
     if (!compId) throw new Error(`competition ${def.code} not found in map`);
     const rounds = ROUNDS_BY_CODE[def.code];
     if (!rounds) throw new Error(`no Round structure for ${def.code}`);
 
-    const allMatches = await fetchAllMatchesForSeason(def.code, SEASON);
-    log(`  ${def.name}: ${allMatches.length} matches from football-data`);
+    // Per-comp try/catch: a football-data outage on WC must not break PL/
+    // Champ seeding. The catch keeps the seed idempotent — partial failures
+    // resume cleanly on the next run.
+    let allMatches: FDMatch[];
+    try {
+      allMatches = await fetchAllMatchesForSeason(def.code, def.season);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(`  ${def.name}: fixture fetch failed (${message}) — skipping this comp`);
+      continue;
+    }
+    log(`  ${def.name}: ${allMatches.length} matches from football-data (season ${def.season})`);
 
-    // Group by Round
+    // Group by Round. For league-style comps every match has a numeric
+    // matchday; matches with null/unknown matchdays are dropped. For
+    // tournament-style comps (any Round with matchdays:"all"),
+    // roundForMatchday() returns Round 1 for every input — including null
+    // matchdays — so every fetched match is captured.
     const matchesByRound = new Map<number, FDMatch[]>();
     let skipped = 0;
     for (const m of allMatches) {
-      if (m.matchday == null) { skipped++; continue; }
       const round = roundForMatchday(def.code, m.matchday);
       if (round == null) { skipped++; continue; }
       const list = matchesByRound.get(round) ?? [];
@@ -409,7 +494,11 @@ async function seedPoolsForCurrentRound(
     log(`  ${def.name}: current = Round ${currentStage.round} (${currentStage.futureMatchesCount} matches still to play), opens ${opensAt.toISOString()}, late-entry closes ${closesAt.toISOString()}`);
 
     let created = 0;
-    for (const tier of TIERS) {
+    // Per-comp tier list (step 3a.3): PL/Champ create 4 league pools; WC
+    // creates 1 dedicated-tier pool. Filters TIERS to def.tiers' slugs so
+    // we don't accidentally create PL × WC tier pools or vice versa.
+    const tiersForComp = TIERS.filter((t) => def.tiers.includes(t.slug as never));
+    for (const tier of tiersForComp) {
       const tierId = tiersBySlug.get(tier.slug);
       if (!tierId) continue;
       const poolName = `${def.shortName} · ${tier.name} · Round ${currentStage.round}`;
@@ -429,7 +518,7 @@ async function seedPoolsForCurrentRound(
         .returning({ id: pools.id });
       if (inserted.length > 0) created++;
     }
-    log(`    ${created} pools created (${TIERS.length - created} already existed)`);
+    log(`    ${created} pools created (${tiersForComp.length - created} already existed)`);
   }
 }
 

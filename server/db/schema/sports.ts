@@ -11,6 +11,19 @@ export const eventStatusEnum = pgEnum("event_status", [
   "void",
 ]);
 
+// arch §13 Rule #16 (step 3a) — how a postponed match is treated by the
+// settlement gate. 'wait' is the historical PL/Champ behaviour: pool waits
+// for the match to be rescheduled inside the Round window. 'forfeit' is the
+// tournament-style behaviour (WC): a postponed match counts as 0 pts for
+// every prediction until/unless football-data emits a future kickoff for
+// the same fixture, in which case predictions reopen and the real result
+// re-scores them. Stops a single postponement from deadlocking a 104-match
+// tournament pool for weeks.
+export const postponedPolicyEnum = pgEnum("postponed_policy", [
+  "wait",
+  "forfeit",
+]);
+
 export const sports = pgTable("sports", {
   id: serial("id").primaryKey(),
   slug: varchar("slug", { length: 50 }).notNull().unique(),
@@ -35,6 +48,10 @@ export const competitions = pgTable(
 
     startDate: date("start_date"),
     endDate: date("end_date"),
+
+    // arch §13 Rule #16 (step 3a). League-style comps default to 'wait';
+    // tournament-style comps (WC) seed-set 'forfeit'. See enum docstring.
+    postponedPolicy: postponedPolicyEnum("postponed_policy").default("wait").notNull(),
 
     isActive: boolean("is_active").default(true).notNull(),
 

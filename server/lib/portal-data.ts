@@ -19,6 +19,20 @@ import { users } from "../db/schema/users";
 import { rankEntries, computeDisplayBreakdown, type EntryScore } from "./pool-settle";
 import { ROUNDS_BY_CODE } from "./rounds";
 
+/**
+ * Resolve the matchday list for a (competition, round) pair, coerced to
+ * number[] for the DTO. Tournament-style rounds (matchdays: "all") have no
+ * numeric matchday list — they return [] here and the UI falls back to its
+ * tournament-aware copy (e.g. "11 Jun → 19 Jul" instead of "GWs 1-4").
+ * Centralises step 3a.3's "all" handling so callers stay a one-liner.
+ */
+function matchdaysForRound(externalCode: string, ordinal: number): number[] {
+  const rounds = ROUNDS_BY_CODE[externalCode];
+  if (!rounds) return [];
+  const md = rounds.find((rd) => rd.round === ordinal)?.matchdays;
+  return Array.isArray(md) ? md : [];
+}
+
 // ─── API response shapes ──────────────────────────────────────────────────
 
 export type CurrentRoundDto = {
@@ -244,10 +258,7 @@ export async function getCompetitionsWithOpenPools(): Promise<CompetitionDto[]> 
     let comp = byCompetition.get(r.competitionId);
     if (!comp) {
       const code = r.competitionExternalId ?? "";
-      const matchdays =
-        code && ROUNDS_BY_CODE[code]
-          ? (ROUNDS_BY_CODE[code].find((rd) => rd.round === r.stageOrdinal)?.matchdays ?? [])
-          : [];
+      const matchdays = matchdaysForRound(code, r.stageOrdinal);
       // PL uses "gameweek" (GW); EFL Championship uses "matchday" (MD).
       const matchdayLabel = code === "ELC" ? "MD" : "GW";
       comp = {
@@ -468,10 +479,7 @@ export async function getPoolDetail(
   }
 
   const externalCode = row.competitionExternalId ?? "";
-  const matchdays =
-    externalCode && ROUNDS_BY_CODE[externalCode]
-      ? (ROUNDS_BY_CODE[externalCode].find((rd) => rd.round === row.stageOrdinal)?.matchdays ?? [])
-      : [];
+  const matchdays = matchdaysForRound(externalCode, row.stageOrdinal);
   const matchdayLabel = externalCode === "ELC" ? "MD" : "GW";
 
   return {
@@ -867,11 +875,7 @@ export async function getEntryDetail(
         0,
       ),
     }));
-
-  const matchdays =
-    externalCode && ROUNDS_BY_CODE[externalCode]
-      ? (ROUNDS_BY_CODE[externalCode].find((rd) => rd.round === row.stageOrdinal)?.matchdays ?? [])
-      : [];
+  const matchdays = matchdaysForRound(externalCode, row.stageOrdinal);
 
   const predictionsMade = predictionRows.length;
   const matchesTotal = eventRows.length;
