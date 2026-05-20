@@ -51,6 +51,15 @@ The calendar weeks below were the original plan. Reality ran roughly to schedule
 - **Step 3a.2** (Admin state inspection endpoint — `GET /api/admin/state` returns competitions + tiers + pool/event/stage counts + schema probe. Token via `X-Admin-Token` header OR `?token=` query for browser-friendly verification. Used to confirm what's in production after each schema/seed change without psql access): ✅
 - **Step 3a.3** (Turn World Cup on, backend foundation — flips WC `isActive: true`, adds `WC_ROUNDS = [{ round: 1, matchdays: "all" }]` to `rounds.ts` with `RoundSpec.matchdays` accepting the "all" sentinel, adds per-comp `season` field to `COMPETITIONS` (PL/Champ 2025, WC 2026), wraps each comp's fetch in try/catch so WC outage can't break PL/Champ, pool generator respects per-comp `tiers` array. `portal-data.ts` gets `matchdaysForRound()` helper coercing "all" → [] for the DTO. **Deploy crashed on first knockout-fixture insert** — football-data sends `homeTeam: null` for unresolved knockouts, but `events.home_team` was NOT NULL. 72 group-stage events inserted before crash. Required step 3a.4 hotfix to complete): ✅
 - **Step 3a.4** (Null-team handling for unresolved knockout slots — `events.home_team` and `events.away_team` made nullable. `FDMatch` type allows null. Insert path writes nulls cleanly. **Update path now overwrites team fields** (essential for bracket fill-in: null → real team as FD resolves prior round). `UpsertEventInput.existing` gains optional team fields; seed's batched lookup includes them. Client + server DTO types updated to `string | null`. `displayTeamName(null) → "TBD"`. After deploy + `pnpm db:push` + `pnpm seed`: WC has all 104 events (72 with teams, 32 placeholder) + 1 pool. Verified via `/api/admin/state` 20 May 2026): ✅
+- **Step 3a.5** (Outcome-sync per-comp season — `outcome-sync.ts` hardcoded `SEASON=2025` replaced with `comp.externalSeasonId` from the DB row. Drops `m.matchday != null` guard from the FD match loop. WC now syncs season 2026 correctly): ✅
+- **Step 3a.6** (Home redesign — `HomePage.tsx` rewritten to competition cards per arch §8.1. Card variant discriminated by `comp.postponedPolicy`. PL/Champ cards: "Choose your tier" CTA → tier picker. WC card: "Enter World Cup" CTA → `/enter/world-cup-2026`. Live entries removed from Home): ✅
+- **Step 3a.7** (`/enter/:competitionSlug` confirm screen — NEW `EnterPage.tsx` per arch §8.6.1. Single-screen explainer + Enter CTA. POST-entry → `/predict/:entryId`. Already-entered users get a client redirect. Route registered in `App.tsx`, `PORTAL_PATH` regex extended): ✅
+- **Step 3a.8** (Predict tab refresh — `PredictPage.tsx` rewritten. "ACTIVE PLAY / YOUR LIVE ENTRIES" header. Three sections: CLOSING SOON (amber, AlarmClock countdown), THIS ROUND, TOURNAMENT. Progress bars per card. Stage pills on tournament cards. `UserEntryDto.postponedPolicy` enriched server-side for bucketing): ✅
+- **Step 3a.9** (Null-team gating end-to-end — `PredictMatchRow` `awaitingTeams` variant: disabled inputs, "Awaiting teams" meta. Server `upsertPrediction` returns `EVENT_AWAITING_TEAMS` 409 when either team is null. Players see the bracket ahead but can't predict blind, server enforces too): ✅
+- **Step 3a.10** (Settlement gate forfeit branch — `pool-settle.ts` `findReadyPoolIds` gate SQL extended with `OR (c.postponed_policy='forfeit' AND e.status='postponed' AND e.kickoff_at <= NOW())`. WC pool can now settle when all 104 events are FINISHED-with-outcomes OR POSTPONED-without-future-kickoff): ✅
+- **Step 3a.10b** (FT-only scoring for WC knockouts — `FDMatch.score` extended with `duration` + `regularTime` / `extraTime` / `penalties`. New helper `extractRegulationScore(match)` returns `regularTime` when `duration !== 'REGULAR'`. WC knockouts that go to ET or penalties are scored from the 90-minute result only. PL/Champ always `duration='REGULAR'`, behaviour unchanged): ✅
+- **Step 3a.11** (Persistent-after-entry Home + tab labelling + group letters + refresh-bug fix — `HomePage.tsx` rewritten with `CompState` model. Entered cards get brighter emerald accent + "✓ You're in {tier names}" line + always-shown secondary "View all tiers" / "Pick another tier" ghost button. Smart routing: 1 entry → entry direct; 2+ → /predict tab. `getEntryDetail` matchday label now "Group MD" for tournaments; null-bucket label "Knockout Stages"; null-bucket sorts LAST. NEW `events.group_label` column captures FD's `match.group` field; `PredictMatchRow` renders "Group A" in meta line. Fully-entered count bug fixed (compares visible-entered count to visible-pool count, not enterable-pools). `client/index.html` analytics-script block removed — `%VITE_ANALYTICS_ENDPOINT%` placeholder was never substituted and was derailing iOS Chrome refresh on some paths): ✅
+- **Step 3a.11+** (Knockout sub-headings + tournament-aware standings pill — NEW `events.fd_stage` column captures FD's stage string. `PoolDetailPage.groupedActive` branches on `activeMatchday === -1`: groups by stage with sub-headings (Round of 32 / R16 / QF / SF / 3rd-place / Final) instead of day-grouping. `PoolEntriesPool.liveStatusLabel` server-computed for tournament comps — "Group MD2 of 3" / "Round of 32" / etc. / "Awaiting settlement". Fixes bug where status pill said "Round complete · awaiting settlement" during WC knockouts because the matchday-rollup query filtered out null-matchday events. Slot pairing labels deferred — 495 FIFA Annex C combinations make a static map impractical): ✅
 - **Compliance build-out (Weeks 5-8)**: not started
 - **Resend / email templates**: deferred to pre-launch
 
@@ -79,12 +88,15 @@ Notable deviations from the original weekly schedule:
 | 3a.2 | ✅ shipped | `GET /api/admin/state` for browser-friendly DB inspection |
 | 3a.3 | ✅ shipped | Turned WC on (`isActive: true`), `WC_ROUNDS`, per-comp season, per-comp tier list. Seed deploy crashed mid-way on null-team knockout fixture insert |
 | 3a.4 | ✅ shipped | Null-team handling hotfix — schema columns nullable, fixture-sync bracket-fill-aware, DTOs `string \| null`. WC pool now created with all 104 events |
-| 3a.5 | ⏳ pending | Outcome-sync WC-aware (use `comp.externalSeasonId` from DB, handle null matchday) — required before WC group stage starts 11 June |
-| 3a.6 | ⏳ pending | Home redesign per §8.1 — competition cards, no live entries |
-| 3a.7 | ⏳ pending | `/enter/:competitionSlug` confirm screen per §8.6.1 |
-| 3a.8 | ⏳ pending | Predict refresh per §8.2 — YOUR LIVE ENTRIES header + TOURNAMENT section |
-| 3a.9 | ⏳ pending | Predict screen placeholder team gating per Rule #17 — disable inputs when team is null, "Awaiting teams" copy. Must land before 3a.7 ships |
-| 3a.10 | ⏳ pending | Settlement gate forfeit branch per Rule #16. Required before WC pool can settle (~22 July 2026) |
+| 3a.5 | ✅ shipped | Outcome-sync per-comp season — `outcome-sync.ts` reads `comp.externalSeasonId` instead of hardcoded 2025. Drops `m.matchday != null` guard. WC now syncs season 2026 |
+| 3a.6 | ✅ shipped | Home redesign per §8.1 — competition cards, no live entries. Discriminated by `postponedPolicy`: league-style card vs tournament card |
+| 3a.7 | ✅ shipped | `/enter/:competitionSlug` confirm screen per §8.6.1. NEW `EnterPage.tsx`. Smart redirect for already-entered users |
+| 3a.8 | ✅ shipped | Predict tab refresh per §8.2 — YOUR LIVE ENTRIES header + three sections (Closing Soon / This Round / Tournament). Progress bars on cards |
+| 3a.9 | ✅ shipped | Null-team gating end-to-end. `PredictMatchRow` `awaitingTeams` variant; server `EVENT_AWAITING_TEAMS` 409 response |
+| 3a.10 | ✅ shipped | Settlement gate forfeit branch per Rule #16. Postponed-without-future-kickoff counts as accounted-for, with kickoff_at <= NOW() gate |
+| 3a.10b | ✅ shipped | FT-only scoring for WC knockouts. `extractRegulationScore()` reads `score.regularTime` when `duration !== 'REGULAR'` |
+| 3a.11 | ✅ shipped | Persistent-after-entry Home cards (supersedes Rule #18's hide-on-entry), tab labelling for tournaments ("Group MD" + "Knockout Stages"), group letter column (`events.group_label`) with "Group A" rendered on rows, fully-entered count bug fix, refresh bug fix (broken analytics script removed) |
+| 3a.11+ | ✅ shipped | Knockout Stages tab sub-headings (Round of 32 / R16 / QF / SF / 3rd-place / Final via new `events.fd_stage` column), tournament-aware standings status pill (`liveStatusLabel` server-computed). Slot pairing labels DEFERRED — 495 FIFA Annex C combinations make a static map impractical; FD auto-resolves teams June 27 |
 
 ### Original scope (preserved for context)
 
@@ -98,7 +110,18 @@ Notable deviations from the original weekly schedule:
 
 ### Definition of done
 
-A user can sign in, see PL + WC cards on Home, tap WC, read the explainer, enter for £30 (mock), see their WC entry appear in the new TOURNAMENT section of Predict, open it, predict every group-stage match (with placeholder knockout rows rendered as "Awaiting teams"). Group matches lock 1hr before each kickoff. When a group match is marked POSTPONED in football-data, it shows "0 pts — postponed"; when rescheduled, predictions reopen and the user can edit. The WC pool settles within ~20 min of the Final's full-time whistle, with payouts to top 3. PL's existing flow is unaffected. Championship's existing flow is unaffected. The retired Pound tier remains retired.
+Step 3a is complete. As of step 3a.11+, the World Cup is fully end-to-end on Predictor10 with parity to Premier League:
+- A user signs in, sees PL + WC cards on Home, taps WC, reads the explainer, enters for £30 (mock).
+- Their WC entry appears in the TOURNAMENT section of Predict.
+- They predict every group-stage match (with knockout rows rendered as "TBD vs TBD · Awaiting teams" until FD resolves them after June 27).
+- Group matches lock 1hr before each kickoff; FT-only scoring on knockouts (no ET, no penalties).
+- Postponed matches (forfeit policy) score 0 unless rescheduled.
+- The WC pool will settle within ~20 min of the Final's full-time whistle on Sun 19 Jul 2026, with payouts to top 3.
+- PL's flow is unaffected. Championship's flow is unaffected. The retired Pound tier remains retired.
+
+### After the Final: WC retirement
+
+Once the WC pool flips to `settled` (~22 Jul 2026), follow `docs/portal-architecture.md` §15 to retire the comp + tier from active surfaces. Summary: add `"world-cup-2026"` to `RETIRED_TIER_SLUGS` in `server/scripts/seed.ts`, optionally flip the comp's `isActive: false`, deploy, run `pnpm seed` in Render Shell. Existing entries stay accessible via `/account/history`. No data deletion.
 
 ### Risks / lessons learned
 

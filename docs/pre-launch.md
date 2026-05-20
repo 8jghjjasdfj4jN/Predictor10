@@ -172,7 +172,7 @@ To prevent scope creep, these are deferred and **must not** block launch:
 - Multi-currency (UK only)
 - Bonus codes / referrals / friend leagues
 - League One competition (deferred — no provider coverage)
-- World Cup pools (out of scope)
+- World Cup 2026 pool retirement (handled — see arch §15 retirement playbook; runs after the Final settles ~22 Jul 2026)
 - Live websocket updates (polling sufficient)
 
 ---

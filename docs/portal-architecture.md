@@ -1,6 +1,6 @@
 # Predictor10 — Portal Architecture
 
-Last updated: May 2026 · Status: Draft for Week 1 build
+Last updated: May 2026 (post step 3a.11+) · Status: Step 3a complete; World Cup live end-to-end.
 
 This doc describes the post-login user portal: navigation, pages, data, and the path from "user clicks a tier" to "predictions submitted." It assumes the schema in `server/db/schema/` and the public-facing pages in `client/src/components/predictor10/`.
 
@@ -373,13 +373,20 @@ This is the canonical prediction screen (the single most important screen in the
 - **Half-saved**: amber "Half-saved" tag, one box filled
 - **Editable**: empty boxes, "Tap to predict" hint
 - **Live (in-play)**: live-score badge, current score, your prediction shown, "Predictions locked" tag
+- **Awaiting teams** (tournament-only — step 3a.9): both teams render "TBD", inputs disabled, meta tag "Awaiting teams". Used for unresolved knockout slots; resolves automatically when football-data populates real teams.
 
 **GW tabs:**
 - Past GWs: total pts earned, checkmark icon, slightly muted (`GW1 24 pts ✓`)
 - Active GW (default open): emerald highlight, save progress (`GW2 5/10`)
 - Future GWs: neutral, save progress (`GW3 0/10`)
+- **Tournament labelling (step 3a.11, Decided Rule #20)**: tournament-style comps replace `"GW"` with `"Group MD"` for numbered group-stage matchdays. The null-matchday bucket is always present (the home of every knockout) and labelled `"Knockout Stages"`, positioned LAST in the tab strip.
 
-**Day groupers** within a GW (`Sat 29 Aug`, `Sun 30 Aug`, `Mon 31 Aug`) — chronological dividers since GWs span multiple days.
+**Match-row meta line — tournament additions:**
+- **Group letter (step 3a.11, Decided Rule #21)**: group-stage matches show "Group A · 20:00 · ..." (or B, C, ... L). Knockouts and league matches omit this segment.
+
+**Knockout Stages tab sub-headings (step 3a.11+, Decided Rule #22)**: instead of day-grouping, matches are grouped by stage with headers "Round of 32" / "Round of 16" / "Quarter-finals" / "Semi-finals" / "Third-place playoff" / "Final" (sorted in tournament order regardless of FD's kickoff ordering).
+
+**Day groupers** within a numbered GW (`Sat 29 Aug`, `Sun 30 Aug`, `Mon 31 Aug`) — chronological dividers since GWs span multiple days. Tournament Knockout Stages tab uses stage groupers instead (see above).
 
 **Auto-save** debounces to 800ms after the last input change; PUTs to `/api/predictions/:id`. Server validates against `predictionLockAt`; rejects with 403 if past lock. Footer shows "Auto-saving · Last saved 2s ago".
 
@@ -797,6 +804,10 @@ These resolve previously-open questions. They flow into build:
 16. **Postponed-event policy is per-competition (step 3a).** `competitions.postponedPolicy` is one of `'wait'` (default — current PL/Champ behaviour, Rule #13) or `'forfeit'` (WC). Under `'forfeit'`: a postponed match counts as 0 pts for every prediction until/unless football-data emits a future kickoff for the same fixture. If a future kickoff appears, the match returns to normal predict flow (per-match 1hr lock applies) and any final FT result re-scores the prediction. If no future kickoff is ever issued, the 0 stands and the match counts as "accounted for" by the settlement gate (Rule #17). Reasoning: a 104-match tournament-Round cannot afford a single postponement to deadlock the pool for weeks; forfeit-then-reopen-if-rescheduled is the cleanest user-facing model.
 17. **Tournament-style competition behaviour (step 3a).** Competitions flagged tournament-style (currently: WC) deviate from league-style behaviour in three ways. (a) **Single Round = whole tournament.** One pool per dedicated tier, all matches in one stake. (b) **Bracket fills progressively.** Knockout fixtures exist as scheduled slots from day one; football-data sends `homeTeam: null` and `awayTeam: null` for unresolved slots (not placeholder strings — confirmed in step 3a.3 deploy crash + 3a.4 fix). As prior rounds resolve, FD updates the team fields to real names; outcome-sync's update path overwrites the nulls (step 3a.4 explicit bracket-fill handling). Schema columns `events.home_team` and `events.away_team` are nullable to support this. UI renders null-team fixtures as "TBD" (via `displayTeamName(null)`) with "Awaiting teams" copy and disabled prediction inputs. Predict UI gates the predict window on **both teams being non-null AND the per-match 1hr lock not yet passed**. Players see the road ahead but can't predict blind. (c) **Settlement gate uses Rule #16's policy.** A WC pool settles when every match is either FINISHED-with-outcomes OR POSTPONED-without-future-kickoff. No grace window — the cron's existing 15-min cadence handles tail-end propagation from football-data within ~20 minutes of the Final's full-time whistle.
 18. **Home / Predict separation (step 3a).** Home is entry discovery only — one card per competition currently open for entry, no live-entry duplication. Tapping a league-style card routes to the tier picker; tapping a tournament-style card routes to a single-Enter confirm screen (§8.6.1). Predict is the active-play surface — every open entry the user holds, grouped by status (Closing Soon / This Round / Tournament), each card linking to `/predict/:entryId`. Pre-step-3a, both surfaces showed entries; the duplication is removed. The Tables tab continues to list per-pool league standings independently and is unchanged by this rule.
+19. **Home competition cards stay visible after entry (step 3a.11, supersedes part of Rule #18).** The originally-locked "hide-on-entry" model from Rule #18 was reversed after Wez observed it left a sparse Home for fully-entered users. Cards now persist with a brighter emerald border, bg tint, inset ring, and a "✓ You're in {tier names}" line. Primary CTA becomes smart-routing: 1 entry → `/predict/:entryId` direct; 2+ entries → `/predict` tab. A secondary ghost button is always shown on entered cards — label adapts: "Pick another tier" when at least one tier is still enterable, "View all tiers" otherwise. Rule #18's entry-discovery framing still applies; the visual just doesn't disappear once entered.
+20. **Tournament tab labelling (step 3a.11).** For competitions with `postponedPolicy='forfeit'` (i.e. tournament-style), Predict-screen tab labels use **"Group MD"** for numbered group-stage matchdays and **"Knockout Stages"** for the null-matchday bucket. League-style comps keep their original labels (`"GW"` for PL, `"MD"` for ELC). The null-matchday bucket always sorts LAST in the tab strip, regardless of comp type.
+21. **Group letter per match (step 3a.11).** `events.group_label` column (`varchar(16)`, nullable) stores the football-data group letter ("A" through "L" for WC 2026) for tournament group-stage matches. Knockouts and league matches stay null. The Predict screen renders "Group A · TIME · ..." in the match-row meta line when set. Source: football-data's `match.group` field, stripped of the "GROUP_" prefix.
+22. **Tournament stage per match + status pill (step 3a.11+).** `events.fd_stage` column (`varchar(32)`, nullable) stores football-data's `match.stage` string verbatim (`"GROUP_STAGE"` / `"LAST_32"` / `"LAST_16"` / `"QUARTER_FINALS"` / `"SEMI_FINALS"` / `"THIRD_PLACE_PLAYOFF"` / `"FINAL"`). League matches store `"REGULAR_SEASON"`; the field is otherwise nullable. Two consumers: (a) the Predict screen's Knockout Stages tab groups matches under sub-headings ("Round of 32", "Round of 16", "Quarter-finals", "Semi-finals", "Third-place playoff", "Final") via `knockoutStageOrder()` + `knockoutStageDisplay()` helpers in `fixture-sync.ts`; (b) the standings status pill on `/pools/:slug/:poolId/table` reads a server-computed `liveStatusLabel` for tournament comps that resolves to "Group MD2 of 3" during group stage, "Round of 32" / "Round of 16" / etc. during knockouts, "Awaiting settlement" when all events are terminal. League comps keep the matchday-driven label (`"GW2 of 4"`).
 
 ---
 
@@ -823,3 +834,114 @@ These resolve previously-open questions. They flow into build:
 11. **AML rule thresholds.** Velocity, single-transaction size, deposit-to-stake ratios — specific numbers tuned during licence application review.
 12. **KYC provider selection.** Onfido / Veriff / GBG / Jumio. Decision after sandbox evaluations in Weeks 9-11.
 13. **Per-user `real_money_enabled` rollout strategy.** Big-bang on licence day, or gradual cohort-by-cohort. Probably gradual for risk control.
+
+---
+
+## 15. World Cup 2026 retirement playbook
+
+The World Cup 2026 pool is a one-off — once the Final settles, the tournament should disappear from active surfaces (Home, Predict, Tables) while still being browsable from `/account/history` for everyone who entered. This section documents the exact mechanics so a future build session (or a successor) can execute the retirement without breaking adjacent things.
+
+### When to retire
+
+When the WC pool reaches `pools.status = 'settled'`. The settlement engine flips this automatically when every match is either FINISHED-with-outcomes or POSTPONED-without-future-kickoff (Decided Rule #16 + Rule #17). Expected window: within ~20 minutes of the Final's full-time whistle on Sun 19 Jul 2026. Allow a buffer day for any tournament-end anomalies (FD delays, manual outcome corrections) before retiring.
+
+Recommended timing: any time from Mon 20 Jul 2026 onwards, once the pool is confirmed `settled` and payouts have been audited.
+
+### What's already in place
+
+The `RETIRED_TIER_SLUGS` mechanism is the same one that retired The Pound in step 2m. It lives in `server/scripts/seed.ts` and is the canonical retirement vehicle:
+
+```ts
+// server/scripts/seed.ts (around line 71)
+const RETIRED_TIER_SLUGS = ["pound"] as const;
+```
+
+The seed run flips every listed slug's `leagues.is_active` to `false` on each pass. Two key queries respect this flag:
+- `getCompetitionsWithOpenPools` (Home + Tables data source) filters pools via `.where(and(eq(pools.status, "open"), eq(leagues.isActive, true)))` — so retired-tier pools vanish from `/api/competitions` immediately.
+- `/api/entries/me` does NOT filter by tier `isActive`; settled entries with `settledAt IS NOT NULL` are already excluded, and any leftover open entry in a now-retired tier still surfaces in Predict (ghost entry, harmless for WC since the pool is by definition settled when we retire it).
+
+### Steps to retire — exact change list
+
+After the WC pool flips to `settled`:
+
+**1. Edit `server/scripts/seed.ts`:**
+
+```ts
+// Add 'world-cup-2026' to the retired tier list.
+const RETIRED_TIER_SLUGS = ["pound", "world-cup-2026"] as const;
+```
+
+**2. In the same file, optionally set the WC competition to inactive** (stops the outcome-sync cron from making pointless football-data calls for a finished tournament — saves a few KB/day):
+
+```ts
+// In COMPETITIONS:
+{
+  externalId: "WC",
+  name: "World Cup 2026",
+  shortName: "World Cup",
+  slug: "world-cup-2026",
+  postponedPolicy: "forfeit",
+  season: 2026,
+  tiers: ["world-cup-2026"],
+  isActive: false,  // ← change from true to false
+},
+```
+
+**3. Verify locally** (optional, fast): `pnpm build` — sanity check no TS errors. No DB-touching commands locally; verification happens in Render.
+
+**4. Push + deploy.** Render rebuilds. The web service comes up; nothing user-visible changes yet because no seed has run.
+
+**5. Run `pnpm seed` in Render Shell.** This is the activation step. Expected log lines:
+
+```
+[seed] retired tier 'World Cup 2026' already deactivated  (if seed has run twice)
+  — or —
+[seed] retired tier 'World Cup 2026' deactivated  (first run)
+```
+
+Plus, if step 2 was done: `[seed] World Cup 2026 already exists (re-synced policy/isActive)`.
+
+**6. Verify the user-facing result.** On `/`:
+- WC card no longer appears in the "OPEN NOW / COMPETITIONS" list (the comp is filtered out because all its tiers are inactive).
+- PL and any other active comps remain unaffected.
+
+On `/account/history`:
+- Settled WC entries still appear with their final rank + payout (the history query joins on `pool_entries.settledAt`, not tier `isActive`).
+- `[Results →]` deep-links into the read-only `/predict/:entryId` still work.
+- `[Table →]` deep-links into the settled-state `/pools/:slug/:poolId/table` still work.
+
+On `/predict`:
+- No WC entries shown (all settled).
+- No TOURNAMENT section header (empty section auto-hides).
+
+### What MUST stay untouched
+
+Don't delete or update any of:
+
+- `pools` rows for `world-cup-2026` — the standalone table page at `/pools/world-cup-2026/{poolId}/table` and `/account/history` deep-link both rely on them.
+- `pool_entries` rows for `world-cup-2026` — same reason; final ranks + payouts live here.
+- `payments` rows tied to those entries — financial audit trail.
+- `events` + `event_outcomes` for the 104 WC matches — the read-only Predict screen pulls them for `/account/history`.
+- `competitions.world-cup-2026` row itself — even after `isActive=false`, the row stays so joined queries from `pool_entries` → `competitions` continue to resolve.
+- The `world-cup-2026` `leagues` row — same reason.
+
+In short: retirement is **isActive=false flips only**, never a delete.
+
+### Rollback if something goes wrong
+
+To un-retire (e.g. if a settlement audit needs to be re-run), reverse the seed config change and run `pnpm seed` again. The retired-tier loop only deactivates; it doesn't re-activate. So you'd need to either:
+- Remove `'world-cup-2026'` from `RETIRED_TIER_SLUGS` AND set `COMPETITIONS` entry back to `isActive: true`. The seed's tier-upsert path includes an `existing.isActive === false` re-activation branch (line ~200), so the tier will flip back to active on the next run.
+- Or manually update the `leagues` row in Postgres: `UPDATE leagues SET is_active = true WHERE slug = 'world-cup-2026';`.
+
+### Future tournaments (Euros 2028, WC 2030, etc.)
+
+The same pattern applies. For each new tournament:
+
+1. Add the competition to `COMPETITIONS` with `postponedPolicy: "forfeit"`, `isActive: true` (or `false` until close to kickoff).
+2. Add a dedicated tier to `TIERS` with the tournament's slug (e.g. `"euros-2028"`).
+3. Set `tiers: ["euros-2028"]` on the competition.
+4. Confirm the football-data code (`externalId`) and season number.
+5. `pnpm db:push` (no-op if no schema change) → `pnpm seed`.
+6. After the Final settles: add the tier slug to `RETIRED_TIER_SLUGS`, flip the competition to `isActive: false`, deploy, re-seed.
+
+The `RETIRED_TIER_SLUGS` array grows over time. That's fine — each slug only takes one `UPDATE` per seed run, and the list of retired tiers is itself useful audit metadata.

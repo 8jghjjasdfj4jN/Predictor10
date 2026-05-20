@@ -4,7 +4,7 @@
 
 ---
 
-# Predictor10 build — picking up at step 3a.4
+# Predictor10 build — picking up after step 3a.11 (World Cup UI complete)
 
 I'm a solo developer building Predictor10, a UK football score-prediction pool betting product. 3-person business forming around it. Targeting UKGC general pool betting licence (likely 2027 grant). **Build the real flow, mock the money** — payments table has `mode='mock'` until licence flip, then becomes `'live'`. Same code paths flip; no rewrites.
 
@@ -236,22 +236,77 @@ React 19 + TypeScript + Vite + Tailwind v4 + shadcn/ui frontend · Express on Re
 - `client/src/components/predictor10/PredictMatchRow.tsx` — `displayTeamName(null)` returns `"TBD"`. Aria-labels go via the same helper.
 - **Deployment**: Wez ran `pnpm db:push` (dropped NOT NULL on the two columns) then `pnpm seed` clean to end. WC now has 104 events (72 with real teams, 32 placeholder slots with null teams) + 1 pool. Verified via `/api/admin/state`.
 
-### Live deployment state (post step 3a.4)
+### Step 3a.5 — Outcome-sync per-comp season
+- `server/lib/outcome-sync.ts` — hardcoded `SEASON = 2025` removed. The 5-min cron now reads `competitions.externalSeasonId` per comp and fetches football-data with that season number. PL/Champ fetch 2025; WC fetches 2026. Also drops the `m.matchday != null` guard from the FD match loop — required so WC knockouts (which arrive with null matchday) get inserted on first fixture-refresh after seed.
+- One file. No schema change. Shipped + verified.
+
+### Step 3a.6 — Home redesign (competition cards)
+- `client/src/pages/portal/HomePage.tsx` — full rewrite. The old single-competition Round hero + live entries + tier list is gone. New layout per arch §8.1: "OPEN NOW / COMPETITIONS" header, one card per competition with an open Round. Card variant is discriminated by `comp.postponedPolicy`: `'wait'` → league-style card with tier explainer + "Choose your tier" CTA; `'forfeit'` → tournament card with "One bracket. One £30 entry. FT only — no ET, no penalties." copy + "Enter World Cup" CTA.
+- `server/lib/portal-data.ts` — `CompetitionDto` gains `postponedPolicy` field; `UserEntryDto` gains it too so the Predict tab can bucket by policy.
+- `client/src/lib/portal-api.ts` — mirror.
+- Live entries removed from Home entirely (now live exclusively on the Predict tab per arch §8.2 and Rule #18).
+
+### Step 3a.7 — `/enter/:competitionSlug` route
+- `client/src/pages/portal/EnterPage.tsx` — NEW. Single-screen entry-confirm flow for tournament-style competitions per arch §8.6.1. Reuses `LateEntryWarningModal` from step 2e. On Enter tap: POST `/api/pools/:id/enter` → on success redirect to `/predict/:entryId`. Already-entered users (entry exists with `settledAt IS NULL`) get a 302-equivalent client redirect on mount. League-style comps fall back to the tier picker (redirect to `/tables?comp=...`).
+- `client/src/App.tsx` — `/enter/:competitionSlug` route registered. `PORTAL_PATH` regex extended to include `enter` so logged-out users hitting this URL get bounced via `RedirectToLogin` (arch §7).
+
+### Step 3a.8 — Predict tab redesign (sections + progress)
+- `client/src/pages/portal/PredictPage.tsx` — full rewrite. "ACTIVE PLAY / YOUR LIVE ENTRIES" header (per arch §8.2). Three sections: **CLOSING SOON** (amber tint, `AlarmClock` icon, countdown when within 48h), **THIS ROUND** (league-style entries), **TOURNAMENT** (forfeit-policy entries — WC). Each card shows a progress bar (`{predictionsMade}/{matchesTotal}`) and a stage pill on tournament cards. Empty state copy points users to Home.
+- `server/lib/portal-data.ts` — `getUserOpenEntries` returns entries enriched with `postponedPolicy` (joined from `competitions`) so the client can bucket. `UserEntryDto` gains the field.
+
+### Step 3a.9 — Null-team gating in predict UI + server
+- `client/src/components/predictor10/PredictMatchRow.tsx` — new row variant `awaitingTeams`: when `homeTeam === null || awayTeam === null`, render "TBD" team names with disabled score inputs and a "Awaiting teams" meta tag. No score boxes rendered; tap is a no-op.
+- `server/routes/portal.ts` + `server/lib/portal.ts` — `upsertPrediction` now returns `EVENT_AWAITING_TEAMS` (HTTP 409) when either team is null on the target event. `PREDICTION_ERROR_MAP` extended with friendly copy for the client.
+- Combined effect: arch §13 Rule #17 is now enforced end-to-end. Players see the road ahead, can't predict blind, server refuses to record predictions on unresolved slots even if a stale client bypasses the input gate.
+
+### Step 3a.10 — Settlement gate forfeit branch
+- `server/lib/pool-settle.ts` — `findReadyPoolIds()` gate SQL extended. The original branch (every event finished / cancelled / void) still applies. New OR branch: `(competitions.postponed_policy = 'forfeit' AND events.status = 'postponed' AND events.kickoff_at <= NOW())` counts as "accounted for". A WC pool can now settle when all 104 matches are either FINISHED-with-outcomes OR POSTPONED-without-future-kickoff. Joins added: pools → stages → events → competitions.
+- No schema change. Manual verification deferred until first WC postponement occurs (or step 3a.11 walk-through).
+
+### Step 3a.10b — FT-only scoring for WC knockouts
+- `server/lib/fixture-sync.ts` — `FDMatch.score` type gains `duration: 'REGULAR' | 'EXTRA_TIME' | 'PENALTY_SHOOTOUT'`, `regularTime`, `extraTime`, `penalties` fields. New helper `extractRegulationScore(match)` returns `regularTime` when `duration !== 'REGULAR'`, else `fullTime`.
+- `server/lib/outcome-sync.ts` — uses the helper so any knockout that goes to ET or shootout is scored from the 90-minute result only (per arch §3 WC table + the locked decision "FT scores only for WC"). PL/Champ matches always have `duration='REGULAR'` so behaviour is unchanged.
+
+### Step 3a.11 — Persistent-after-entry Home + tab labelling + group letters
+Four user-visible refinements bundled together; all front-end, except the new `events.group_label` column.
+
+- **Persistent Home cards after entry** — replaces arch §8.1's "hide-on-entry" model. Wez's call after seeing the empty Home that resulted. `HomePage.tsx` rewritten with `CompState` model; `CardShell` accepts an `entered` prop that adds a brighter emerald border, bg tint, and inset ring. A "✓ You're in" line surfaces below the header with tier names. Smart CTA: 1 entry → `/predict/:entryId` direct; 2+ entries → `/predict` tab. Always-on secondary button — label adapts to enterable count (`Pick another tier` when `enterablePools.length > 0`, `View all tiers` when 0 — even on a fully-entered or late-entry-closed card, users can still browse standings).
+- **Fully-entered count bug fix** — comparing visible-entered count (`userEntries.filter(e => competition.pools.some(p => p.id === e.poolId))`) against `competition.pools.length`. Previously the "in all N tiers" line fired any time `enterablePools.length === 0`, which made retired-tier ghost entries flip a partially-entered card to look fully entered.
+- **Tab labelling for tournaments** — `getEntryDetail` matchday label is now `"Group MD"` for tournament-style comps (`competitionPostponedPolicy === 'forfeit'`), `"MD"` for ELC, `"GW"` for everything else. Null-matchday bucket label changes from `"Unscheduled"` to `"Knockout Stages"` for tournaments. Sort order also fixed: the null-matchday bucket sorts LAST (was first), so tabs read GW1 → GW2 → GW3 → Knockout Stages left-to-right.
+- **Group letter per match** — schema column `events.group_label varchar(16) nullable` added. `fixture-sync.ts` extracts it from football-data's `match.group` field via `normaliseGroupLabel("GROUP_A") → "A"`. Insert + update paths write it; seed's batched lookup + outcome-sync include it. `EntryMatchDto.groupLabel` flows through. `PredictMatchRow` renders "Group A" in the meta line on both editable and finished views. Knockouts and league matches stay null; meta line just omits the segment.
+- **Refresh bug fix** — `client/index.html` had a `<script src="%VITE_ANALYTICS_ENDPOINT%/umami">` block left over from never-set env vars; Vite was emitting the literal placeholder text. On iOS Chrome refresh the browser tried to load `https://predictor10.com/predict/%VITE_ANALYTICS_ENDPOINT%/umami` as a classic blocking script, which derailed boot on some refresh paths. Block removed entirely — analytics not wired up yet. **Wez confirmed reload now works.**
+- **Deployment**: Wez ran `pnpm db:push` (added `group_label` column) then `pnpm seed` (re-synced; group letters populated for all 72 WC group-stage matches, all PL/Champ matches stay null).
+
+### Step 3a.11+ — Knockout sub-headings + tournament-aware standings pill
+Deep-dive verification of World Cup parity with Premier League surfaced two improvements; both bundled together with the new `events.fd_stage` column.
+
+- **Knockout Stages tab sub-headings** — schema column `events.fd_stage varchar(32) nullable` added. `fixture-sync.ts` captures football-data's `match.stage` ("LAST_32" / "LAST_16" / "QUARTER_FINALS" / "SEMI_FINALS" / "THIRD_PLACE_PLAYOFF" / "FINAL" / "GROUP_STAGE"). Two new helpers: `knockoutStageOrder()` (sort key) and `knockoutStageDisplay()` ("Round of 32" / "Round of 16" / "Quarter-finals" / "Semi-finals" / "Third-place playoff" / "Final"). `EntryMatchDto.fdStage` flows through. `PoolDetailPage.groupedActive` branches: when `activeMatchday === -1` (Knockout Stages bucket), matches are stage-grouped under sub-headings instead of day-grouped. Other tabs unchanged.
+- **Tournament-aware standings status pill** — fixes a real bug found in the deep dive. `PoolTablePage` status pill used to read `"Round in progress · GW1 of 3"` for WC during group stage (using the wrong label) and `"Round complete · awaiting settlement"` during knockouts (wrong — null-matchday events were filtered out of the matchday rollup, so once group stage ended the system thought the round was over). New: `PoolEntriesPool.liveStatusLabel` field, computed server-side for tournament comps only. Values: `"Group MD2 of 3"` / `"Round of 32"` / `"Round of 16"` / `"Quarter-finals"` / `"Semi-finals"` / `"Third-place playoff"` / `"Final"` / `"Awaiting settlement"`. The client `StatusPill` prefers it when set; falls back to the matchday-driven label for league comps.
+- **Slot pairing placeholders DEFERRED** — Wez asked for "Winner Group A v Runner-up Group B" labels on knockout rows. Investigation confirmed via FIFA Annex C (Wikipedia: 2026 FIFA World Cup) that **495 possible combinations** exist for the 3rd-placed-team R32 slots, only resolving after group stage ends June 27. football-data sends `homeTeam: null` until then. Decision: skip the labels; the sub-headings already convey the bracket structure, and football-data will populate real team names automatically on June 27. Revisit only if a static FIFA bracket mapping table is desired (large, brittle, low-value for the seven days of "unknown" between group stage end and R32 kickoff).
+- **Deployment**: Wez ran `pnpm db:push` (added `fd_stage` column) then `pnpm seed` (populated for all 104 WC events + PL/Champ events as `"REGULAR_SEASON"`, harmless).
+
+
+### Live deployment state (post step 3a.11+)
 - Render web service deployed at `https://predictor10.com`. Build green.
 - **Render plan: Starter ($7/month)**. Always-on — no idle spin-down. Cold starts only occur on deploy / crash recovery. Single instance.
-- **Render Postgres state (verified via `/api/admin/state` on 20 May 2026)**:
-  - Schema includes `postponedPolicy` enum + column on competitions, nullable `home_team`/`away_team` on events
-  - 3 competitions: `premier-league` (active, wait, 9 stages, 380 events, 5 pools), `championship` (active, wait, 9 stages, 552 events, 0 pools — between seasons), `world-cup-2026` (active, forfeit, 1 stage, 104 events, 1 pool)
-  - 6 tiers (leagues): Pound £1 (inactive), Fiver £5, Tenner £10, Pony £25, Big One £50, World Cup 2026 £30 (all active except Pound)
-- **WC backend foundation is live, no user-visible change yet**. WC doesn't appear on Home, isn't reachable via `/enter/:competitionSlug` (route doesn't exist), no Predict TOURNAMENT section. PL/Champ behaviour identical to pre-3a.
-- **Active-tier prize structure**: 25% house fee, top 3 paid at 60/25/15 of the player pot. Identical across Fiver / Tenner / Pony / Big One / WC. **Pound's open pool still on legacy 70/20/10 with no commission** — deliberate, retired tier settles under original rules.
-- Wez has an entry in The Pound for Round 9 with `Aston Villa 2-2 Liverpool` saved. Round 9 settles Sun 24 May 2026. After 24 May, no Pound pool will ever be created again.
-- Round 9 league table viewable at `/pools/premier-league/{poolId}/table`.
+- **Render Postgres state**:
+  - Schema includes `postponedPolicy` enum + column on competitions, nullable `home_team`/`away_team` on events, `group_label` and `fd_stage` columns on events.
+  - 3 competitions: `premier-league` (active, wait, 9 stages, 380 events, 5 pools incl. retired Pound), `championship` (active, wait, 9 stages, 552 events, 0 pools — between seasons), `world-cup-2026` (active, forfeit, 1 stage, 104 events, 1 pool).
+  - 6 tiers (leagues): Pound £1 (inactive), Fiver £5, Tenner £10, Pony £25, Big One £50, World Cup 2026 £30.
+- **WC end-to-end live and verified parity with Premier League**:
+  - Home shows WC card with explainer + "Open World Cup" CTA.
+  - `/enter/world-cup-2026` confirm screen routes to entry.
+  - `/predict/:entryId` for WC shows tabs "Group MD1 / Group MD2 / Group MD3 / Knockout Stages".
+  - Group rows show group letter ("Group A · TIME · ..."). Knockout tab is grouped under sub-headings (Round of 32 / Round of 16 / Quarter-finals / Semi-finals / Third-place playoff / Final).
+  - Knockout rows render "TBD - TBD" with "Awaiting teams" copy + disabled inputs until FD populates real teams after group stage ends June 27.
+  - FT-only scoring confirmed in code path (`extractRegulationScore` reads `score.regularTime` when `duration !== 'REGULAR'`).
+  - League table at `/pools/world-cup-2026/{poolId}/table` shows entrants with tournament-aware status pill ("Round in progress · Group MD1 of 3" during group stage; "Round in progress · Round of 32" during R32; etc.).
+- **Active-tier prize structure**: 25% house fee, top 3 paid at 60/25/15 of the player pot. Identical across Fiver / Tenner / Pony / Big One / WC. **Pound's open pool still on legacy 70/20/10 with no commission** — deliberate, retired tier settles under original rules. Round 9 Pound settles Sun 24 May 2026; from Round 10 onwards no Pound pools are created.
 - Bottom nav: HOME / PREDICT / TABLES / ACCOUNT.
 - Render env vars: `DATABASE_URL`, `FOOTBALL_API_KEY`, `NODE_ENV`, `BYPASS_LATE_ENTRY=true`, `ADMIN_SECRET`, `SESSION_SECRET`. Optional: `DISABLE_SCHEDULER=true` pauses the in-process scheduler.
 - Node pinned `22.20.0` via `.nvmrc` + `engines.node`. Build command reads `corepack enable && pnpm install --frozen-lockfile && pnpm build` (verify in Render dashboard).
 - **Automated scheduler running in-process** (step 2o). Score sync every 5 min, pool settle every 15 min, both inside the Express server.
-- **iPhone refresh stability** (post step 2v): step 2v stripped Vite's `crossorigin` attribute from the production HTML and added an auto-fetch safety net. Boot-time inline error reporter (step 2r-2u) remains in place to capture any residual failure. Wez reported "intermittent" residual via WhatsApp on 20 May; no definitive diagnostic captured since. Monitor via the reporter; iterate on its output.
+- **iPhone refresh stability**: step 3a.11's analytics-script removal eliminated the boot-derailment vector. Wez confirmed reload works reliably.
 
 ## Decisions made in earlier chats — DO NOT relitigate
 
@@ -360,43 +415,46 @@ Carry forward, none urgent for the next step:
 - **Render deploys with `--frozen-lockfile`** (target — see follow-up flag above). Whenever `package.json` changes, ship `pnpm-lock.yaml` in the same batch or the build fails with `ERR_PNPM_OUTDATED_LOCKFILE`.
 - **Schema changes need `pnpm db:push` after deploy** (drizzle-kit syncs schema → live Postgres). Flag this explicitly whenever a step touches `server/db/schema/`. If matchday is missing or any new column is missing, the user has likely skipped this step.
 
-## What's next — step 3a continuation
+## What's next — post step 3a
 
-**Step 3a is in flight.** The WC backend foundation (3a.1-3a.4) shipped and is verified live on 20 May 2026. WC has 104 events + 1 pool in production but no UI yet, so users can't see or enter it. Remaining sub-steps in suggested order — Wez picks which to tackle next:
+**World Cup feature work is complete.** The remaining items are operational (retirement after the Final) plus carried-forward features that aren't WC-specific.
 
-- **3a.5 — Outcome-sync WC-aware**. `server/lib/outcome-sync.ts` still uses a hardcoded `SEASON = 2025` constant. The 5-min cron iterates `competitions.isActive=true` and fetches FD with that constant, so WC currently fetches season 2025 (returns no matches, no harm done but no live refresh either). Change: replace `SEASON` with `comp.externalSeasonId` from the DB row (parsed to number); also handle null matchdays for tournament comps (call `roundForMatchday(code, null)` which now returns the "all" round). Group stage starts 11 June — must ship this before then for live FT scores on WC.
+### Operational — World Cup retirement (after the Final settles, ~22 July 2026)
 
-- **3a.6 — Home redesign per arch §8.1**. Replace `client/src/pages/portal/HomePage.tsx` single-competition Round-header + live entries + tier list with a list of competition cards (one per open competition). PL-style card routes to tier picker (Tables); WC-style card routes to `/enter/world-cup-2026`. Live entries removed from Home entirely. Mockup ready at `mockup-home.html` if Wez still has it. **First user-visible change in step 3a.**
+When the WC Final settles and the pool reaches `status='settled'`, the comp + tier should be retired from the active surfaces. Existing entries stay accessible via `/account/history`. **See `docs/portal-architecture.md` §15 for the full retirement runbook.** Summary:
 
-- **3a.7 — `/enter/:competitionSlug` confirm screen per arch §8.6.1**. New route. Single-screen explainer + dynamic prize breakdown + one Enter CTA. POST-entry redirect → `/predict/:entryId`. Already-entered → 302 to existing entry. Late-entry-closed → CTA disabled. Mockup copy is in arch §8.6.1.
+1. After the WC pool flips to `settled`, edit `server/scripts/seed.ts`:
+   - Add `"world-cup-2026"` to `RETIRED_TIER_SLUGS`.
+   - Optionally set `COMPETITIONS` entry for `world-cup-2026` to `isActive: false` (stops football-data fetches after the tournament ends).
+2. Push the change. Deploy.
+3. Run `pnpm seed` in Render Shell. The seed will flip the WC tier to `isActive: false`; existing pool / entries / payments rows are untouched.
+4. Verify on `/`: WC card no longer appears. Verify on `/account/history`: settled WC entries still listed with final rank + payout.
 
-- **3a.8 — Predict tab refresh per arch §8.2**. Add persistent "YOUR LIVE ENTRIES" header. Add TOURNAMENT section group. WC entry cards surface current stage state ("Group Stage · MD2 in play", "Knockouts · QFs"). Mockup ready at `mockup-predict.html`.
+No schema changes required. No code-path changes required outside seed config.
 
-- **3a.9 — Predict screen placeholder team gating per arch §13 Rule #17**. Predict inputs on `/predict/:entryId` must disable when `homeTeam` or `awayTeam` is null. Render "Awaiting teams" copy in place of score inputs. Predictions can't be saved server-side for null-team events either — add a guard to `PUT /api/entries/:entryId/predictions/:eventId`. Today nothing routes a user to a WC predict screen so this isn't user-visible-broken, but it must land before 3a.7 ships so the entry-confirm CTA path doesn't lead to a broken-looking screen.
+### Carried-forward (lower priority, not WC-related)
 
-- **3a.10 — Settlement gate forfeit branch per arch §13 Rule #16**. `server/lib/pool-settle.ts` currently treats `postponed` events as blockers for every comp. New branch: when the pool's competition has `postponedPolicy='forfeit'`, treat a postponed-without-future-kickoff event as "accounted for" with 0 pts. Required before WC pool can settle (~22 July 2026). Not urgent for May/June.
-
-Plus carried-forward items from earlier sessions (not WC-related, lower priority right now):
-
-- **Tie-break visualisation in standings** — when two players have the same points, surface *why* one is ranked higher (more exact scores → more correct results → tied split). Currently the data is in the table (Exact / Res columns) and the tie-break rule is in the footer, but there's no visual cue tying them together. Add a subtle indicator (column highlight, tiny `↑`, or grouped bracket) for tied clusters in `PoolStandingsTable.tsx`. Discussed but deferred.
+- **Tie-break visualisation in standings** — when two players have the same points, surface *why* one is ranked higher (more exact scores → more correct results → tied split). Currently the data is in the table (Exact / Res columns) and the tie-break rule is in the footer, but there's no visual cue tying them together. Add a subtle indicator (column highlight, tiny `↑`, or grouped bracket) for tied clusters in `PoolStandingsTable.tsx`.
 - **Tables tab deep links** — `/tables/:competitionSlug/:tierSlug` (or `?comp=&tier=` query) so Home's Available Tier rows land on the right tier in one tap.
-- **Resend + email verification** — signup currently creates an unverified account. Wire up `RESEND_API_KEY`, transactional templates, magic-link flow.
-- **`pool_entries` unique index `(pool_id, user_id)`** — DB-level Decided Rule #2 enforcement, closing the concurrent-double-tap race. Pre-launch blocker eventually.
+- **Resend + email verification** — signup currently creates an unverified account. Wire up `RESEND_API_KEY`, transactional templates, magic-link flow. **Pre-launch blocker.**
+- **`pool_entries` unique index `(pool_id, user_id)`** — DB-level Decided Rule #2 enforcement, closing the concurrent-double-tap race. **Pre-launch blocker eventually.**
 - **Marketing tier name alignment** — `leagueTiers` mock data still uses old branding (Matchday Five / Premier Ten / Grand Twenty / Elite Fifty at £5/£10/£20/£50). Should align with portal reality (Fiver / Tenner / Pony / Big One at £5/£10/£25/£50).
 - **Live in-play scores** — currently locked matches stay locked through the match with no live score visible; users see their prediction then jump straight to FT result after the scheduler fires. Real in-play score display (HT, 60', live goals) worth queueing for pre-launch.
-- **App store wrap (Capacitor)** — eventually, for Google Play and Apple App Store delivery. Gated on UKGC licence, KYC, responsible-gambling tooling, real payments.
+- **Render build command tightening to `--frozen-lockfile`** — verify the dashboard setting.
+- **Predict screen progress denominator includes null-team events** (cosmetic) — auto-corrects as bracket fills, but a fully-entered WC entry will read "72 / 104" until R32 teams populate. Not breaking.
+- **Capacitor app store wrap** — eventually, for Google Play and Apple App Store delivery. Gated on UKGC licence, KYC, responsible-gambling tooling, real payments.
 
-Routes as of step 3a.4 (no client changes from 3a yet):
+Routes as of step 3a.11+:
 | URL | Page |
 |---|---|
-| `/` | Home (logged-in: portal Home — still single-comp layout until 3a.6) |
-| `/predict` | Predict tab — list of entries (no TOURNAMENT section yet) |
-| `/predict/:entryId` | Prediction screen |
-| `/tables` | Tables tab |
-| `/enter/:competitionSlug` | **Planned (3a.7) — does not exist yet** |
-| `/pools/:slug/:poolId` | Legacy redirect → `/predict/:entryId` |
-| `/pools/:slug/:poolId/table` | Standalone league table |
-| `/pools`, `/pools/:slug` | Legacy redirect → `/tables` |
+| `/` | Home — competition cards (one per open comp, persistent-after-entry visual state) |
+| `/predict` | Predict tab — YOUR LIVE ENTRIES, three sections (Closing Soon / This Round / Tournament) |
+| `/predict/:entryId` | Prediction screen — group letters on rows, knockout sub-headings (Round of 32, etc.) for tournament comps |
+| `/tables` | Tables tab — competition pills + tier sub-tabs + per-tier standings |
+| `/enter/:competitionSlug` | Tournament entry confirm (currently only `world-cup-2026`) |
+| `/pools/:slug/:poolId/table` | Standalone league table with tournament-aware status pill |
+| `/pools/:slug/:poolId` | Legacy — redirects to `/predict/:entryId` (kept for old links) |
+| `/pools`, `/pools/:slug` | Legacy — redirect to `/tables` |
 | `/account`, `/account/history` | unchanged |
 | `/login`, `/register` | unchanged |
 
@@ -405,12 +463,11 @@ Admin endpoints (server-only, token-gated):
 |---|---|
 | `POST /api/admin/sync-outcomes` | Manual outcome-sync trigger |
 | `POST /api/admin/settle-pools` | Manual pool-settle trigger |
-| `GET /api/admin/state` | **New in 3a.2.** DB inventory: competitions + tiers + counts. Token via `X-Admin-Token` header OR `?token=` query (browser-friendly) |
+| `GET /api/admin/state` | DB inventory: competitions + tiers + counts. Token via `X-Admin-Token` header OR `?token=` query (browser-friendly) |
 
 ## What to do first
 
 1. Read all three docs in `/docs/` (architecture first, then this handoff, then roadmap).
-2. Skim recent file edits — `server/scripts/seed.ts`, `server/lib/fixture-sync.ts`, `server/lib/rounds.ts`, `server/db/schema/sports.ts`, `server/routes/admin.ts`. These are where step 3a's backend work landed.
-3. Ask Wez what's next (most likely 3a.5 outcome-sync or 3a.6 Home redesign).
-4. Propose your file plan in tabular form with folder paths.
-5. Wait for "go" before bulk-changing files.
+2. Skim recent file edits — particularly `server/scripts/seed.ts`, `server/lib/fixture-sync.ts`, `server/lib/portal-data.ts`, `client/src/pages/portal/HomePage.tsx`, `client/src/pages/portal/PoolDetailPage.tsx`. These cover the step 3a changes.
+3. Ask Wez what's next. If it's WC retirement, see arch §15. If something else, propose your file plan in tabular form with folder paths.
+4. Wait for "go" before bulk-changing files.
