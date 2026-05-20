@@ -368,10 +368,51 @@ function EnteredView({ entryId }: { entryId: string }) {
     [],
   );
 
-  // Group the active GW's matches by day for the day-headers.
+  // Group the active GW's matches for the row list.
+  //   - Numbered matchdays (group-stage GWs + league rounds): day-grouped
+  //     so rows sit under "FRI 12 JUN" / "SAT 13 JUN" headers.
+  //   - Knockout Stages bucket (matchday === -1, tournament comps):
+  //     stage-grouped so rows sit under "Round of 32" / "Round of 16" /
+  //     "Quarter-finals" / "Semi-finals" / "Third-place playoff" / "Final"
+  //     headers. Stages render in tournament order regardless of when
+  //     football-data slots in kickoffs.
   const groupedActive = useMemo(() => {
     if (!entry || activeMatchday === null) return [];
     const active = entry.matches.filter((m) => (m.matchday ?? -1) === activeMatchday);
+
+    // Knockouts path — group by fdStage with a canonical sort order.
+    if (activeMatchday === -1) {
+      const stageOrder: Record<string, number> = {
+        LAST_32: 1,
+        LAST_16: 2,
+        QUARTER_FINALS: 3,
+        SEMI_FINALS: 4,
+        THIRD_PLACE_PLAYOFF: 5,
+        FINAL: 6,
+      };
+      const stageDisplay: Record<string, string> = {
+        LAST_32: "Round of 32",
+        LAST_16: "Round of 16",
+        QUARTER_FINALS: "Quarter-finals",
+        SEMI_FINALS: "Semi-finals",
+        THIRD_PLACE_PLAYOFF: "Third-place playoff",
+        FINAL: "Final",
+      };
+      const byStage = new Map<string, EntryMatch[]>();
+      for (const m of active) {
+        const key = m.fdStage ?? "OTHER";
+        if (!byStage.has(key)) byStage.set(key, []);
+        byStage.get(key)!.push(m);
+      }
+      return [...byStage.entries()]
+        .sort((a, b) => (stageOrder[a[0]] ?? 99) - (stageOrder[b[0]] ?? 99))
+        .map(([key, matches]) => ({
+          dayLabel: stageDisplay[key] ?? "Other",
+          matches,
+        }));
+    }
+
+    // Default path — day-grouped.
     const groups: { dayLabel: string; matches: EntryMatch[] }[] = [];
     for (const m of active) {
       const dayLabel = formatDayHeader(m.kickoffAt);

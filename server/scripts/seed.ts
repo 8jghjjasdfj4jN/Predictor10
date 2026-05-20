@@ -320,6 +320,9 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
             // Pulled so the upsert helper can detect group-label changes
             // (e.g. FD assigning groups after first fixture release).
             groupLabel: events.groupLabel,
+            // Same for fd_stage, used by the Predict screen to group
+            // knockout matches under sub-headings.
+            fdStage: events.fdStage,
           })
           .from(events)
           .where(inArray(events.externalId, allExtIds))
@@ -390,6 +393,7 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
                 homeTeam: existing.homeTeam,
                 awayTeam: existing.awayTeam,
                 groupLabel: existing.groupLabel,
+                fdStage: existing.fdStage,
               }
             : null,
         });

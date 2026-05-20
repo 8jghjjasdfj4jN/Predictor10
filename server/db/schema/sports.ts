@@ -115,6 +115,14 @@ export const events = pgTable(
     // stripped of the "GROUP_" prefix.
     groupLabel: varchar("group_label", { length: 16 }),
 
+    // Tournament stage name from football-data (e.g. "GROUP_STAGE",
+    // "LAST_32", "LAST_16", "QUARTER_FINALS", "SEMI_FINALS",
+    // "THIRD_PLACE_PLAYOFF", "FINAL"). Used by the Predict screen to group
+    // knockout matches under sub-headings (Round of 32, Round of 16, etc.)
+    // and by the standings status pill to surface "Round of 32 in play"
+    // style copy for tournament comps. Null for league-style matches.
+    fdStage: varchar("fd_stage", { length: 32 }),
+
     status: eventStatusEnum("status").default("scheduled").notNull(),
 
     // Server-enforced lock — predictions refused after this time

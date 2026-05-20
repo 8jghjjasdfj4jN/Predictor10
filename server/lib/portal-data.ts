@@ -683,6 +683,11 @@ export type EntryMatchDto = {
   // knockouts and league matches. Surfaced on the predict row meta line
   // when set.
   groupLabel: string | null;
+  // Tournament stage from football-data ("LAST_32", "LAST_16",
+  // "QUARTER_FINALS", "SEMI_FINALS", "THIRD_PLACE_PLAYOFF", "FINAL", or
+  // "GROUP_STAGE" for group matches; null for league matches). The Predict
+  // screen uses this to render sub-headings in the Knockout Stages tab.
+  fdStage: string | null;
   kickoffAt: string;
   predictionLockAt: string;
   isLocked: boolean; // predictionLockAt <= now
@@ -810,6 +815,7 @@ export async function getEntryDetail(
       homeTeamShort: events.homeTeamShort,
       awayTeamShort: events.awayTeamShort,
       groupLabel: events.groupLabel,
+      fdStage: events.fdStage,
       kickoffAt: events.kickoffAt,
       predictionLockAt: events.predictionLockAt,
       status: events.status,
@@ -860,6 +866,7 @@ export async function getEntryDetail(
     homeTeamShort: e.homeTeamShort,
     awayTeamShort: e.awayTeamShort,
     groupLabel: e.groupLabel,
+    fdStage: e.fdStage,
     kickoffAt: e.kickoffAt.toISOString(),
     predictionLockAt: e.predictionLockAt.toISOString(),
     isLocked: e.predictionLockAt.getTime() <= now,
@@ -1309,6 +1316,7 @@ export async function getPoolEntries(
       competitionName: competitions.name,
       competitionSlug: competitions.slug,
       competitionExternalId: competitions.externalId,
+      competitionPostponedPolicy: competitions.postponedPolicy,
       tierName: leagues.name,
     })
     .from(pools)
@@ -1426,6 +1434,90 @@ export async function getPoolEntries(
   const matchdayLabel: "GW" | "MD" =
     meta.competitionExternalId === "ELC" ? "MD" : "GW";
 
+  // ── Tournament-aware status pill label ──────────────────────────────
+  // For tournament-style comps (e.g. WC 2026), the matchday-based "GW2 of
+  // 3" model breaks down once group stage ends: knockouts have no
+  // matchday, so the existing rollup (which filters out null-matchday
+  // events) shows "Round complete · awaiting settlement" while knockouts
+  // are still being played. We compute a tournament-specific string here
+  // and override on the client. Null for league comps — they keep the
+  // existing matchday-driven logic.
+  let liveStatusLabel: string | null = null;
+  const isTournament = meta.competitionPostponedPolicy === "forfeit";
+  if (isTournament && !isSettled) {
+    const allRows = await db
+      .select({
+        matchday: events.matchday,
+        fdStage: events.fdStage,
+        nonTerminal: sql<number>`COUNT(*) FILTER (WHERE ${events.status} NOT IN ('finished','cancelled','void'))::int`,
+      })
+      .from(events)
+      .where(eq(events.stageId, meta.stageId))
+      .groupBy(events.matchday, events.fdStage);
+
+    const totalNonTerminal = allRows.reduce(
+      (sum, r) => sum + Number(r.nonTerminal),
+      0,
+    );
+
+    if (totalNonTerminal === 0) {
+      liveStatusLabel = "Awaiting settlement";
+    } else {
+      // Stage order — earliest-active stage wins.
+      const stageOrder = [
+        "GROUP_STAGE",
+        "LAST_32",
+        "LAST_16",
+        "QUARTER_FINALS",
+        "SEMI_FINALS",
+        "THIRD_PLACE_PLAYOFF",
+        "FINAL",
+      ];
+      const stagesWithNonTerminal = new Set(
+        allRows
+          .filter((r) => Number(r.nonTerminal) > 0)
+          .map((r) => r.fdStage)
+          .filter((s): s is string => s !== null),
+      );
+      const earliest =
+        stageOrder.find((s) => stagesWithNonTerminal.has(s)) ?? null;
+
+      if (earliest === "GROUP_STAGE") {
+        // Subdivide by matchday so we get "Group MD2 of 3".
+        const groupMatchdays = allRows
+          .filter(
+            (r) => r.fdStage === "GROUP_STAGE" && Number(r.nonTerminal) > 0,
+          )
+          .map((r) => r.matchday)
+          .filter((m): m is number => m !== null);
+        const totalGroupMatchdays = allRows.filter(
+          (r) => r.fdStage === "GROUP_STAGE" && r.matchday !== null,
+        ).length;
+        if (groupMatchdays.length > 0 && totalGroupMatchdays > 0) {
+          const minMatchday = Math.min(...groupMatchdays);
+          liveStatusLabel = `Group MD${minMatchday} of ${totalGroupMatchdays}`;
+        } else {
+          liveStatusLabel = "Group stage";
+        }
+      } else if (earliest) {
+        // Knockout stages — display label maps via the fixture-sync helper.
+        const display: Record<string, string> = {
+          LAST_32: "Round of 32",
+          LAST_16: "Round of 16",
+          QUARTER_FINALS: "Quarter-finals",
+          SEMI_FINALS: "Semi-finals",
+          THIRD_PLACE_PLAYOFF: "Third-place playoff",
+          FINAL: "Final",
+        };
+        liveStatusLabel = display[earliest] ?? "Knockouts in play";
+      } else {
+        // Some matches still non-terminal but no fdStage on any of them —
+        // pre-stage-populate edge case. Soft fallback.
+        liveStatusLabel = "In progress";
+      }
+    }
+  }
+
   return {
     ok: true,
     data: {
@@ -1441,6 +1533,7 @@ export async function getPoolEntries(
         settledAt: isSettled ? meta.poolUpdatedAt.toISOString() : null,
         currentMatchdayOrdinal,
         totalMatchdays,
+        liveStatusLabel,
       },
       viewer: {
         isEntrant: viewerUserId !== null && entryDtos.some((e) => e.isYou),

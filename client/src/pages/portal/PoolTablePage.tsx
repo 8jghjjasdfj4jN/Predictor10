@@ -74,13 +74,22 @@ function BackLink({ to }: { to: string }) {
 
 function StatusPill({ pool }: { pool: PoolEntriesPool }) {
   const isSettled = pool.status === "settled";
+  // Tournament-style comps supply a server-computed liveStatusLabel that
+  // handles knockouts correctly (the matchday-based fallback breaks down
+  // there because knockouts have no matchday). League comps stay on the
+  // matchday-driven path.
+  const liveLabel = pool.liveStatusLabel
+    ? pool.liveStatusLabel === "Awaiting settlement"
+      ? "Round complete · awaiting settlement"
+      : `Round in progress · ${pool.liveStatusLabel}`
+    : pool.currentMatchdayOrdinal !== null
+      ? `Round in progress · ${pool.matchdayLabel}${pool.currentMatchdayOrdinal} of ${pool.totalMatchdays}`
+      : "Round complete · awaiting settlement";
   const label = isSettled
     ? pool.settledAt
       ? `Final · Settled ${formatSettledDate(pool.settledAt)}`
       : "Final"
-    : pool.currentMatchdayOrdinal !== null
-      ? `Round in progress · ${pool.matchdayLabel}${pool.currentMatchdayOrdinal} of ${pool.totalMatchdays}`
-      : "Round complete · awaiting settlement";
+    : liveLabel;
 
   return (
     <div

@@ -88,6 +88,43 @@ export function normaliseGroupLabel(value: string | null | undefined): string | 
 }
 
 /**
+ * Sort order for knockout-stage display, lowest = earliest in tournament.
+ * Used by the Predict screen to render Round of 32 above Round of 16,
+ * Quarter-finals above Semi-finals, etc.
+ *
+ * Group-stage matches return 0 — they're handled via matchday and don't
+ * mix with knockouts in the Knockout Stages tab.
+ */
+export function knockoutStageOrder(fdStage: string | null | undefined): number {
+  switch (fdStage) {
+    case "LAST_32":              return 1;
+    case "LAST_16":              return 2;
+    case "QUARTER_FINALS":       return 3;
+    case "SEMI_FINALS":          return 4;
+    case "THIRD_PLACE_PLAYOFF":  return 5;
+    case "FINAL":                return 6;
+    default:                     return 0;
+  }
+}
+
+/**
+ * Human display label for a tournament stage. Null for unknown / non-
+ * tournament stages — client uses this to render Knockout Stages
+ * sub-headings.
+ */
+export function knockoutStageDisplay(fdStage: string | null | undefined): string | null {
+  switch (fdStage) {
+    case "LAST_32":              return "Round of 32";
+    case "LAST_16":              return "Round of 16";
+    case "QUARTER_FINALS":       return "Quarter-finals";
+    case "SEMI_FINALS":          return "Semi-finals";
+    case "THIRD_PLACE_PLAYOFF":  return "Third-place playoff";
+    case "FINAL":                return "Final";
+    default:                     return null;
+  }
+}
+
+/**
  * Returns the 90-minute (regulation-time only) score for a finished match,
  * or `null` if no usable score is present.
  *
@@ -216,6 +253,9 @@ export type UpsertEventInput = {
     // group_label needs writing. Callers that don't pass it get an
     // always-overwrite-on-other-changes behaviour (still safe).
     groupLabel?: string | null;
+    // Optional — same idea for fd_stage; populated by the seed +
+    // outcome-sync existing-row lookup.
+    fdStage?: string | null;
   } | null;
 };
 
@@ -267,6 +307,7 @@ export async function upsertEventFromFootballData(
         venue: fdMatch.venue ?? null,
         matchday: fdMatch.matchday,
         groupLabel: normaliseGroupLabel(fdMatch.group),
+        fdStage: fdMatch.stage ?? null,
         status,
         predictionLockAt: lockAt,
         lastSyncedAt: now,
@@ -307,14 +348,20 @@ export async function upsertEventFromFootballData(
     existing.groupLabel === undefined
       ? true
       : (existing.groupLabel ?? null) === fdGroupLabel;
-  if (kickoffUnchanged && matchdayUnchanged && statusUnchanged && teamsUnchanged && groupUnchanged) {
+  // Same idea for fd_stage — tracked only when caller passes it.
+  const fdStageValue = fdMatch.stage ?? null;
+  const stageUnchanged =
+    existing.fdStage === undefined
+      ? true
+      : (existing.fdStage ?? null) === fdStageValue;
+  if (kickoffUnchanged && matchdayUnchanged && statusUnchanged && teamsUnchanged && groupUnchanged && stageUnchanged) {
     return { action: "unchanged", eventId: existing.id };
   }
 
   // Something material changed — refresh kickoff, lock, matchday, status.
   // Team names + shorts also update for the bracket fill-in case (step 3a.4).
-  // Group label updates too — football-data sometimes assigns groups after
-  // initial fixture release.
+  // Group label + fd_stage update too — football-data sometimes assigns
+  // groups / stage strings after initial fixture release.
   // Venue still left alone: it gets set on insert and rarely changes; if it
   // ever did, that smells like a different event entirely — investigate.
   await db
@@ -328,6 +375,7 @@ export async function upsertEventFromFootballData(
       predictionLockAt: lockAt,
       matchday: fdMatch.matchday,
       groupLabel: fdGroupLabel,
+      fdStage: fdStageValue,
       status,
       lastSyncedAt: now,
     })

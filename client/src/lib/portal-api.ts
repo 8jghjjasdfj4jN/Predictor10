@@ -138,6 +138,13 @@ export type EntryMatch = {
   awayTeamShort: string | null;
   /** "A", "B", ... "L" for tournament group-stage matches. Null otherwise. */
   groupLabel: string | null;
+  /**
+   * Football-data stage string. "GROUP_STAGE" for group matches; "LAST_32",
+   * "LAST_16", "QUARTER_FINALS", "SEMI_FINALS", "THIRD_PLACE_PLAYOFF" or
+   * "FINAL" for knockouts. Null for league matches. The Predict screen
+   * uses this to render sub-headings in the Knockout Stages tab.
+   */
+  fdStage: string | null;
   kickoffAt: string;
   predictionLockAt: string;
   isLocked: boolean;
@@ -370,6 +377,16 @@ export type PoolEntriesPool = {
   settledAt: string | null;
   currentMatchdayOrdinal: number | null;
   totalMatchdays: number;
+  /**
+   * Tournament-aware status pill label. Set for tournament-style comps
+   * (e.g. World Cup) where the matchday-based "GW2 of 3" model breaks
+   * down during knockouts. Values: "Group MD2 of 3", "Round of 32",
+   * "Round of 16", "Quarter-finals", "Semi-finals", "Third-place
+   * playoff", "Final", or "Awaiting settlement". Null for league comps
+   * (client falls back to matchdayLabel + currentMatchdayOrdinal +
+   * totalMatchdays as before).
+   */
+  liveStatusLabel: string | null;
 };
 
 export type PoolEntriesPayload = {

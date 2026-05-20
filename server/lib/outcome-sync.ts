@@ -182,6 +182,7 @@ export async function syncOutcomes(): Promise<SyncResult> {
         homeTeam: events.homeTeam,
         awayTeam: events.awayTeam,
         groupLabel: events.groupLabel,
+        fdStage: events.fdStage,
       })
       .from(events)
       .where(inArray(events.externalId, extIds));
@@ -220,6 +221,7 @@ export async function syncOutcomes(): Promise<SyncResult> {
               homeTeam: ours.homeTeam,
               awayTeam: ours.awayTeam,
               groupLabel: ours.groupLabel,
+              fdStage: ours.fdStage,
             }
           : null,
       });
