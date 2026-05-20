@@ -136,6 +136,8 @@ export type EntryMatch = {
   awayTeam: string | null;
   homeTeamShort: string | null;
   awayTeamShort: string | null;
+  /** "A", "B", ... "L" for tournament group-stage matches. Null otherwise. */
+  groupLabel: string | null;
   kickoffAt: string;
   predictionLockAt: string;
   isLocked: boolean;

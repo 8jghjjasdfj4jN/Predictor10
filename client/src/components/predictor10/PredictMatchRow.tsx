@@ -208,6 +208,12 @@ function FinishedView({ match }: { match: EntryMatch }) {
       </div>
 
       <div className="mt-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-['Manrope'] text-[0.7rem] text-white/55">
+        {match.groupLabel && (
+          <>
+            <span className="font-semibold text-emerald-200/75">Group {match.groupLabel}</span>
+            <span aria-hidden className="text-white/20">·</span>
+          </>
+        )}
         <span className="font-semibold text-emerald-300/85">FT</span>
         <span aria-hidden className="text-white/20">·</span>
         {pred ? (
@@ -362,8 +368,14 @@ function EditableOrLockedView({
         </div>
       </div>
 
-      <div className="mt-1.5 flex items-center justify-center gap-2 font-['Manrope'] text-[0.7rem] text-white/45">
+      <div className="mt-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-['Manrope'] text-[0.7rem] text-white/45">
         <span>{formatKickoff(match.kickoffAt)}</span>
+        {match.groupLabel && (
+          <>
+            <span aria-hidden className="text-white/20">·</span>
+            <span className="font-semibold text-emerald-200/75">Group {match.groupLabel}</span>
+          </>
+        )}
         {metaTag && (
           <>
             <span aria-hidden className="text-white/20">·</span>

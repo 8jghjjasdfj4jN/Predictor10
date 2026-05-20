@@ -679,6 +679,10 @@ export type EntryMatchDto = {
   awayTeam: string | null;
   homeTeamShort: string | null;
   awayTeamShort: string | null;
+  // Tournament group label ("A", "B", ... "L" for WC 2026), or null for
+  // knockouts and league matches. Surfaced on the predict row meta line
+  // when set.
+  groupLabel: string | null;
   kickoffAt: string;
   predictionLockAt: string;
   isLocked: boolean; // predictionLockAt <= now
@@ -805,6 +809,7 @@ export async function getEntryDetail(
       awayTeam: events.awayTeam,
       homeTeamShort: events.homeTeamShort,
       awayTeamShort: events.awayTeamShort,
+      groupLabel: events.groupLabel,
       kickoffAt: events.kickoffAt,
       predictionLockAt: events.predictionLockAt,
       status: events.status,
@@ -854,6 +859,7 @@ export async function getEntryDetail(
     awayTeam: e.awayTeam,
     homeTeamShort: e.homeTeamShort,
     awayTeamShort: e.awayTeamShort,
+    groupLabel: e.groupLabel,
     kickoffAt: e.kickoffAt.toISOString(),
     predictionLockAt: e.predictionLockAt.toISOString(),
     isLocked: e.predictionLockAt.getTime() <= now,
@@ -879,8 +885,12 @@ export async function getEntryDetail(
   //                 so the group-stage matchdays read in chronological
   //                 order on the left.
   const externalCode = row.competitionExternalId ?? "";
-  const matchdayLabel = externalCode === "ELC" ? "MD" : "GW";
   const isTournamentStyle = row.competitionPostponedPolicy === "forfeit";
+  const matchdayLabel = isTournamentStyle
+    ? "Group MD"
+    : externalCode === "ELC"
+      ? "MD"
+      : "GW";
   const nullBucketLabel = isTournamentStyle ? "Knockout Stages" : "Unscheduled";
 
   const byMatchday = new Map<number, EntryMatchDto[]>();

@@ -179,6 +179,9 @@ export async function syncOutcomes(): Promise<SyncResult> {
         status: events.status,
         kickoffAt: events.kickoffAt,
         matchday: events.matchday,
+        homeTeam: events.homeTeam,
+        awayTeam: events.awayTeam,
+        groupLabel: events.groupLabel,
       })
       .from(events)
       .where(inArray(events.externalId, extIds));
@@ -214,6 +217,9 @@ export async function syncOutcomes(): Promise<SyncResult> {
               status: ours.status as InternalEventStatus,
               kickoffAt: ours.kickoffAt,
               matchday: ours.matchday,
+              homeTeam: ours.homeTeam,
+              awayTeam: ours.awayTeam,
+              groupLabel: ours.groupLabel,
             }
           : null,
       });

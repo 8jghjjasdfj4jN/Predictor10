@@ -109,6 +109,12 @@ export const events = pgTable(
     // groups it into a "TBD" bucket if it ever happens.
     matchday: integer("matchday"),
 
+    // Tournament group label ("A", "B", ... "L" for WC 2026). Populated for
+    // group-stage matches only; null for knockouts and for league-style
+    // matches (PL / Champ). Source: football-data's `match.group` field,
+    // stripped of the "GROUP_" prefix.
+    groupLabel: varchar("group_label", { length: 16 }),
+
     status: eventStatusEnum("status").default("scheduled").notNull(),
 
     // Server-enforced lock — predictions refused after this time

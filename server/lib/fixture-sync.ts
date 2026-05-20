@@ -42,6 +42,16 @@ export type FDMatch = {
   lastUpdated?: string;
   status: FDStatus;
   matchday: number | null;
+  // Tournament-only fields. football-data sends `stage` on every match and
+  // `group` only on group-stage matches.
+  //   stage: "GROUP_STAGE" | "LAST_32" | "LAST_16" | "QUARTER_FINALS" |
+  //          "SEMI_FINALS" | "THIRD_PLACE_PLAYOFF" | "FINAL" | ...
+  //   group: "GROUP_A" | "GROUP_B" | ... | null  (null for knockouts)
+  // For PL / Champ (regular season), `stage` is "REGULAR_SEASON" and
+  // `group` is null. We persist a normalised group label ("A", "B"…) on
+  // events.group_label so the predict UI can show "Group A" per row.
+  stage?: string | null;
+  group?: string | null;
   // Tournament knockout fixtures may have null homeTeam/awayTeam until the
   // prior round resolves — football-data sends `null` for the slot, not a
   // placeholder object. Step 3a.4 made the schema columns nullable to match.
@@ -61,6 +71,21 @@ export type FDMatch = {
     penalties?: { home: number | null; away: number | null };
   };
 };
+
+/**
+ * Normalise football-data's group string to a short label.
+ *   "GROUP_A" → "A"
+ *   "GROUP_F" → "F"
+ *   null / undefined / unknown → null
+ *
+ * Used to populate `events.group_label`. Tournament group-stage matches
+ * carry a value; everything else (knockouts, league matches) stays null.
+ */
+export function normaliseGroupLabel(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const match = /^GROUP_(.+)$/.exec(value);
+  return match ? match[1] : null;
+}
 
 /**
  * Returns the 90-minute (regulation-time only) score for a finished match,
@@ -187,6 +212,10 @@ export type UpsertEventInput = {
     // → no-op SQL UPDATE on those columns).
     homeTeam?: string | null;
     awayTeam?: string | null;
+    // Optional — populated alongside teams so the update path knows whether
+    // group_label needs writing. Callers that don't pass it get an
+    // always-overwrite-on-other-changes behaviour (still safe).
+    groupLabel?: string | null;
   } | null;
 };
 
@@ -237,6 +266,7 @@ export async function upsertEventFromFootballData(
         kickoffAt: kickoff,
         venue: fdMatch.venue ?? null,
         matchday: fdMatch.matchday,
+        groupLabel: normaliseGroupLabel(fdMatch.group),
         status,
         predictionLockAt: lockAt,
         lastSyncedAt: now,
@@ -269,12 +299,22 @@ export async function upsertEventFromFootballData(
   const teamsUnchanged =
     fdHomeName === (existing.homeTeam ?? null) &&
     fdAwayName === (existing.awayTeam ?? null);
-  if (kickoffUnchanged && matchdayUnchanged && statusUnchanged && teamsUnchanged) {
+  // Group label: only compare when caller passed it through. Otherwise we
+  // can't tell whether it changed and force the update branch on the next
+  // change to anything else (which writes the current value either way).
+  const fdGroupLabel = normaliseGroupLabel(fdMatch.group);
+  const groupUnchanged =
+    existing.groupLabel === undefined
+      ? true
+      : (existing.groupLabel ?? null) === fdGroupLabel;
+  if (kickoffUnchanged && matchdayUnchanged && statusUnchanged && teamsUnchanged && groupUnchanged) {
     return { action: "unchanged", eventId: existing.id };
   }
 
   // Something material changed — refresh kickoff, lock, matchday, status.
   // Team names + shorts also update for the bracket fill-in case (step 3a.4).
+  // Group label updates too — football-data sometimes assigns groups after
+  // initial fixture release.
   // Venue still left alone: it gets set on insert and rarely changes; if it
   // ever did, that smells like a different event entirely — investigate.
   await db
@@ -287,6 +327,7 @@ export async function upsertEventFromFootballData(
       kickoffAt: kickoff,
       predictionLockAt: lockAt,
       matchday: fdMatch.matchday,
+      groupLabel: fdGroupLabel,
       status,
       lastSyncedAt: now,
     })

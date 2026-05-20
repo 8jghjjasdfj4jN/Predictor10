@@ -317,6 +317,9 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
             // (null teams → real teams) and overwrite — step 3a.4.
             homeTeam: events.homeTeam,
             awayTeam: events.awayTeam,
+            // Pulled so the upsert helper can detect group-label changes
+            // (e.g. FD assigning groups after first fixture release).
+            groupLabel: events.groupLabel,
           })
           .from(events)
           .where(inArray(events.externalId, allExtIds))
@@ -386,6 +389,7 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
                 matchday: existing.matchday,
                 homeTeam: existing.homeTeam,
                 awayTeam: existing.awayTeam,
+                groupLabel: existing.groupLabel,
               }
             : null,
         });
