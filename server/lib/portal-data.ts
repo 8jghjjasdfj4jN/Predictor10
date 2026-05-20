@@ -658,8 +658,11 @@ export type EntryMatchOutcomeDto = {
 export type EntryMatchDto = {
   eventId: string;
   matchday: number | null;
-  homeTeam: string;
-  awayTeam: string;
+  // Nullable since step 3a.4 — tournament knockout fixtures expose null
+  // teams until the bracket fills in. UI renders "Awaiting teams" and
+  // disables prediction inputs when either side is null.
+  homeTeam: string | null;
+  awayTeam: string | null;
   homeTeamShort: string | null;
   awayTeamShort: string | null;
   kickoffAt: string;

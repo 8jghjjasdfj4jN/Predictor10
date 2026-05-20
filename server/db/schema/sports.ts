@@ -86,9 +86,16 @@ export const events = pgTable(
     stageId: uuid("stage_id").references(() => stages.id),
     externalId: varchar("external_id", { length: 50 }).notNull(),
 
-    // Football: home / away (abstract for other sports later)
-    homeTeam: varchar("home_team", { length: 100 }).notNull(),
-    awayTeam: varchar("away_team", { length: 100 }).notNull(),
+    // Football: home / away (abstract for other sports later).
+    // Nullable since step 3a.4 — tournament knockout fixtures (WC R32, R16,
+    // QF, SF, F) exist as scheduled slots before the bracket has filled in,
+    // and football-data emits them with `homeTeam: null` / `awayTeam: null`
+    // until the prior round resolves. We render these as "Awaiting teams"
+    // and gate prediction on both teams being non-null (arch §13 Rule #17).
+    // Outcome-sync's existing upsert overwrites the null fields with real
+    // team names as football-data resolves them, no special code path.
+    homeTeam: varchar("home_team", { length: 100 }),
+    awayTeam: varchar("away_team", { length: 100 }),
     homeTeamShort: varchar("home_team_short", { length: 10 }),
     awayTeamShort: varchar("away_team_short", { length: 10 }),
 

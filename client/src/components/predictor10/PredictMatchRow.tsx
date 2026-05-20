@@ -66,7 +66,8 @@ function parseScore(text: string): number | null {
  * AFC is part of the brand and stays). Truncate handles anything still too
  * long for the column.
  */
-function displayTeamName(name: string): string {
+function displayTeamName(name: string | null): string {
+  if (!name) return "TBD";
   return name.replace(/\s+FC$/, "").replace(/\s+AFC$/, "");
 }
 
@@ -328,7 +329,7 @@ function EditableOrLockedView({
         </div>
 
         <ScoreInput
-          ariaLabel={`${match.homeTeam} score`}
+          ariaLabel={`${displayTeamName(match.homeTeam)} score`}
           value={displayHome}
           disabled={inputDisabled}
           onChange={onHome}
@@ -337,7 +338,7 @@ function EditableOrLockedView({
           –
         </span>
         <ScoreInput
-          ariaLabel={`${match.awayTeam} score`}
+          ariaLabel={`${displayTeamName(match.awayTeam)} score`}
           value={displayAway}
           disabled={inputDisabled}
           onChange={onAway}

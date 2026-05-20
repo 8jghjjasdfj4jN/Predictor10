@@ -42,8 +42,11 @@ export type FDMatch = {
   lastUpdated?: string;
   status: FDStatus;
   matchday: number | null;
-  homeTeam: { id: number; name: string; shortName?: string | null; tla?: string | null };
-  awayTeam: { id: number; name: string; shortName?: string | null; tla?: string | null };
+  // Tournament knockout fixtures may have null homeTeam/awayTeam until the
+  // prior round resolves — football-data sends `null` for the slot, not a
+  // placeholder object. Step 3a.4 made the schema columns nullable to match.
+  homeTeam: { id: number; name: string; shortName?: string | null; tla?: string | null } | null;
+  awayTeam: { id: number; name: string; shortName?: string | null; tla?: string | null } | null;
   venue?: string | null;
   score?: {
     fullTime?: { home: number | null; away: number | null };
@@ -131,6 +134,12 @@ export type UpsertEventInput = {
     status: InternalEventStatus;
     kickoffAt: Date;
     matchday: number | null;
+    // Optional — only the seed and outcome-sync that need bracket-fill
+    // detection pass these. Older callers omit them and the update path
+    // falls back to "always overwrite teams" (no harm since matching values
+    // → no-op SQL UPDATE on those columns).
+    homeTeam?: string | null;
+    awayTeam?: string | null;
   } | null;
 };
 
@@ -174,10 +183,10 @@ export async function upsertEventFromFootballData(
         competitionId,
         stageId,
         externalId: String(fdMatch.id),
-        homeTeam: fdMatch.homeTeam.name,
-        awayTeam: fdMatch.awayTeam.name,
-        homeTeamShort: fdMatch.homeTeam.tla ?? null,
-        awayTeamShort: fdMatch.awayTeam.tla ?? null,
+        homeTeam: fdMatch.homeTeam?.name ?? null,
+        awayTeam: fdMatch.awayTeam?.name ?? null,
+        homeTeamShort: fdMatch.homeTeam?.tla ?? null,
+        awayTeamShort: fdMatch.awayTeam?.tla ?? null,
         kickoffAt: kickoff,
         venue: fdMatch.venue ?? null,
         matchday: fdMatch.matchday,
@@ -202,17 +211,32 @@ export async function upsertEventFromFootballData(
   const kickoffUnchanged = existing.kickoffAt.getTime() === kickoff.getTime();
   const matchdayUnchanged = existing.matchday === fdMatch.matchday;
   const statusUnchanged = existing.status === status;
-  if (kickoffUnchanged && matchdayUnchanged && statusUnchanged) {
+  // Step 3a.4: bracket fill-in path. Tournament knockout slots start with
+  // null teams; football-data resolves them in subsequent fetches. The
+  // update path must overwrite stored null team names when FD provides
+  // real ones. League-style comps don't hit this because their teams
+  // never start null. We compare against `null`/`undefined`-tolerant
+  // equality to avoid spurious updates on identical real names.
+  const fdHomeName = fdMatch.homeTeam?.name ?? null;
+  const fdAwayName = fdMatch.awayTeam?.name ?? null;
+  const teamsUnchanged =
+    fdHomeName === (existing.homeTeam ?? null) &&
+    fdAwayName === (existing.awayTeam ?? null);
+  if (kickoffUnchanged && matchdayUnchanged && statusUnchanged && teamsUnchanged) {
     return { action: "unchanged", eventId: existing.id };
   }
 
   // Something material changed — refresh kickoff, lock, matchday, status.
-  // We deliberately do NOT update homeTeam/awayTeam/venue here: those are
-  // set on insert and shouldn't drift mid-season (and if they ever did, that
-  // smells like a different event entirely — investigate, don't auto-fix).
+  // Team names + shorts also update for the bracket fill-in case (step 3a.4).
+  // Venue still left alone: it gets set on insert and rarely changes; if it
+  // ever did, that smells like a different event entirely — investigate.
   await db
     .update(events)
     .set({
+      homeTeam: fdHomeName,
+      awayTeam: fdAwayName,
+      homeTeamShort: fdMatch.homeTeam?.tla ?? null,
+      awayTeamShort: fdMatch.awayTeam?.tla ?? null,
       kickoffAt: kickoff,
       predictionLockAt: lockAt,
       matchday: fdMatch.matchday,

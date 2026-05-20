@@ -313,6 +313,10 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
             status: events.status,
             kickoffAt: events.kickoffAt,
             matchday: events.matchday,
+            // Pulled so the upsert helper can detect bracket fill-in
+            // (null teams → real teams) and overwrite — step 3a.4.
+            homeTeam: events.homeTeam,
+            awayTeam: events.awayTeam,
           })
           .from(events)
           .where(inArray(events.externalId, allExtIds))
@@ -380,6 +384,8 @@ async function syncFixtures(competitionsByCode: Map<string, string>): Promise<Ma
                 status: existing.status as InternalEventStatus,
                 kickoffAt: existing.kickoffAt,
                 matchday: existing.matchday,
+                homeTeam: existing.homeTeam,
+                awayTeam: existing.awayTeam,
               }
             : null,
         });

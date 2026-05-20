@@ -122,8 +122,10 @@ export type EntryMatchOutcome = {
 export type EntryMatch = {
   eventId: string;
   matchday: number | null;
-  homeTeam: string;
-  awayTeam: string;
+  // Nullable since step 3a.4 — tournament knockout fixtures expose null
+  // teams until the bracket fills in. UI renders "TBD" via displayTeamName.
+  homeTeam: string | null;
+  awayTeam: string | null;
   homeTeamShort: string | null;
   awayTeamShort: string | null;
   kickoffAt: string;
