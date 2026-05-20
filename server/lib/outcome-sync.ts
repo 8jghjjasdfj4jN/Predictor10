@@ -1,5 +1,5 @@
 /*
-Predictor10 — football-data.org → DB sync (step 2l).
+Predictor10 — football-data.org → DB sync (step 2l; per-comp season in step 3a.5).
 
 What it does on every run (one HTTP call per active competition):
   1. **Outcomes & scoring (the original responsibility)**
@@ -19,6 +19,13 @@ The two responsibilities share the same HTTP call and the same loop, so
 adding fixture refresh costs zero extra API requests against the free-tier
 budget (the response is larger but still < 100 KB per competition).
 
+Per-competition season (step 3a.5): each row in `competitions` carries its
+own `externalSeasonId` (set by the seed — PL/Champ = 2025, WC = 2026, future
+comps as added). Previously the sync hardcoded `SEASON = 2025`, which meant
+WC silently fetched the wrong season and returned no matches. Now the per-
+comp value is read from the DB; a missing or non-numeric value is recorded
+as an error against that one comp and the rest of the tick proceeds.
+
 Safety rails (live in `fixture-sync.ts`, applied uniformly here and in seed):
   - Finished events are terminal from the fixture path. A status flip
     back to scheduled is never written, even if football-data transiently
@@ -27,6 +34,9 @@ Safety rails (live in `fixture-sync.ts`, applied uniformly here and in seed):
   - Matches with a matchday outside our modelled Round structure (e.g.
     cup ties, pre-season friendlies sneaking into a league response) are
     skipped at insert time with a stat counter, never an exception.
+  - Tournament-style comps (WC) accept null matchday — `roundForMatchday`
+    returns the single Round number regardless (step 3a.3). League-style
+    comps with a null matchday still return null here and skip safely.
 
 Idempotent end-to-end:
   - `event_outcomes` is keyed by eventId (PK), `onConflictDoNothing` —
@@ -36,8 +46,8 @@ Idempotent end-to-end:
   - `predictions.pointsAwarded` is only written when currently null.
   - Fixture upsert compares against the existing row before writing.
 
-Returns a `SyncResult` so the CLI, the HTTP admin endpoint, and the Render
-cron logs all surface a structured summary.
+Returns a `SyncResult` so the CLI, the HTTP admin endpoint, and the
+scheduler logs all surface a structured summary.
 */
 
 import "dotenv/config";
@@ -47,15 +57,13 @@ import { competitions, events, eventOutcomes, stages } from "../db/schema/sports
 import { predictions } from "../db/schema/pools";
 import { ROUNDS_BY_CODE, roundForMatchday } from "./rounds";
 import {
+  extractRegulationScore,
   fetchAllMatchesForSeason,
   mapFootballDataStatus,
   upsertEventFromFootballData,
   type FDMatch,
   type InternalEventStatus,
 } from "./fixture-sync";
-
-const SEASON = 2025; // football-data convention: starting year → 2025/26.
-                    // TODO (post-launch): bump per-competition once 2026/27 fixtures release.
 
 // ─── Sync result type (returned from the entry points) ───────────────────
 
@@ -124,11 +132,24 @@ export async function syncOutcomes(): Promise<SyncResult> {
 
   for (const comp of comps) {
     if (!comp.externalId) continue;
+
+    // Per-competition season (step 3a.5). Stored as varchar in DB to
+    // accommodate any future provider that uses non-numeric season ids;
+    // football-data's API takes a number, so parse here.
+    const seasonNum = comp.externalSeasonId ? Number(comp.externalSeasonId) : NaN;
+    if (!Number.isFinite(seasonNum)) {
+      result.errors.push({
+        competition: comp.externalId,
+        message: `externalSeasonId missing or invalid: ${comp.externalSeasonId ?? "null"}`,
+      });
+      continue;
+    }
+
     result.competitionsChecked++;
 
     let matches: FDMatch[];
     try {
-      matches = await fetchAllMatchesForSeason(comp.externalId, SEASON);
+      matches = await fetchAllMatchesForSeason(comp.externalId, seasonNum);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       result.errors.push({ competition: comp.externalId, message });
@@ -171,8 +192,12 @@ export async function syncOutcomes(): Promise<SyncResult> {
       // ── Fixture-refresh path ─────────────────────────────────────────
       // Decide stageId for inserts. For existing events we keep the
       // current stageId (handled inside the helper by not updating it).
+      // Tournament-style comps (WC) pass null matchday through to
+      // roundForMatchday, which returns the single Round number for any
+      // input (step 3a.3). League-style comps with null matchday return
+      // null here and skip the insert safely.
       let stageIdForInsert: string | null = null;
-      if (!ours && roundsConfigured && m.matchday != null) {
+      if (!ours && roundsConfigured) {
         const round = roundForMatchday(comp.externalId, m.matchday);
         if (round != null) {
           stageIdForInsert = stageByRound.get(round) ?? null;
@@ -212,10 +237,14 @@ export async function syncOutcomes(): Promise<SyncResult> {
 
       // ── Outcome-write path ───────────────────────────────────────────
       // Only finished matches with a complete full-time score qualify.
+      // For knockouts that went to extra time or penalties (WC), we read
+      // the 90-minute score only — Predictor10 settles on FT, not the
+      // after-extra-time or shootout result.
       if (m.status !== "FINISHED" && m.status !== "AWARDED") continue;
-      const home = m.score?.fullTime?.home;
-      const away = m.score?.fullTime?.away;
-      if (home == null || away == null) continue;
+      const regScore = extractRegulationScore(m);
+      if (regScore === null) continue;
+      const home = regScore.home;
+      const away = regScore.away;
 
       const finishedAt = m.lastUpdated ? new Date(m.lastUpdated) : new Date();
 

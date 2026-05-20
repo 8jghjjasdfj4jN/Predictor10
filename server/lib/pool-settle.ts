@@ -258,8 +258,16 @@ function penceToDecimalString(pence: number): string {
  *   (status='finished' AND has an event_outcomes row)
  *   OR status IN ('cancelled', 'void')
  *
- * status IN ('scheduled', 'live', 'postponed') all block — postponed
- * intentionally so, since the match may yet be rescheduled inside the Round.
+ * Decided Rule #16 (step 3a.10): when the pool's competition has
+ *   `postponed_policy = 'forfeit'` (currently WC), a `postponed` event whose
+ *   scheduled kickoff has passed is also treated as accounted-for. The
+ *   prediction (if any) scored 0 — pointsAwarded stays null and contributes
+ *   0 in the SUM aggregate. If football-data later reschedules the match,
+ *   our fixture-sync flips status back to 'scheduled' with a future
+ *   kickoff, which puts the event back in the blocking set.
+ *
+ * status IN ('scheduled', 'live') always block. 'postponed' still blocks
+ *   for 'wait' competitions (PL / Champ).
  *
  * Also requires the stage to have at least one event (defensive — guards
  * against settling a freshly-seeded stage with no fixtures attached yet).
@@ -273,6 +281,8 @@ async function findReadyPoolIds(): Promise<string[]> {
   const rows = await db.execute<{ pool_id: string }>(sql`
     SELECT p.id AS pool_id
     FROM pools p
+    INNER JOIN stages s ON s.id = p.stage_id
+    INNER JOIN competitions c ON c.id = s.competition_id
     WHERE p.status <> 'settled'
       AND EXISTS (
         SELECT 1 FROM events e WHERE e.stage_id = p.stage_id
@@ -285,6 +295,11 @@ async function findReadyPoolIds(): Promise<string[]> {
           AND NOT (
             (e.status = 'finished' AND o.event_id IS NOT NULL)
             OR e.status IN ('cancelled', 'void')
+            OR (
+              c.postponed_policy = 'forfeit'
+              AND e.status = 'postponed'
+              AND e.kickoff_at <= NOW()
+            )
           )
       )
     ORDER BY p.closes_at ASC

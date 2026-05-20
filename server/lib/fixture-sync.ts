@@ -49,9 +49,56 @@ export type FDMatch = {
   awayTeam: { id: number; name: string; shortName?: string | null; tla?: string | null } | null;
   venue?: string | null;
   score?: {
+    // Step 3a — `duration` distinguishes 90-min finishes from extra-time /
+    // shootout finishes. When duration is anything other than REGULAR, the
+    // `fullTime` field contains the post-ET (or post-shootout) result, so we
+    // must read `regularTime` instead to honour the "FT (90 min) only"
+    // scoring rule for the World Cup knockouts.
+    duration?: "REGULAR" | "EXTRA_TIME" | "PENALTY_SHOOTOUT";
     fullTime?: { home: number | null; away: number | null };
+    regularTime?: { home: number | null; away: number | null };
+    extraTime?: { home: number | null; away: number | null };
+    penalties?: { home: number | null; away: number | null };
   };
 };
+
+/**
+ * Returns the 90-minute (regulation-time only) score for a finished match,
+ * or `null` if no usable score is present.
+ *
+ * Predictor10 scores predictions on the 90-minute result only — extra-time
+ * and penalty-shootout goals are explicitly ignored (Decided Rule: "FT only
+ * for WC"). For Premier League / Championship matches there is no extra
+ * time, so `fullTime` already equals the 90-min score. For World Cup
+ * knockouts that went to extra time or penalties, football-data sets
+ * `score.duration` to `EXTRA_TIME` or `PENALTY_SHOOTOUT`, in which case
+ * `score.fullTime` contains the *final* result (i.e. includes ET goals).
+ * The 90-min score lives in `score.regularTime`.
+ *
+ * Rule:
+ *   - duration absent OR "REGULAR" → use fullTime.
+ *   - duration "EXTRA_TIME" / "PENALTY_SHOOTOUT" → use regularTime; if
+ *     regularTime is missing, return null (refuse to guess — better to skip
+ *     this run and write nothing than to write a wrong score that locks in
+ *     under first-write-wins).
+ */
+export function extractRegulationScore(
+  match: FDMatch,
+): { home: number; away: number } | null {
+  const duration = match.score?.duration;
+  if (duration && duration !== "REGULAR") {
+    const rt = match.score?.regularTime;
+    if (rt && rt.home != null && rt.away != null) {
+      return { home: rt.home, away: rt.away };
+    }
+    return null;
+  }
+  const ft = match.score?.fullTime;
+  if (ft && ft.home != null && ft.away != null) {
+    return { home: ft.home, away: ft.away };
+  }
+  return null;
+}
 
 // Mirrors `event_status` enum in server/db/schema/sports.ts.
 export type InternalEventStatus =

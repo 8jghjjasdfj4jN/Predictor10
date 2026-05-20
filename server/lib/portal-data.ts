@@ -143,6 +143,10 @@ export type UserEntryDto = {
   competitionId: string;
   competitionSlug: string;
   competitionShortName: string;
+  // Step 3a.8 — Predict tab groups tournament-style entries into their own
+  // section ("TOURNAMENT"). UI branches on this field, same discriminator
+  // Home uses (arch §13 Rule #16: forfeit = tournament-style).
+  postponedPolicy: "wait" | "forfeit";
   poolName: string;
   tierName: string;
   roundName: string;
@@ -328,6 +332,7 @@ export async function getUserOpenEntries(userId: string): Promise<UserEntryDto[]
       competitionId: competitions.id,
       competitionSlug: competitions.slug,
       competitionShortName: competitions.shortName,
+      competitionPostponedPolicy: competitions.postponedPolicy,
       tierName: leagues.name,
       stageId: stages.id,
       stageName: stages.name,
@@ -373,6 +378,7 @@ export async function getUserOpenEntries(userId: string): Promise<UserEntryDto[]
     competitionId: r.competitionId,
     competitionSlug: r.competitionSlug,
     competitionShortName: r.competitionShortName ?? "",
+    postponedPolicy: r.competitionPostponedPolicy,
     poolName: r.poolName,
     tierName: r.tierName,
     roundName: r.stageName,

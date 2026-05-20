@@ -68,6 +68,8 @@ export type UserEntry = {
   competitionId: string;
   competitionSlug: string;
   competitionShortName: string;
+  /** "forfeit" = tournament-style (WC). UI groups these under TOURNAMENT. */
+  postponedPolicy: "wait" | "forfeit";
   poolName: string;
   tierName: string;
   roundName: string;
