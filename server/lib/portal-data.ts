@@ -728,6 +728,7 @@ export type UpsertPredictionError =
   | "ENTRY_NOT_OWNED"
   | "EVENT_NOT_IN_POOL"
   | "EVENT_LOCKED"
+  | "EVENT_AWAITING_TEAMS"
   | "INVALID_SCORE";
 
 export type UpsertPredictionOutcome =
@@ -991,12 +992,21 @@ export async function upsertPrediction(opts: {
       id: events.id,
       stageId: events.stageId,
       predictionLockAt: events.predictionLockAt,
+      homeTeam: events.homeTeam,
+      awayTeam: events.awayTeam,
     })
     .from(events)
     .where(eq(events.id, eventId));
 
   if (!eventRow || eventRow.stageId !== entryRow.stageId) {
     return { ok: false, error: "EVENT_NOT_IN_POOL" };
+  }
+  // arch §13 Rule #17 — tournament knockout fixtures expose null teams
+  // until the bracket fills in. Predictions on those slots aren't allowed;
+  // the client also disables the inputs, so this guards against a forged
+  // PUT only.
+  if (eventRow.homeTeam === null || eventRow.awayTeam === null) {
+    return { ok: false, error: "EVENT_AWAITING_TEAMS" };
   }
   if (eventRow.predictionLockAt.getTime() <= Date.now()) {
     return { ok: false, error: "EVENT_LOCKED" };

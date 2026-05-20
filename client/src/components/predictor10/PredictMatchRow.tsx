@@ -111,9 +111,12 @@ export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
     }
   }, [match.eventId, match.prediction?.homeScore, match.prediction?.awayScore]);
 
-  // Debounced auto-save. Skipped for locked OR finished rows.
+  // Debounced auto-save. Skipped for locked OR finished rows. Also skipped
+  // for null-team knockout slots (arch §13 Rule #17) — the inputs are
+  // disabled in the editable view, but this is a defence in depth.
   useEffect(() => {
     if (match.isLocked || isFinished) return;
+    if (match.homeTeam === null || match.awayTeam === null) return;
     const home = parseScore(homeText);
     const away = parseScore(awayText);
     if (home === null || away === null) return;
@@ -272,10 +275,11 @@ function EditableOrLockedView({
   onAway: (v: string) => void;
   saving: boolean;
 }) {
+  const awaitingTeams = match.homeTeam === null || match.awayTeam === null;
   const homeNum = parseScore(homeText);
   const awayNum = parseScore(awayText);
   const halfSaved =
-    !match.isLocked &&
+    !match.isLocked && !awaitingTeams &&
     ((homeText !== "" && awayText === "") || (homeText === "" && awayText !== ""));
   const hasSavedPrediction = match.prediction !== null;
   const hasLocalPrediction = homeNum !== null && awayNum !== null;
@@ -285,7 +289,9 @@ function EditableOrLockedView({
       awayNum !== (match.prediction?.awayScore ?? null));
 
   let metaTag: { label: string; tone: "neutral" | "emerald" | "amber" | "muted" } | null = null;
-  if (match.isLocked) {
+  if (awaitingTeams) {
+    metaTag = { label: "Awaiting teams", tone: "muted" };
+  } else if (match.isLocked) {
     metaTag = hasSavedPrediction
       ? { label: "Locked", tone: "muted" }
       : { label: "Missed — 0 pts", tone: "muted" };
@@ -299,9 +305,9 @@ function EditableOrLockedView({
     metaTag = { label: "Saved", tone: "emerald" };
   }
 
-  const inputDisabled = match.isLocked;
-  const displayHome = match.isLocked && !hasSavedPrediction ? "" : homeText;
-  const displayAway = match.isLocked && !hasSavedPrediction ? "" : awayText;
+  const inputDisabled = match.isLocked || awaitingTeams;
+  const displayHome = (match.isLocked && !hasSavedPrediction) || awaitingTeams ? "" : homeText;
+  const displayAway = (match.isLocked && !hasSavedPrediction) || awaitingTeams ? "" : awayText;
 
   return (
     <div

@@ -187,6 +187,7 @@ const PREDICTION_ERROR_MAP: Record<UpsertPredictionError, { status: number; mess
   ENTRY_NOT_OWNED: { status: 404, message: "Entry not found." }, // 404 not 403 — don't leak existence
   EVENT_NOT_IN_POOL: { status: 400, message: "That match isn't in this Round." },
   EVENT_LOCKED: { status: 403, message: "This match's predictions are locked." },
+  EVENT_AWAITING_TEAMS: { status: 409, message: "Teams haven't been decided for this match yet." },
   INVALID_SCORE: { status: 400, message: "Scores must be whole numbers from 0 to 99." },
 };
 

@@ -31,6 +31,7 @@ import PoolDetailPage from "./pages/portal/PoolDetailPage";
 import PoolTablePage from "./pages/portal/PoolTablePage";
 import AccountPage from "./pages/portal/AccountPage";
 import AccountHistoryPage from "./pages/portal/AccountHistoryPage";
+import EnterPage from "./pages/portal/EnterPage";
 
 // Tiny declarative redirect helper. Wouter 3 ships `Redirect`, but we avoid
 // pulling it directly because the project applies a patch to wouter's ESM
@@ -84,6 +85,9 @@ function PortalRouter() {
         {/* Account */}
         <Route path="/account/history" component={AccountHistoryPage} />
         <Route path="/account" component={AccountPage} />
+
+        {/* Tournament entry confirm (arch §8.6.1, step 3a.7) */}
+        <Route path="/enter/:competitionSlug" component={EnterPage} />
 
         {/* Legacy /pools URLs — kept alive temporarily for bookmark/history
             compatibility. `/table` is more specific — must come before the
@@ -175,7 +179,7 @@ function LoadingSplash() {
  * Step 2m: added `tables` to the portal-path regex. Kept `pools` so legacy
  * URLs still redirect through login → eventual /tables, not a 404 dead end.
  */
-const PORTAL_PATH = /^\/(predict|pools|tables|account)(\/|$)/;
+const PORTAL_PATH = /^\/(predict|pools|tables|account|enter)(\/|$)/;
 
 function isPortalPath(path: string): boolean {
   return PORTAL_PATH.test(path);
