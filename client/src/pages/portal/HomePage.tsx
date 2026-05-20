@@ -253,11 +253,19 @@ function LeagueCard({ state }: { state: CompState }) {
   const feeLabel = lowestFee ? formatFee(lowestFee) : "";
   const tierWord = tierCount === 1 ? "tier" : "tiers";
 
-  const enteredCount = userEntries.length;
-  const totalPools = competition.pools.length;
-  const entered = enteredCount > 0;
-  const fullyEntered = enteredCount > 0 && enterablePools.length === 0;
+  // "Visible" tiers = comp.pools (the four active tiers; retired tiers like
+  // Pound aren't returned by /api/competitions). User can still hold an
+  // entry in a retired tier whose pool is still open — that's a "ghost"
+  // entry, shown in Predict but not counted toward the visible-tier total.
+  const visiblePoolIds = new Set(competition.pools.map((p) => p.id));
+  const visibleEnteredCount = userEntries.filter((e) => visiblePoolIds.has(e.poolId)).length;
+  const totalVisiblePools = competition.pools.length;
+  const entered = userEntries.length > 0;
+  const allVisibleEntered = entered && visibleEnteredCount === totalVisiblePools;
 
+  // Tier names for the "You're in …" line — all entries the user holds in
+  // this comp, including any ghost (retired-tier) entries so the user can
+  // see them surfaced here too.
   const enteredNames = userEntries.map((e) => shortTierName(e.tierName));
 
   return (
@@ -265,32 +273,35 @@ function LeagueCard({ state }: { state: CompState }) {
       <CardHeader title={competition.name} badge={round.name} />
 
       {/* Meta line: show the open-tier summary only if any tiers are still
-          enterable. Once fully entered, the line below tells the story. */}
+          enterable. Once nothing is left to pick, the line below tells the
+          story. */}
       {(rangeLabel || closeLabel) && (
         <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
           {rangeLabel && (
             <>
               {rangeLabel}
-              {closeLabel && enterablePools.length > 0 && (
+              {closeLabel && tierCount > 0 && (
                 <span aria-hidden className="mx-1.5 text-white/30">·</span>
               )}
             </>
           )}
-          {enterablePools.length > 0 && closeLabel}
+          {tierCount > 0 && closeLabel}
         </p>
       )}
 
       {/* "You're in …" line — only when at least one tier is entered. */}
       {entered && (
         <YoureInLine>
-          {fullyEntered
-            ? `You're in all ${totalPools} tiers`
-            : `You're in ${joinNames(enteredNames)} · ${tierCount} ${tierWord} left`}
+          {allVisibleEntered
+            ? `You're in all ${totalVisiblePools} tiers`
+            : tierCount > 0
+              ? `You're in ${joinNames(enteredNames)} · ${tierCount} ${tierWord} left`
+              : `You're in ${joinNames(enteredNames)}`}
         </YoureInLine>
       )}
 
       {/* Explainer block — only show when there are still tiers to pick. */}
-      {enterablePools.length > 0 && (
+      {tierCount > 0 && (
         <div
           className={cn(
             "my-3 rounded-[10px] border border-white/[0.04] bg-black/25 px-3.5 py-3",
@@ -305,7 +316,7 @@ function LeagueCard({ state }: { state: CompState }) {
       )}
 
       {/* CTAs */}
-      <div className={cn(enterablePools.length === 0 ? "mt-4" : "", "flex flex-col gap-2")}>
+      <div className={cn(tierCount === 0 ? "mt-4" : "", "flex flex-col gap-2")}>
         {!entered && (
           <PrimaryButton href="/tables">
             <span>Choose your tier</span>
@@ -313,15 +324,19 @@ function LeagueCard({ state }: { state: CompState }) {
           </PrimaryButton>
         )}
         {entered && (
-          <PrimaryButton href={predictionsHref(userEntries)}>
-            <span>Open predictions</span>
-            <ArrowRight className="h-4 w-4" aria-hidden />
-          </PrimaryButton>
-        )}
-        {entered && enterablePools.length > 0 && (
-          <GhostButton href="/tables">
-            <span>Pick another tier</span>
-          </GhostButton>
+          <>
+            <PrimaryButton href={predictionsHref(userEntries)}>
+              <span>Open predictions</span>
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            </PrimaryButton>
+            {/* Always offer access to the tier list once entered — even if
+                no tiers are currently enterable (late-entry window closed),
+                the user can still see standings and review their own
+                position across tiers. Label adapts to the state. */}
+            <GhostButton href="/tables">
+              <span>{tierCount > 0 ? "Pick another tier" : "View all tiers"}</span>
+            </GhostButton>
+          </>
         )}
       </div>
     </CardShell>
