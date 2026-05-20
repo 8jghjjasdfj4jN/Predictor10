@@ -203,6 +203,38 @@ function vitePluginStorageProxy(): Plugin {
   };
 }
 
+// Strip the `crossorigin` attribute Vite adds by default to module scripts and
+// stylesheet links in production HTML (step 2v). Background: Vite emits
+// `<script type="module" crossorigin src="...">` and `<link rel="stylesheet"
+// crossorigin href="...">` for CDN/cross-origin asset hosting. Predictor10
+// serves all assets same-origin from the Express server, so the attribute is
+// unnecessary — and on iOS WebKit (both Safari and Chrome iOS / WKWebView)
+// `<script type="module" crossorigin>` can silently stall without firing an
+// error event when the request hits any kind of edge-cache or CORS-adjacent
+// quirk. Caught the failure mode in step 2u; this plugin removes the trigger.
+// Preserves crossorigin on other tags (e.g. font preconnect link rel).
+function stripCrossOriginPlugin(): Plugin {
+  return {
+    name: "p10-strip-crossorigin",
+    apply: "build",
+    enforce: "post",
+    transformIndexHtml: {
+      order: "post",
+      handler(html: string) {
+        return html
+          .replace(
+            /(<script\b[^>]*\btype="module"[^>]*?)(\s+crossorigin(?:="[^"]*")?)(?=[\s/>])/gi,
+            "$1",
+          )
+          .replace(
+            /(<link\b[^>]*\brel="stylesheet"[^>]*?)(\s+crossorigin(?:="[^"]*")?)(?=[\s/>])/gi,
+            "$1",
+          );
+      },
+    },
+  };
+}
+
 // Manus dev plugins are dev-tooling bloat (jsx-loc overlay, the 367 KB inlined
 // runtime, the debug log collector, and the storage proxy). They have no
 // purpose in a production build, so we gate them out by mode. Step 2p shipped
@@ -216,7 +248,7 @@ export default defineConfig(({ mode }) => {
     react(),
     tailwindcss(),
     ...(isProduction
-      ? []
+      ? [stripCrossOriginPlugin()]
       : [jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy()]),
   ];
 

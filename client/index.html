@@ -289,9 +289,31 @@
           record("unhandledrejection", msg + stk);
         });
 
+        function findBundleScriptUrl() {
+          var scripts = document.querySelectorAll('script[type="module"][src]');
+          for (var i = 0; i < scripts.length; i++) {
+            var src = scripts[i].src;
+            if (src && src.indexOf("/assets/") !== -1) return src;
+          }
+          // Fall back to first module script, if any
+          if (scripts.length > 0) return scripts[0].src || null;
+          return null;
+        }
+
         setTimeout(function () {
-          if (!rootHasChildren() && errors.length === 0) {
-            renderFallback();
+          if (rootHasChildren()) return;
+          if (errors.length === 0) {
+            // Push the safety-net explanation as a synthetic entry so it
+            // persists after fetchAndReport updates the diagnostic below.
+            errors.push("[" + new Date().toISOString() + "] safety-net\n" + safetyNetExplanation());
+          }
+          renderFallback();
+          // If main.tsx never executed, the script likely stalled silently.
+          // Probe the bundle URL via fetch() to find out what the server is
+          // actually returning (status, MIME type, body length).
+          if (window.__p10_bootStarted !== true) {
+            var url = findBundleScriptUrl();
+            if (url) fetchAndReport(url, "<script> (safety-net probe)");
           }
         }, SAFETY_NET_MS);
       })();
