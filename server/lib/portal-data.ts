@@ -86,7 +86,13 @@ export type CompetitionDto = {
   slug: string;
   name: string;
   shortName: string;
-  externalCode: string; // "PL", "ELC"
+  externalCode: string; // "PL", "ELC", "WC"
+  /**
+   * Per-competition postponement policy (step 3a). League-style comps are
+   * `'wait'` (PL/Champ); tournament-style are `'forfeit'` (WC). The Home
+   * card UI branches on this to pick the CTA (tier picker vs single Enter).
+   */
+  postponedPolicy: "wait" | "forfeit";
   currentRound: CurrentRoundDto;
   pools: PoolDto[]; // active tiers only, ordered by ordinal (4 from step 2m)
 };
@@ -220,6 +226,7 @@ export async function getCompetitionsWithOpenPools(): Promise<CompetitionDto[]> 
       competitionSlug: competitions.slug,
       competitionName: competitions.name,
       competitionShortName: competitions.shortName,
+      competitionPostponedPolicy: competitions.postponedPolicy,
       competitionExternalId: competitions.externalId,
       stageId: stages.id,
       stageName: stages.name,
@@ -267,6 +274,7 @@ export async function getCompetitionsWithOpenPools(): Promise<CompetitionDto[]> 
         name: r.competitionName,
         shortName: r.competitionShortName ?? r.competitionName,
         externalCode: code,
+        postponedPolicy: r.competitionPostponedPolicy,
         currentRound: {
           stageId: r.stageId,
           name: r.stageName,

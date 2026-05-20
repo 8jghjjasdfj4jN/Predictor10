@@ -52,6 +52,12 @@ export type Competition = {
   name: string;
   shortName: string;
   externalCode: string;
+  /**
+   * Per-competition postponement policy. UI uses this to branch the Home
+   * card CTA: `'wait'` (PL/Champ) → tier picker; `'forfeit'` (WC) →
+   * single-Enter confirm screen.
+   */
+  postponedPolicy: "wait" | "forfeit";
   currentRound: CurrentRound;
   pools: Pool[];
 };

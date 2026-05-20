@@ -1,23 +1,38 @@
 /*
-Home (arch §8.1) — state-aware: current Round header, user's live entries,
-available tiers.
+Home (arch §8.1) — entry discovery surface. Step 3a.6 redesign.
 
-Single-competition for now — only PL has an open Round through May 2026.
-Championship returns from /api/competitions once 2026/27 fixtures are seeded.
-Multi-competition Home layout is a deferred design (arch §14 #7).
+One card per competition currently open for entry. No live entries
+section — those moved entirely to the Predict tab (arch §8.2) per
+Rule #18.
+
+Card behaviour branches on `competition.postponedPolicy`:
+  - `'wait'`  (league-style: PL / Champ) → "Choose your tier →" → /tables
+  - `'forfeit'` (tournament-style: WC)   → "Enter [Name] →"     → /enter/:slug
+
+Hiding rules (arch §8.1):
+  - A competition's card hides once every enterable pool is either
+    already entered by the user OR past its late-entry close (closesAt).
+  - Inactive competitions / pools are filtered by the server.
+
+Empty states:
+  - No competitions open at all          → "Nothing open right now."
+  - Open competitions all entered/closed → "All current competitions
+    entered. Make your picks in Predict →"
+
+NOTE: the WC card currently links to /enter/world-cup-2026 which will
+404 until step 3a.7 ships the confirm screen. Order is deliberate per
+the handoff (3a.9 predict gating must land before 3a.7).
 */
 
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { ArrowRight, AlarmClock, AlertTriangle, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAuth } from "@/contexts/AuthContext";
 import {
   fetchCompetitions,
   fetchMyEntries,
   type Competition,
   type Pool,
-  type PrizeBreakdownEntry,
   type UserEntry,
 } from "@/lib/portal-api";
 
@@ -29,7 +44,7 @@ const DATE_FMT = new Intl.DateTimeFormat("en-GB", {
   month: "short",
 });
 
-function formatDate(iso: string | null): string {
+function formatDate(iso: string | null | undefined): string {
   if (!iso) return "";
   return DATE_FMT.format(new Date(iso));
 }
@@ -46,220 +61,254 @@ function formatMatchdayRange(matchdays: number[], label: "GW" | "MD"): string {
   return matchdays.length === 1 ? `${label} ${first}` : `${label}s ${first}-${last}`;
 }
 
-function formatEntryCount(n: number): string {
-  if (n === 0) return "No entries yet";
-  if (n === 1) return "1 entry";
-  return `${n.toLocaleString("en-GB")} entries`;
-}
+// ─── Card-data helpers ───────────────────────────────────────────────────
 
-/**
- * Render the per-place prize breakdown as a single line. Mirrors
- * TablesPage.formatPrizeBreakdown — kept duplicated rather than extracted
- * since both files only use it in one place and the helper is trivial.
- */
-const ORDINAL_LABELS = ["1st", "2nd", "3rd", "4th", "5th"];
+type EnterableState = {
+  /** Pools the user can still enter (not entered + late-entry not closed). */
+  enterablePools: Pool[];
+  /** Earliest closesAt across enterable pools (for the "Closes …" meta line). */
+  nearestCloseAt: string | null;
+  /** Lowest entry fee across enterable pools (for "from £5" copy). */
+  lowestFee: string | null;
+};
 
-function formatPrizeBreakdown(breakdown: PrizeBreakdownEntry[]): string {
-  if (breakdown.length === 0) return "";
-  return breakdown
-    .map((b) => {
-      const label = ORDINAL_LABELS[b.rank - 1] ?? `${b.rank}th`;
-      return `${label} £${b.amount}`;
-    })
-    .join(" · ");
-}
-
-// ─── Round header ────────────────────────────────────────────────────────
-
-function RoundHeader({ competition }: { competition: Competition }) {
-  const { currentRound: round, pools } = competition;
-  // Late-entry close = the closesAt on any pool (they share the same window).
-  const lateEntryCloseAt = pools[0]?.closesAt;
+function deriveEnterable(competition: Competition, enteredPoolIds: Set<string>): EnterableState {
   const now = Date.now();
-  const lateEntryOpen = !!lateEntryCloseAt && new Date(lateEntryCloseAt).getTime() > now;
+  const enterable = competition.pools.filter(
+    (p) => !enteredPoolIds.has(p.id) && new Date(p.closesAt).getTime() > now,
+  );
+  if (enterable.length === 0) {
+    return { enterablePools: [], nearestCloseAt: null, lowestFee: null };
+  }
+  let nearest = enterable[0].closesAt;
+  let lowest = enterable[0].tier.entryFee;
+  for (const p of enterable) {
+    if (new Date(p.closesAt).getTime() < new Date(nearest).getTime()) nearest = p.closesAt;
+    if (parseFloat(p.tier.entryFee) < parseFloat(lowest)) lowest = p.tier.entryFee;
+  }
+  return { enterablePools: enterable, nearestCloseAt: nearest, lowestFee: lowest };
+}
+
+// ─── League-style card (PL / Champ) ──────────────────────────────────────
+
+function LeagueCard({
+  competition,
+  enterable,
+}: {
+  competition: Competition;
+  enterable: EnterableState;
+}) {
+  const { currentRound: round } = competition;
+  const rangeLabel = formatMatchdayRange(round.matchdays, round.matchdayLabel);
+  const closeLabel = enterable.nearestCloseAt ? `Closes ${formatDate(enterable.nearestCloseAt)}` : "";
+  const tierCount = enterable.enterablePools.length;
+  const feeLabel = enterable.lowestFee ? formatFee(enterable.lowestFee) : "";
+  const tierWord = tierCount === 1 ? "tier" : "tiers";
 
   return (
-    <header className="space-y-2.5">
-      <p className="font-['Manrope'] text-[0.66rem] font-semibold uppercase tracking-[0.32em] text-emerald-300/70">
-        {competition.name}
-      </p>
-      <h1 className="font-['Barlow_Condensed'] text-[2rem] font-extrabold uppercase leading-[0.95] tracking-[0.02em] text-white sm:text-[2.4rem]">
-        {round.name}
-      </h1>
-      <p className="font-['Manrope'] text-[0.82rem] text-white/55">
-        {formatMatchdayRange(round.matchdays, round.matchdayLabel)}
-        {round.endDate && (
+    <article
+      className={cn(
+        "relative overflow-hidden rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.06]",
+        "px-[18px] pb-4 pt-[18px]",
+      )}
+    >
+      <CornerGlow />
+      <header className="mb-1 flex items-start justify-between gap-3">
+        <h2 className="m-0 font-['Barlow_Condensed'] text-[1.375rem] font-extrabold uppercase leading-[1.05] tracking-[0.02em] text-white">
+          {competition.name}
+        </h2>
+        {round.name && (
+          <span
+            className={cn(
+              "whitespace-nowrap rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-1",
+              "font-['Manrope'] text-[0.625rem] font-bold uppercase tracking-[0.14em] text-emerald-200",
+            )}
+          >
+            {round.name}
+          </span>
+        )}
+      </header>
+      <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
+        {rangeLabel && (
           <>
-            <span className="mx-1.5 text-white/30">·</span>
-            Round ends {formatDate(round.endDate)}
+            {rangeLabel}
+            {closeLabel && <span className="mx-1.5 text-white/30">·</span>}
           </>
         )}
+        {closeLabel}
       </p>
-
-      {lateEntryCloseAt && (
-        <div
-          className={cn(
-            "mt-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1",
-            "font-['Manrope'] text-[0.66rem] font-semibold uppercase tracking-[0.18em]",
-            lateEntryOpen
-              ? "border border-emerald-300/30 bg-emerald-400/10 text-emerald-200"
-              : "border border-amber-300/30 bg-amber-400/10 text-amber-200",
-          )}
-        >
-          {lateEntryOpen ? (
-            <>
-              <AlarmClock className="h-3 w-3" aria-hidden />
-              <span>Late entry closes {formatDate(lateEntryCloseAt)}</span>
-            </>
-          ) : (
-            <>
-              <AlertTriangle className="h-3 w-3" aria-hidden />
-              <span>Late entry closed {formatDate(lateEntryCloseAt)}</span>
-            </>
-          )}
-        </div>
-      )}
-    </header>
+      <div
+        className={cn(
+          "my-3 rounded-[10px] border border-white/[0.04] bg-black/25 px-3.5 py-3",
+          "font-['Manrope'] text-[0.78rem] leading-[1.55] text-white/55",
+        )}
+      >
+        <span className="font-semibold text-white">
+          {tierCount} {tierWord} from {feeLabel}.
+        </span>{" "}
+        Pick your stake. Same matches across the Round — one entry, all picks.
+      </div>
+      <Link
+        href="/tables"
+        className={cn(
+          "flex w-full items-center justify-center gap-2 rounded-[10px] px-4 py-3.5",
+          "bg-emerald-500 font-['Manrope'] text-sm font-bold text-[#0b1f14]",
+          "shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]",
+          "transition hover:bg-emerald-400 active:bg-emerald-600",
+          "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60",
+        )}
+      >
+        <span>Choose your tier</span>
+        <ArrowRight className="h-4 w-4" aria-hidden />
+      </Link>
+    </article>
   );
 }
 
-// ─── Live entries section ────────────────────────────────────────────────
+// ─── Tournament-style card (WC) ──────────────────────────────────────────
 
-function LiveEntryCard({ entry, competitionSlug }: { entry: UserEntry; competitionSlug: string }) {
-  const progress = entry.predictionsTotal > 0
-    ? `${entry.predictionsMade}/${entry.predictionsTotal} saved`
-    : "No matches yet";
-  const predictHref = `/predict/${entry.id}`;
-  const tableHref = `/pools/${competitionSlug}/${entry.poolId}/table`;
+function TournamentCard({
+  competition,
+  enterable,
+}: {
+  competition: Competition;
+  enterable: EnterableState;
+}) {
+  // Tournament comps always have exactly one pool (single dedicated tier).
+  const pool = enterable.enterablePools[0];
+  const { currentRound: round } = competition;
+  const matchCount = round.matchdays.length === 0 ? "104 matches" : `${round.matchdays.length} matches`;
+  const dateRange = round.startDate && round.endDate
+    ? `${formatDate(round.startDate)} → ${formatDate(round.endDate)}`
+    : null;
+  const closeLabel = pool ? `Late entry closes ${formatDate(pool.closesAt)}` : "";
+  const fee = pool ? formatFee(pool.tier.entryFee) : "";
+
+  return (
+    <article
+      className={cn(
+        "relative overflow-hidden rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.06]",
+        "px-[18px] pb-4 pt-[18px]",
+      )}
+    >
+      <CornerGlow />
+      <header className="mb-1 flex items-start justify-between gap-3">
+        <h2 className="m-0 font-['Barlow_Condensed'] text-[1.375rem] font-extrabold uppercase leading-[1.05] tracking-[0.02em] text-white">
+          {competition.name}
+        </h2>
+        {dateRange && (
+          <span
+            className={cn(
+              "whitespace-nowrap rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-1",
+              "font-['Manrope'] text-[0.625rem] font-bold uppercase tracking-[0.14em] text-emerald-200",
+            )}
+          >
+            {dateRange}
+          </span>
+        )}
+      </header>
+      <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
+        <span className="font-semibold text-white">{matchCount}</span>
+        {closeLabel && (
+          <>
+            <span className="mx-1.5 text-white/30">·</span>
+            {closeLabel}
+          </>
+        )}
+      </p>
+      <div
+        className={cn(
+          "my-3 rounded-[10px] border border-white/[0.04] bg-black/25 px-3.5 py-3",
+          "font-['Manrope'] text-[0.78rem] leading-[1.55] text-white/55",
+        )}
+      >
+        <span className="font-semibold text-white">One bracket. One {fee} entry.</span>{" "}
+        Full-time scores only — no extra time, no penalties. Predict each round as the bracket fills in.
+      </div>
+      <Link
+        href={`/enter/${competition.slug}`}
+        className={cn(
+          "flex w-full items-center justify-center gap-2 rounded-[10px] px-4 py-3.5",
+          "bg-emerald-500 font-['Manrope'] text-sm font-bold text-[#0b1f14]",
+          "shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]",
+          "transition hover:bg-emerald-400 active:bg-emerald-600",
+          "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60",
+        )}
+      >
+        <span>Enter {competition.shortName ?? competition.name}</span>
+        <ArrowRight className="h-4 w-4" aria-hidden />
+      </Link>
+    </article>
+  );
+}
+
+// ─── Shared bits ─────────────────────────────────────────────────────────
+
+function CornerGlow() {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute -right-10 -top-10 h-[120px] w-[120px]"
+      style={{
+        background:
+          "radial-gradient(circle at center, rgba(52, 211, 153, 0.10), transparent 70%)",
+      }}
+    />
+  );
+}
+
+function EmptyAllEntered() {
   return (
     <div
       className={cn(
-        "rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.06]",
-        "px-4 py-3.5",
+        "mx-4 my-2 rounded-2xl border border-dashed border-white/10 px-5 py-7 text-center",
       )}
     >
-      <div className="min-w-0 space-y-0.5">
-        <p className="truncate font-['Barlow_Condensed'] text-[1rem] font-bold uppercase tracking-[0.06em] text-white">
-          {entry.competitionShortName} · {entry.tierName}
-        </p>
-        <p className="font-['Manrope'] text-[0.75rem] text-white/55">{progress}</p>
-      </div>
-      <div className="mt-3 flex gap-2">
+      <p className="mb-1.5 font-['Manrope'] text-sm font-semibold text-white">
+        All current competitions entered.
+      </p>
+      <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
+        You're in everything that's open right now. Make your picks in{" "}
         <Link
-          href={predictHref}
-          className={cn(
-            "flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2",
-            "bg-emerald-500 font-['Manrope'] text-[0.78rem] font-semibold text-black",
-            "transition hover:bg-emerald-400 active:bg-emerald-600",
-            "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60",
-            "min-h-[44px]",
-          )}
+          href="/predict"
+          className="font-semibold text-emerald-200 underline decoration-emerald-200/40 underline-offset-[3px]"
         >
-          <span>Predictions</span>
+          Predict →
         </Link>
-        <Link
-          href={tableHref}
-          className={cn(
-            "flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2",
-            "border border-emerald-400/30 bg-emerald-400/[0.04]",
-            "font-['Manrope'] text-[0.78rem] font-semibold text-emerald-200",
-            "transition hover:border-emerald-300/50 hover:bg-emerald-400/[0.08]",
-            "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
-            "min-h-[44px]",
-          )}
-        >
-          <span>Table</span>
-        </Link>
-      </div>
+      </p>
     </div>
   );
 }
 
-function LiveEntriesSection({
-  entries,
-  hasAvailableTiers,
-  competitionSlug,
-}: {
-  entries: UserEntry[];
-  hasAvailableTiers: boolean;
-  competitionSlug: string;
-}) {
+function EmptyNothingOpen() {
   return (
-    <section className="space-y-2.5">
-      <h2 className="font-['Manrope'] text-[0.66rem] font-semibold uppercase tracking-[0.28em] text-white/45">
-        Your live entries
-      </h2>
-      {entries.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center">
-          <p className="font-['Manrope'] text-sm text-white/55">
-            No entries yet.
-          </p>
-          {hasAvailableTiers && (
-            <p className="mt-1 font-['Manrope'] text-[0.76rem] text-white/40">
-              Pick a tier below to enter this Round.
-            </p>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {entries.map((entry) => (
-            <LiveEntryCard key={entry.id} entry={entry} competitionSlug={competitionSlug} />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-// ─── Available tiers section ─────────────────────────────────────────────
-
-function AvailableTierRow({ pool, competitionSlug }: { pool: Pool; competitionSlug: string }) {
-  const breakdownLabel = formatPrizeBreakdown(pool.prizeBreakdown);
-  return (
-    <Link
-      href="/tables"
+    <div
       className={cn(
-        "flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.02]",
-        "px-4 py-3.5 transition hover:border-emerald-300/30 hover:bg-emerald-400/[0.04]",
-        "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
+        "mx-4 my-2 rounded-2xl border border-dashed border-white/10 px-5 py-7 text-center",
       )}
     >
-      <div className="min-w-0 flex-1 space-y-0.5">
-        <p className="truncate font-['Barlow_Condensed'] text-[1.05rem] font-bold uppercase tracking-[0.06em] text-white">
-          {pool.tier.name}
-        </p>
-        <p className="font-['Manrope'] text-[0.75rem] text-white/45">
-          {formatEntryCount(pool.entryCount)}
-        </p>
-        {breakdownLabel && (
-          <p className="font-['Manrope'] text-[0.7rem] tabular-nums text-emerald-200/70">
-            {breakdownLabel}
-          </p>
-        )}
-      </div>
-      <div className="flex flex-shrink-0 items-center gap-2.5">
-        <span className="font-['Barlow_Condensed'] text-[1.2rem] font-extrabold text-emerald-300">
-          {formatFee(pool.tier.entryFee)}
-        </span>
-        <ArrowRight className="h-4 w-4 text-white/40" aria-hidden />
-      </div>
-    </Link>
+      <p className="mb-1.5 font-['Manrope'] text-sm font-semibold text-white">
+        Nothing open right now.
+      </p>
+      <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
+        Check back when the next Round opens.
+      </p>
+    </div>
   );
 }
 
-function AvailableTiersSection({ pools, competitionSlug }: { pools: Pool[]; competitionSlug: string }) {
-  if (pools.length === 0) return null;
+// ─── Page header ─────────────────────────────────────────────────────────
+
+function PageHeading() {
   return (
-    <section className="space-y-2.5">
-      <h2 className="font-['Manrope'] text-[0.66rem] font-semibold uppercase tracking-[0.28em] text-white/45">
-        Available tiers
-      </h2>
-      <div className="space-y-2">
-        {pools.map((pool) => (
-          <AvailableTierRow key={pool.id} pool={pool} competitionSlug={competitionSlug} />
-        ))}
-      </div>
-    </section>
+    <div className="px-5 pb-2.5 pt-5">
+      <p className="m-0 mb-1.5 font-['Manrope'] text-[0.6875rem] font-bold uppercase tracking-[0.32em] text-emerald-300/70">
+        Open now
+      </p>
+      <h1 className="m-0 font-['Barlow_Condensed'] text-[2rem] font-extrabold uppercase leading-[0.95] tracking-[0.01em] text-white">
+        Competitions
+      </h1>
+    </div>
   );
 }
 
@@ -271,7 +320,6 @@ type HomeData = {
 };
 
 export default function HomePage() {
-  const { user } = useAuth();
   const [data, setData] = useState<HomeData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -308,51 +356,36 @@ export default function HomePage() {
     );
   }
 
-  const firstName = user?.name?.split(" ")[0] ?? "there";
+  // Build entered-pool set once, then derive each competition's enterable
+  // state. Card hides when no pools remain (entered or past close).
+  const enteredPoolIds = new Set(data.entries.map((e) => e.poolId));
+  const cards = data.competitions
+    .map((comp) => ({ comp, enterable: deriveEnterable(comp, enteredPoolIds) }))
+    .filter(({ enterable }) => enterable.enterablePools.length > 0);
 
-  // Between-seasons empty state — no competition has an open Round.
-  if (data.competitions.length === 0) {
-    return (
-      <div className="space-y-5 px-4 py-7">
-        <header className="space-y-2">
-          <h1 className="font-['Barlow_Condensed'] text-[1.85rem] font-bold uppercase leading-[1.05] tracking-[0.04em] text-white">
-            Welcome, {firstName}.
-          </h1>
-          <p className="font-['Manrope'] text-sm text-white/55">
-            No open Rounds right now — we're between seasons.
-          </p>
-        </header>
-        <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-6 text-center">
-          <p className="font-['Barlow_Condensed'] text-[0.86rem] font-bold uppercase tracking-[0.18em] text-white/55">
-            Pools open when fixtures are ready
-          </p>
-          <p className="mt-2 font-['Manrope'] text-xs text-white/40">
-            Check back when the next Round opens.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // Single-competition Home — arch §14 #7 multi-competition layout deferred.
-  // Pick the first competition (alphabetical → "Premier League" before
-  // "EFL Championship"; once Champ pools exist we'll add a switcher).
-  const competition = data.competitions[0];
-  const myEntries = data.entries.filter((e) => e.competitionId === competition.id);
-  const enteredPoolIds = new Set(myEntries.map((e) => e.poolId));
-  const availableTiers = competition.pools.filter((p) => !enteredPoolIds.has(p.id));
+  // Empty state branches per arch §8.1:
+  //   - No comps from server (between-seasons) → "Nothing open right now"
+  //   - Comps exist but all entered/closed     → "All current competitions
+  //     entered" with link to Predict
+  const showAllEnteredEmpty = cards.length === 0 && data.competitions.length > 0;
+  const showNothingOpenEmpty = cards.length === 0 && data.competitions.length === 0;
 
   return (
-    <div className="space-y-7 px-4 py-7">
-      <RoundHeader competition={competition} />
-
-      <LiveEntriesSection
-        entries={myEntries}
-        hasAvailableTiers={availableTiers.length > 0}
-        competitionSlug={competition.slug}
-      />
-
-      <AvailableTiersSection pools={availableTiers} competitionSlug={competition.slug} />
+    <div className="pb-6">
+      <PageHeading />
+      {cards.length > 0 && (
+        <div className="flex flex-col gap-3 px-4 pb-6 pt-2">
+          {cards.map(({ comp, enterable }) =>
+            comp.postponedPolicy === "forfeit" ? (
+              <TournamentCard key={comp.id} competition={comp} enterable={enterable} />
+            ) : (
+              <LeagueCard key={comp.id} competition={comp} enterable={enterable} />
+            ),
+          )}
+        </div>
+      )}
+      {showAllEnteredEmpty && <EmptyAllEntered />}
+      {showNothingOpenEmpty && <EmptyNothingOpen />}
     </div>
   );
 }
