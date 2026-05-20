@@ -1,32 +1,41 @@
 /*
-Home (arch §8.1) — entry discovery surface. Step 3a.6 redesign.
+Home (arch §8.1) — entry-discovery surface, redesigned in step 3a.6 and
+extended in step 3a.11.
 
-One card per competition currently open for entry. No live entries
-section — those moved entirely to the Predict tab (arch §8.2) per
-Rule #18.
+Cards stay visible after entry (3a.11 change from 3a.6's hide-on-entry
+behaviour). Each card branches on the user's state in that competition:
 
-Card behaviour branches on `competition.postponedPolicy`:
-  - `'wait'`  (league-style: PL / Champ) → "Choose your tier →" → /tables
-  - `'forfeit'` (tournament-style: WC)   → "Enter [Name] →"     → /enter/:slug
+  League-style (PL / Champ):
+    not entered       → "Choose your tier →" single CTA, routes to /tables
+    partially entered → "You're in: Fiver, Tenner · 2 tiers left" inline +
+                        two stacked CTAs: "Open predictions" (smart route)
+                        and "Pick another tier" (→ /tables)
+    fully entered     → "You're in all N tiers" inline + single
+                        "Open predictions" CTA
 
-Hiding rules (arch §8.1):
-  - A competition's card hides once every enterable pool is either
-    already entered by the user OR past its late-entry close (closesAt).
-  - Inactive competitions / pools are filtered by the server.
+  Tournament-style (WC):
+    not entered → "Enter World Cup →" routes to /enter/<slug>
+    entered     → "You're in" inline + "Open World Cup →" routes to
+                  /predict/<entryId>
 
-Empty states:
-  - No competitions open at all          → "Nothing open right now."
-  - Open competitions all entered/closed → "All current competitions
-    entered. Make your picks in Predict →"
+Smart route for "Open predictions": one entry → straight to that entry's
+predict screen (skips the Predict tab list); two or more entries → /predict
+where the user picks which tier to open.
 
-NOTE: the WC card currently links to /enter/world-cup-2026 which will
-404 until step 3a.7 ships the confirm screen. Order is deliberate per
-the handoff (3a.9 predict gating must land before 3a.7).
+Entered cards get a brighter emerald border + slightly stronger background
+tint so the card's state reads at a glance.
+
+Card hiding rule: a competition is hidden only when the user has zero
+entries in it AND zero enterable pools (e.g. between seasons). Otherwise
+always shown.
+
+Card behaviour branches on `competition.postponedPolicy` — `'forfeit'` =
+tournament-style (WC), `'wait'` = league-style (PL/Champ).
 */
 
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Check, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   fetchCompetitions,
@@ -44,7 +53,7 @@ const DATE_FMT = new Intl.DateTimeFormat("en-GB", {
   month: "short",
 });
 
-function formatDate(iso: string | null | undefined): string {
+function formatDate(iso: string | null): string {
   if (!iso) return "";
   return DATE_FMT.format(new Date(iso));
 }
@@ -61,161 +70,302 @@ function formatMatchdayRange(matchdays: number[], label: "GW" | "MD"): string {
   return matchdays.length === 1 ? `${label} ${first}` : `${label}s ${first}-${last}`;
 }
 
+/** "The Fiver" → "Fiver" for compact inline lists. */
+function shortTierName(name: string): string {
+  return name.replace(/^The\s+/i, "");
+}
+
+/** "Fiver", "Fiver and Tenner", "Fiver, Tenner and Pony". */
+function joinNames(names: string[]): string {
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
 // ─── Card-data helpers ───────────────────────────────────────────────────
 
-type EnterableState = {
-  /** Pools the user can still enter (not entered + late-entry not closed). */
+type CompState = {
+  competition: Competition;
+  /** UserEntries the viewer holds in this competition. */
+  userEntries: UserEntry[];
+  /** Pools still enterable: not entered AND late-entry window still open. */
   enterablePools: Pool[];
-  /** Earliest closesAt across enterable pools (for the "Closes …" meta line). */
+  /** Lowest enterable fee + nearest enterable close, for unentered/partial header. */
   nearestCloseAt: string | null;
-  /** Lowest entry fee across enterable pools (for "from £5" copy). */
   lowestFee: string | null;
 };
 
-function deriveEnterable(competition: Competition, enteredPoolIds: Set<string>): EnterableState {
+function deriveCompState(competition: Competition, entries: UserEntry[]): CompState {
+  const userEntries = entries.filter((e) => e.competitionId === competition.id);
+  const enteredPoolIds = new Set(userEntries.map((e) => e.poolId));
   const now = Date.now();
-  const enterable = competition.pools.filter(
+  const enterablePools = competition.pools.filter(
     (p) => !enteredPoolIds.has(p.id) && new Date(p.closesAt).getTime() > now,
   );
-  if (enterable.length === 0) {
-    return { enterablePools: [], nearestCloseAt: null, lowestFee: null };
+  let nearestCloseAt: string | null = null;
+  let lowestFee: string | null = null;
+  for (const p of enterablePools) {
+    if (nearestCloseAt === null || new Date(p.closesAt).getTime() < new Date(nearestCloseAt).getTime()) {
+      nearestCloseAt = p.closesAt;
+    }
+    if (lowestFee === null || parseFloat(p.tier.entryFee) < parseFloat(lowestFee)) {
+      lowestFee = p.tier.entryFee;
+    }
   }
-  let nearest = enterable[0].closesAt;
-  let lowest = enterable[0].tier.entryFee;
-  for (const p of enterable) {
-    if (new Date(p.closesAt).getTime() < new Date(nearest).getTime()) nearest = p.closesAt;
-    if (parseFloat(p.tier.entryFee) < parseFloat(lowest)) lowest = p.tier.entryFee;
-  }
-  return { enterablePools: enterable, nearestCloseAt: nearest, lowestFee: lowest };
+  return { competition, userEntries, enterablePools, nearestCloseAt, lowestFee };
+}
+
+/** Smart-route for "Open predictions". One entry → that entry; otherwise → list. */
+function predictionsHref(userEntries: UserEntry[]): string {
+  return userEntries.length === 1 ? `/predict/${userEntries[0].id}` : "/predict";
+}
+
+// ─── Visual building blocks ──────────────────────────────────────────────
+
+function CornerGlow({ strong }: { strong: boolean }) {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute -right-10 -top-10 h-[120px] w-[120px]"
+      style={{
+        background: strong
+          ? "radial-gradient(circle at center, rgba(52, 211, 153, 0.18), transparent 70%)"
+          : "radial-gradient(circle at center, rgba(52, 211, 153, 0.10), transparent 70%)",
+      }}
+    />
+  );
+}
+
+/** Shared card outer container. `entered` toggles the brighter look. */
+function CardShell({
+  entered,
+  children,
+}: {
+  entered: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <article
+      className={cn(
+        "relative overflow-hidden rounded-2xl border px-[18px] pb-4 pt-[18px]",
+        entered
+          ? "border-emerald-400/55 bg-emerald-400/[0.10] ring-1 ring-inset ring-emerald-400/15"
+          : "border-emerald-400/30 bg-emerald-400/[0.06]",
+      )}
+    >
+      <CornerGlow strong={entered} />
+      {children}
+    </article>
+  );
+}
+
+function CardHeader({
+  title,
+  badge,
+}: {
+  title: string;
+  badge?: string | null;
+}) {
+  return (
+    <header className="mb-1 flex items-start justify-between gap-3">
+      <h2 className="m-0 font-['Barlow_Condensed'] text-[1.375rem] font-extrabold uppercase leading-[1.05] tracking-[0.02em] text-white">
+        {title}
+      </h2>
+      {badge && (
+        <span
+          className={cn(
+            "whitespace-nowrap rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-1",
+            "font-['Manrope'] text-[0.625rem] font-bold uppercase tracking-[0.14em] text-emerald-200",
+          )}
+        >
+          {badge}
+        </span>
+      )}
+    </header>
+  );
+}
+
+function YoureInLine({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="m-0 mt-1.5 flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] font-semibold leading-[1.4] text-emerald-200">
+      <Check className="h-3.5 w-3.5 flex-shrink-0" aria-hidden />
+      <span>{children}</span>
+    </p>
+  );
+}
+
+const CTA_BASE =
+  "flex w-full items-center justify-center gap-2 rounded-[10px] px-4 py-3.5 " +
+  "font-['Manrope'] text-sm font-bold transition " +
+  "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60";
+
+function PrimaryButton({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        CTA_BASE,
+        "bg-emerald-500 text-[#0b1f14] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]",
+        "hover:bg-emerald-400 active:bg-emerald-600",
+      )}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function GhostButton({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        CTA_BASE,
+        "border border-emerald-400/40 bg-emerald-400/[0.06] text-emerald-200",
+        "hover:bg-emerald-400/[0.12] active:bg-emerald-400/[0.18]",
+      )}
+    >
+      {children}
+    </Link>
+  );
 }
 
 // ─── League-style card (PL / Champ) ──────────────────────────────────────
 
-function LeagueCard({
-  competition,
-  enterable,
-}: {
-  competition: Competition;
-  enterable: EnterableState;
-}) {
+function LeagueCard({ state }: { state: CompState }) {
+  const { competition, userEntries, enterablePools, nearestCloseAt, lowestFee } = state;
   const { currentRound: round } = competition;
   const rangeLabel = formatMatchdayRange(round.matchdays, round.matchdayLabel);
-  const closeLabel = enterable.nearestCloseAt ? `Closes ${formatDate(enterable.nearestCloseAt)}` : "";
-  const tierCount = enterable.enterablePools.length;
-  const feeLabel = enterable.lowestFee ? formatFee(enterable.lowestFee) : "";
+  const closeLabel = nearestCloseAt ? `Closes ${formatDate(nearestCloseAt)}` : "";
+  const tierCount = enterablePools.length;
+  const feeLabel = lowestFee ? formatFee(lowestFee) : "";
   const tierWord = tierCount === 1 ? "tier" : "tiers";
 
+  const enteredCount = userEntries.length;
+  const totalPools = competition.pools.length;
+  const entered = enteredCount > 0;
+  const fullyEntered = enteredCount > 0 && enterablePools.length === 0;
+
+  const enteredNames = userEntries.map((e) => shortTierName(e.tierName));
+
   return (
-    <article
-      className={cn(
-        "relative overflow-hidden rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.06]",
-        "px-[18px] pb-4 pt-[18px]",
+    <CardShell entered={entered}>
+      <CardHeader title={competition.name} badge={round.name} />
+
+      {/* Meta line: show the open-tier summary only if any tiers are still
+          enterable. Once fully entered, the line below tells the story. */}
+      {(rangeLabel || closeLabel) && (
+        <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
+          {rangeLabel && (
+            <>
+              {rangeLabel}
+              {closeLabel && enterablePools.length > 0 && (
+                <span aria-hidden className="mx-1.5 text-white/30">·</span>
+              )}
+            </>
+          )}
+          {enterablePools.length > 0 && closeLabel}
+        </p>
       )}
-    >
-      <CornerGlow />
-      <header className="mb-1 flex items-start justify-between gap-3">
-        <h2 className="m-0 font-['Barlow_Condensed'] text-[1.375rem] font-extrabold uppercase leading-[1.05] tracking-[0.02em] text-white">
-          {competition.name}
-        </h2>
-        {round.name && (
-          <span
-            className={cn(
-              "whitespace-nowrap rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-1",
-              "font-['Manrope'] text-[0.625rem] font-bold uppercase tracking-[0.14em] text-emerald-200",
-            )}
-          >
-            {round.name}
-          </span>
+
+      {/* "You're in …" line — only when at least one tier is entered. */}
+      {entered && (
+        <YoureInLine>
+          {fullyEntered
+            ? `You're in all ${totalPools} tiers`
+            : `You're in ${joinNames(enteredNames)} · ${tierCount} ${tierWord} left`}
+        </YoureInLine>
+      )}
+
+      {/* Explainer block — only show when there are still tiers to pick. */}
+      {enterablePools.length > 0 && (
+        <div
+          className={cn(
+            "my-3 rounded-[10px] border border-white/[0.04] bg-black/25 px-3.5 py-3",
+            "font-['Manrope'] text-[0.78rem] leading-[1.55] text-white/55",
+          )}
+        >
+          <span className="font-semibold text-white">
+            {tierCount} {tierWord} from {feeLabel}.
+          </span>{" "}
+          Pick your stake. Same matches across the Round — one entry, all picks.
+        </div>
+      )}
+
+      {/* CTAs */}
+      <div className={cn(enterablePools.length === 0 ? "mt-4" : "", "flex flex-col gap-2")}>
+        {!entered && (
+          <PrimaryButton href="/tables">
+            <span>Choose your tier</span>
+            <ArrowRight className="h-4 w-4" aria-hidden />
+          </PrimaryButton>
         )}
-      </header>
-      <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
-        {rangeLabel && (
-          <>
-            {rangeLabel}
-            {closeLabel && <span className="mx-1.5 text-white/30">·</span>}
-          </>
+        {entered && (
+          <PrimaryButton href={predictionsHref(userEntries)}>
+            <span>Open predictions</span>
+            <ArrowRight className="h-4 w-4" aria-hidden />
+          </PrimaryButton>
         )}
-        {closeLabel}
-      </p>
-      <div
-        className={cn(
-          "my-3 rounded-[10px] border border-white/[0.04] bg-black/25 px-3.5 py-3",
-          "font-['Manrope'] text-[0.78rem] leading-[1.55] text-white/55",
+        {entered && enterablePools.length > 0 && (
+          <GhostButton href="/tables">
+            <span>Pick another tier</span>
+          </GhostButton>
         )}
-      >
-        <span className="font-semibold text-white">
-          {tierCount} {tierWord} from {feeLabel}.
-        </span>{" "}
-        Pick your stake. Same matches across the Round — one entry, all picks.
       </div>
-      <Link
-        href="/tables"
-        className={cn(
-          "flex w-full items-center justify-center gap-2 rounded-[10px] px-4 py-3.5",
-          "bg-emerald-500 font-['Manrope'] text-sm font-bold text-[#0b1f14]",
-          "shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]",
-          "transition hover:bg-emerald-400 active:bg-emerald-600",
-          "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60",
-        )}
-      >
-        <span>Choose your tier</span>
-        <ArrowRight className="h-4 w-4" aria-hidden />
-      </Link>
-    </article>
+    </CardShell>
   );
 }
 
 // ─── Tournament-style card (WC) ──────────────────────────────────────────
 
-function TournamentCard({
-  competition,
-  enterable,
-}: {
-  competition: Competition;
-  enterable: EnterableState;
-}) {
-  // Tournament comps always have exactly one pool (single dedicated tier).
-  const pool = enterable.enterablePools[0];
+function TournamentCard({ state }: { state: CompState }) {
+  const { competition, userEntries, enterablePools } = state;
   const { currentRound: round } = competition;
-  const matchCount = round.matchdays.length === 0 ? "104 matches" : `${round.matchdays.length} matches`;
-  const dateRange = round.startDate && round.endDate
-    ? `${formatDate(round.startDate)} → ${formatDate(round.endDate)}`
+  // Tournament comps have a single pool — userEntries.length is 0 or 1.
+  const entered = userEntries.length > 0;
+  const myEntry = userEntries[0] ?? null;
+  // Use the one available pool (entered or enterable) for fee display.
+  const referencePool =
+    enterablePools[0] ?? competition.pools[0] ?? null;
+  const fee = referencePool ? formatFee(referencePool.tier.entryFee) : "";
+
+  const dateRange =
+    round.startDate && round.endDate
+      ? `${formatDate(round.startDate)} → ${formatDate(round.endDate)}`
+      : null;
+  const matchCount = `${round.matchdays.length || 104} matches`;
+  const closeLabel = enterablePools[0]
+    ? `Late entry closes ${formatDate(enterablePools[0].closesAt)}`
     : null;
-  const closeLabel = pool ? `Late entry closes ${formatDate(pool.closesAt)}` : "";
-  const fee = pool ? formatFee(pool.tier.entryFee) : "";
 
   return (
-    <article
-      className={cn(
-        "relative overflow-hidden rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.06]",
-        "px-[18px] pb-4 pt-[18px]",
-      )}
-    >
-      <CornerGlow />
-      <header className="mb-1 flex items-start justify-between gap-3">
-        <h2 className="m-0 font-['Barlow_Condensed'] text-[1.375rem] font-extrabold uppercase leading-[1.05] tracking-[0.02em] text-white">
-          {competition.name}
-        </h2>
-        {dateRange && (
-          <span
-            className={cn(
-              "whitespace-nowrap rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-1",
-              "font-['Manrope'] text-[0.625rem] font-bold uppercase tracking-[0.14em] text-emerald-200",
-            )}
-          >
-            {dateRange}
-          </span>
-        )}
-      </header>
+    <CardShell entered={entered}>
+      <CardHeader title={competition.name} badge={dateRange} />
+
       <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
         <span className="font-semibold text-white">{matchCount}</span>
         {closeLabel && (
           <>
-            <span className="mx-1.5 text-white/30">·</span>
+            <span aria-hidden className="mx-1.5 text-white/30">·</span>
             {closeLabel}
           </>
         )}
       </p>
+
+      {entered && <YoureInLine>You're in</YoureInLine>}
+
       <div
         className={cn(
           "my-3 rounded-[10px] border border-white/[0.04] bg-black/25 px-3.5 py-3",
@@ -223,70 +373,30 @@ function TournamentCard({
         )}
       >
         <span className="font-semibold text-white">One bracket. One {fee} entry.</span>{" "}
-        Full-time scores only — no extra time, no penalties. Predict each round as the bracket fills in.
+        Full-time scores only — no extra time, no penalties. Predict each round as the
+        bracket fills in.
       </div>
-      <Link
-        href={`/enter/${competition.slug}`}
-        className={cn(
-          "flex w-full items-center justify-center gap-2 rounded-[10px] px-4 py-3.5",
-          "bg-emerald-500 font-['Manrope'] text-sm font-bold text-[#0b1f14]",
-          "shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]",
-          "transition hover:bg-emerald-400 active:bg-emerald-600",
-          "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60",
-        )}
-      >
-        <span>Enter {competition.shortName ?? competition.name}</span>
-        <ArrowRight className="h-4 w-4" aria-hidden />
-      </Link>
-    </article>
-  );
-}
 
-// ─── Shared bits ─────────────────────────────────────────────────────────
-
-function CornerGlow() {
-  return (
-    <div
-      aria-hidden
-      className="pointer-events-none absolute -right-10 -top-10 h-[120px] w-[120px]"
-      style={{
-        background:
-          "radial-gradient(circle at center, rgba(52, 211, 153, 0.10), transparent 70%)",
-      }}
-    />
-  );
-}
-
-function EmptyAllEntered() {
-  return (
-    <div
-      className={cn(
-        "mx-4 my-2 rounded-2xl border border-dashed border-white/10 px-5 py-7 text-center",
+      {entered && myEntry ? (
+        <PrimaryButton href={`/predict/${myEntry.id}`}>
+          <span>Open {competition.shortName ?? competition.name}</span>
+          <ArrowRight className="h-4 w-4" aria-hidden />
+        </PrimaryButton>
+      ) : (
+        <PrimaryButton href={`/enter/${competition.slug}`}>
+          <span>Enter {competition.shortName ?? competition.name}</span>
+          <ArrowRight className="h-4 w-4" aria-hidden />
+        </PrimaryButton>
       )}
-    >
-      <p className="mb-1.5 font-['Manrope'] text-sm font-semibold text-white">
-        All current competitions entered.
-      </p>
-      <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
-        You're in everything that's open right now. Make your picks in{" "}
-        <Link
-          href="/predict"
-          className="font-semibold text-emerald-200 underline decoration-emerald-200/40 underline-offset-[3px]"
-        >
-          Predict →
-        </Link>
-      </p>
-    </div>
+    </CardShell>
   );
 }
+
+// ─── Empty states ────────────────────────────────────────────────────────
 
 function EmptyNothingOpen() {
   return (
-    <div
-      className={cn(
-        "mx-4 my-2 rounded-2xl border border-dashed border-white/10 px-5 py-7 text-center",
-      )}
-    >
+    <div className="mx-4 my-2 rounded-2xl border border-dashed border-white/10 px-5 py-7 text-center">
       <p className="mb-1.5 font-['Manrope'] text-sm font-semibold text-white">
         Nothing open right now.
       </p>
@@ -297,7 +407,7 @@ function EmptyNothingOpen() {
   );
 }
 
-// ─── Page header ─────────────────────────────────────────────────────────
+// ─── Page heading ────────────────────────────────────────────────────────
 
 function PageHeading() {
   return (
@@ -356,36 +466,35 @@ export default function HomePage() {
     );
   }
 
-  // Build entered-pool set once, then derive each competition's enterable
-  // state. Card hides when no pools remain (entered or past close).
-  const enteredPoolIds = new Set(data.entries.map((e) => e.poolId));
+  // Build CompState per competition. Card is shown when the user has at
+  // least one entry in it OR at least one pool is still enterable. Drop
+  // only the truly-nothing-to-do case (between seasons, no entries).
   const cards = data.competitions
-    .map((comp) => ({ comp, enterable: deriveEnterable(comp, enteredPoolIds) }))
-    .filter(({ enterable }) => enterable.enterablePools.length > 0);
+    .map((comp) => deriveCompState(comp, data.entries))
+    .filter(
+      (state) => state.userEntries.length > 0 || state.enterablePools.length > 0,
+    );
 
-  // Empty state branches per arch §8.1:
-  //   - No comps from server (between-seasons) → "Nothing open right now"
-  //   - Comps exist but all entered/closed     → "All current competitions
-  //     entered" with link to Predict
-  const showAllEnteredEmpty = cards.length === 0 && data.competitions.length > 0;
-  const showNothingOpenEmpty = cards.length === 0 && data.competitions.length === 0;
+  // Empty state only when there are literally no actionable competitions
+  // (server returned no comps, or returned comps but the user has nothing
+  // to act on — e.g. between rounds).
+  const showNothingOpen = cards.length === 0;
 
   return (
     <div className="pb-6">
       <PageHeading />
       {cards.length > 0 && (
         <div className="flex flex-col gap-3 px-4 pb-6 pt-2">
-          {cards.map(({ comp, enterable }) =>
-            comp.postponedPolicy === "forfeit" ? (
-              <TournamentCard key={comp.id} competition={comp} enterable={enterable} />
+          {cards.map((state) =>
+            state.competition.postponedPolicy === "forfeit" ? (
+              <TournamentCard key={state.competition.id} state={state} />
             ) : (
-              <LeagueCard key={comp.id} competition={comp} enterable={enterable} />
+              <LeagueCard key={state.competition.id} state={state} />
             ),
           )}
         </div>
       )}
-      {showAllEnteredEmpty && <EmptyAllEntered />}
-      {showNothingOpenEmpty && <EmptyNothingOpen />}
+      {showNothingOpen && <EmptyNothingOpen />}
     </div>
   );
 }
