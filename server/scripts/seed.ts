@@ -62,7 +62,7 @@ const TIERS = [
   // Tournament-style dedicated tier (step 3a, arch §3 + §13 Rule #4). Used by
   // World Cup 2026 only — one Enter button, no tier choice. Retires via
   // RETIRED_TIER_SLUGS after the tournament settles (~22 July 2026).
-  { slug: "world-cup-2026", name: "World Cup 2026", entryFee: "30.00", ordinal: 10, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
+  { slug: "world-cup-2026", name: "World Cup 2026", entryFee: "10.00", ordinal: 10, accent: "#34d379", prizeStructure: { model: "top_n", splits: [0.60, 0.25, 0.15], houseFeePct: 0.25 } },
 ] as const;
 
 // Retired tiers — kept in the DB for historical reference, deactivated by
@@ -192,15 +192,29 @@ async function seedTiers(): Promise<Map<string, string>> {
   const bySlug = new Map<string, string>();
 
   // Active tiers — insert if missing, ensure is_active=true if previously
-  // retired then revived. (Idempotent: no-op when already correct.)
+  // retired then revived, and sync entryFee + description when the config
+  // diverges from the DB row (e.g. WC fee adjusted post-seed). All idempotent.
   for (const tier of TIERS) {
     const [existing] = await db.select().from(leagues).where(eq(leagues.slug, tier.slug));
     if (existing) {
       bySlug.set(tier.slug, existing.id);
+
+      const feeDiffers = existing.entryFee !== tier.entryFee;
+      if (feeDiffers) {
+        await db
+          .update(leagues)
+          .set({
+            entryFee: tier.entryFee,
+            description: `${tier.name} — £${tier.entryFee} entry`,
+          })
+          .where(eq(leagues.id, existing.id));
+        log(`  ${tier.name} entry fee synced: £${existing.entryFee} → £${tier.entryFee}`);
+      }
+
       if (existing.isActive === false) {
         await db.update(leagues).set({ isActive: true }).where(eq(leagues.id, existing.id));
         log(`  ${tier.name} reactivated`);
-      } else {
+      } else if (!feeDiffers) {
         log(`  ${tier.name} already exists`);
       }
       continue;

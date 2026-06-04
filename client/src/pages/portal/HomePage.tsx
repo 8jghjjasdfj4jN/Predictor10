@@ -387,7 +387,7 @@ function TournamentCard({ state }: { state: CompState }) {
           "font-['Manrope'] text-[0.78rem] leading-[1.55] text-white/55",
         )}
       >
-        <span className="font-semibold text-white">One bracket.</span>{" "}
+        <span className="font-semibold text-white">One bracket. One {fee} entry.</span>{" "}
         Full-time scores only — no extra time, no penalties. Predict each round as the
         bracket fills in.
       </div>

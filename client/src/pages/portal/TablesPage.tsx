@@ -97,30 +97,6 @@ function formatPrizeBreakdown(breakdown: PrizeBreakdownEntry[]): string {
     .join(" · ");
 }
 
-// ─── WC display-only override ────────────────────────────────────────────
-//
-// The World Cup tier displays its prize breakdown computed from a £10-per-
-// player basis rather than the £30 entry fee that's actually charged. This
-// is a public-display override for the informal pre-licence run; the
-// underlying pool, payments, and settlement maths continue to use the real
-// £30 fee. Mirrors server-side computeDisplayBreakdown rounding (Math.round
-// per place, residual penny to rank 1) so the numbers behave consistently.
-const WC_TIER_SLUG = "world-cup-2026";
-const WC_DISPLAY_FEE_PENCE = 1000;
-const WC_SPLITS = [0.6, 0.25, 0.15] as const;
-const WC_HOUSE_FEE_PCT = 0.25;
-
-function computeWcDisplayBreakdown(entryCount: number): PrizeBreakdownEntry[] {
-  if (entryCount <= 0) return [];
-  const gross = WC_DISPLAY_FEE_PENCE * entryCount;
-  const house = Math.floor(gross * WC_HOUSE_FEE_PCT);
-  const player = gross - house;
-  const amounts = WC_SPLITS.map((s) => Math.round(player * s));
-  const residual = player - amounts.reduce((a, b) => a + b, 0);
-  amounts[0] += residual;
-  return amounts.map((p, i) => ({ rank: i + 1, amount: (p / 100).toFixed(2) }));
-}
-
 function ordinalSuffix(n: number): string {
   const lastTwo = n % 100;
   if (lastTwo >= 11 && lastTwo <= 13) return `${n}th`;
@@ -252,7 +228,6 @@ function TierHeader({
   submitting: boolean;
   onEnterClick: () => void;
 }) {
-  const isWc = pool.tier.slug === WC_TIER_SLUG;
   const feeLabel = formatFee(pool.tier.entryFee);
   const playerCount = pool.entryCount;
 
@@ -260,14 +235,7 @@ function TierHeader({
   // amounts that match what settlement will actually pay (step 2n). When
   // entryCount=0 the server returns [] — show a placeholder rather than
   // "1st £0.00 · 2nd £0.00 · 3rd £0.00".
-  //
-  // WC override: the World Cup tier displays its breakdown on a £10-per-
-  // player basis (pre-licence informal run). Real settlement still uses the
-  // £30 pot — this is presentation only.
-  const breakdownSource = isWc
-    ? computeWcDisplayBreakdown(playerCount)
-    : pool.prizeBreakdown;
-  const breakdownLabel = formatPrizeBreakdown(breakdownSource);
+  const breakdownLabel = formatPrizeBreakdown(pool.prizeBreakdown);
 
   return (
     <div className="flex items-start justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-4">
@@ -278,11 +246,9 @@ function TierHeader({
         <h2 className="font-['Barlow_Condensed'] text-[1.5rem] font-bold uppercase tracking-[0.02em] text-white">
           {pool.tier.name}
         </h2>
-        {!isWc && (
-          <p className="font-['Manrope'] text-[0.75rem] text-white/55">
-            {feeLabel} · {formatPlayerCount(playerCount)}
-          </p>
-        )}
+        <p className="font-['Manrope'] text-[0.75rem] text-white/55">
+          {feeLabel} · {formatPlayerCount(playerCount)}
+        </p>
         {breakdownLabel && (
           <p className="font-['Manrope'] text-[0.72rem] tabular-nums text-emerald-200/80">
             {breakdownLabel}
