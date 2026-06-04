@@ -230,6 +230,15 @@ function TierHeader({
 }) {
   const feeLabel = formatFee(pool.tier.entryFee);
   const playerCount = pool.entryCount;
+  // Gross pot = entryFee × entryCount. Matches what settlement reads off
+  // tier.entryFee, so the displayed pot and the actual paid-out pot agree.
+  // The 75/25 split disclosure on Home explains how this is allocated.
+  const potLabel = (() => {
+    const fee = Number(pool.tier.entryFee);
+    if (!Number.isFinite(fee) || playerCount <= 0) return "";
+    const pot = fee * playerCount;
+    return Number.isInteger(pot) ? `Pot £${pot}` : `Pot £${pot.toFixed(2)}`;
+  })();
 
   // Build the "1st £X · 2nd £Y · 3rd £Z" string. Server sends pence-rounded
   // amounts that match what settlement will actually pay (step 2n). When
@@ -248,6 +257,12 @@ function TierHeader({
         </h2>
         <p className="font-['Manrope'] text-[0.75rem] text-white/55">
           {feeLabel} · {formatPlayerCount(playerCount)}
+          {potLabel && (
+            <>
+              <span aria-hidden className="mx-1 text-white/30">·</span>
+              <span className="tabular-nums">{potLabel}</span>
+            </>
+          )}
         </p>
         {breakdownLabel && (
           <p className="font-['Manrope'] text-[0.72rem] tabular-nums text-emerald-200/80">
