@@ -409,6 +409,18 @@ function TournamentCard({ state }: { state: CompState }) {
 
 // ─── Empty states ────────────────────────────────────────────────────────
 
+function PrizeFundNote() {
+  return (
+    <div className="mx-4 mt-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+      <p className="m-0 font-['Manrope'] text-[0.72rem] leading-[1.55] text-white/55">
+        75% of all entry fees are allocated to the prize fund. The remaining
+        25% is retained by Predictor10 to cover operating, administration and
+        platform costs.
+      </p>
+    </div>
+  );
+}
+
 function EmptyNothingOpen() {
   return (
     <div className="mx-4 my-2 rounded-2xl border border-dashed border-white/10 px-5 py-7 text-center">
@@ -510,6 +522,7 @@ export default function HomePage() {
         </div>
       )}
       {showNothingOpen && <EmptyNothingOpen />}
+      <PrizeFundNote />
     </div>
   );
 }
