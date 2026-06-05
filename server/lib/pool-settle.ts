@@ -302,6 +302,25 @@ async function findReadyPoolIds(): Promise<string[]> {
             )
           )
       )
+      -- P2 (June 2026): never settle while any of this pool's own predictions
+      -- on a FINISHED match is still unscored. Outcome-write and prediction-
+      -- scoring are separate, non-transactional steps in outcome-sync; this
+      -- guard stops a settle pass that races a mid-flight sync (or a crash
+      -- between those two writes) from counting a real, correct prediction as
+      -- 0 — the worst case being the Final, the last match to finish. Once
+      -- the next sync scores those predictions, the pool becomes ready on the
+      -- following pass. Cancelled/void and forfeit-postponed predictions stay
+      -- null by design but their events are NOT 'finished', so they don't trip
+      -- this. Scoring itself still reads the 90-minute full-time result only
+      -- (extractRegulationScore) — extra time and penalties never count.
+      AND NOT EXISTS (
+        SELECT 1
+        FROM predictions pr
+        INNER JOIN events fe ON fe.id = pr.event_id
+        WHERE pr.pool_id = p.id
+          AND fe.status = 'finished'
+          AND pr.points_awarded IS NULL
+      )
     ORDER BY p.closes_at ASC
   `);
   return rows.map((r) => r.pool_id);

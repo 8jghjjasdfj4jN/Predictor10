@@ -555,11 +555,24 @@ export async function getPoolDetail(
  * Stripe webhook flips it to 'succeeded' (then the webhook handler creates
  * the pool_entries row, not this function).
  *
- * Schema note: there's no unique (pool_id, user_id) index on pool_entries yet.
- * The pre-flight duplicate check protects against double-tap; a true
- * concurrent race could still produce two rows. uniqueIndex + migration is
- * a future schema step before public launch. Logged in todo.md.
+ * Schema note: pool_entries has a unique (pool_id, user_id) index
+ * (pool_entries_pool_user_idx). The pre-flight duplicate check below is a
+ * fast path; a true concurrent race (double-tap, second tab, network retry)
+ * can still slip two requests past it, so the index is the real backstop —
+ * the loser's INSERT raises 23505, its transaction rolls back (no orphan
+ * payment), and we resolve to the winning entry as "already entered" (P1,
+ * June 2026).
  */
+function isUniqueViolation(err: unknown): boolean {
+  // postgres-js surfaces a unique-constraint breach as error code 23505.
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: unknown }).code === "23505"
+  );
+}
+
 export async function enterPool(opts: {
   poolId: string;
   userId: string;
@@ -605,43 +618,67 @@ export async function enterPool(opts: {
   }
 
   // Fresh entry: payment → entry → backfill payment.referenceId, atomically.
-  const result = await db.transaction(async (tx) => {
-    const now = new Date();
+  let result: { entryId: string; paymentId: string };
+  try {
+    result = await db.transaction(async (tx) => {
+      const now = new Date();
 
-    const [payment] = await tx
-      .insert(payments)
-      .values({
-        userId,
-        direction: "debit",
-        amount: row.tierFee,
-        currency: "GBP",
-        referenceType: "pool_entry",
-        referenceId: null,
-        mode: "mock",
-        status: "succeeded",
-        ipAddress,
-        userAgent,
-        initiatedAt: now,
-        completedAt: now,
-      })
-      .returning({ id: payments.id });
+      const [payment] = await tx
+        .insert(payments)
+        .values({
+          userId,
+          direction: "debit",
+          amount: row.tierFee,
+          currency: "GBP",
+          referenceType: "pool_entry",
+          referenceId: null,
+          mode: "mock",
+          status: "succeeded",
+          ipAddress,
+          userAgent,
+          initiatedAt: now,
+          completedAt: now,
+        })
+        .returning({ id: payments.id });
 
-    const [entry] = await tx
-      .insert(poolEntries)
-      .values({
-        poolId,
-        userId,
-        paymentId: payment.id,
-      })
-      .returning({ id: poolEntries.id });
+      const [entry] = await tx
+        .insert(poolEntries)
+        .values({
+          poolId,
+          userId,
+          paymentId: payment.id,
+        })
+        .returning({ id: poolEntries.id });
 
-    await tx
-      .update(payments)
-      .set({ referenceId: entry.id })
-      .where(eq(payments.id, payment.id));
+      await tx
+        .update(payments)
+        .set({ referenceId: entry.id })
+        .where(eq(payments.id, payment.id));
 
-    return { entryId: entry.id, paymentId: payment.id };
-  });
+      return { entryId: entry.id, paymentId: payment.id };
+    });
+  } catch (err) {
+    // P1: lost the concurrent race. The unique index let the other request's
+    // entry land first; ours raised 23505 and the transaction (including its
+    // orphan payment) rolled back. Resolve to the winning entry and report
+    // "already entered" — identical to what the user would have seen had
+    // their first tap simply arrived a moment earlier.
+    if (isUniqueViolation(err)) {
+      const [raced] = await db
+        .select({ id: poolEntries.id, paymentId: poolEntries.paymentId })
+        .from(poolEntries)
+        .where(and(eq(poolEntries.poolId, poolId), eq(poolEntries.userId, userId)));
+      if (raced) {
+        return {
+          ok: true,
+          entryId: raced.id,
+          paymentId: raced.paymentId,
+          alreadyEntered: true,
+        };
+      }
+    }
+    throw err;
+  }
 
   return {
     ok: true,

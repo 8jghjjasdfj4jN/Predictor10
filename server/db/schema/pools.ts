@@ -71,6 +71,14 @@ export const poolEntries = pgTable(
     userIdx: index("pool_entries_user_idx").on(t.userId),
     poolRankIdx: index("pool_entries_pool_rank_idx").on(t.poolId, t.finalRank),
     paymentIdx: index("pool_entries_payment_idx").on(t.paymentId),
+    // P1 (June 2026): one entry per user per pool, enforced at the DB layer
+    // (Decided Rule #2). Closes the concurrent double-tap race that the
+    // app-layer pre-flight check in enterPool() can't fully prevent. Adding
+    // this requires the live DB to be free of existing duplicates first —
+    // run the dedupe-check query before `pnpm db:push` or the index build
+    // fails. enterPool() catches the resulting 23505 and resolves to
+    // "already entered" so the user-facing flow is unchanged.
+    poolUserIdx: uniqueIndex("pool_entries_pool_user_idx").on(t.poolId, t.userId),
   }),
 );
 
