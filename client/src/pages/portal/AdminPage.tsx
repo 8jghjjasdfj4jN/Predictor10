@@ -42,6 +42,14 @@ export default function AdminPage() {
   const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
 
   useEffect(() => {
+    // Defence in depth: refuse to fetch admin data when the local user
+    // state says we're not an admin. The server also gates this endpoint
+    // with a 404 — this just stops the request being made at all.
+    if (user?.isAdmin !== true) {
+      setAccessDenied(true);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -63,7 +71,7 @@ export default function AdminPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user?.isAdmin]);
 
   const togglePaid = async (target: AdminUser, next: boolean) => {
     setSavingPaid((s) => new Set(s).add(target.id));

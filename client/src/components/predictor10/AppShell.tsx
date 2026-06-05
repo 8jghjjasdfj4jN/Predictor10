@@ -155,8 +155,11 @@ function TopBar() {
 function BottomNav() {
   const [location] = useLocation();
   const { user } = useAuth();
-  // Admins see a 5th tab; everyone else keeps the 4-tab grid.
-  const items: NavItem[] = user?.isAdmin ? [...NAV, ADMIN_NAV] : NAV;
+  // Admins see a 5th tab; everyone else keeps the 4-tab grid. Strict
+  // equality (=== true) — defensive against any future type drift on the
+  // user payload. A missing / undefined / false / null isAdmin = no tab,
+  // no exception.
+  const items: NavItem[] = user?.isAdmin === true ? [...NAV, ADMIN_NAV] : NAV;
   return (
     <nav
       className={cn(
