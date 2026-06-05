@@ -1,26 +1,22 @@
 /*
 Brand reminder — Broadcast Noir Athletics:
-This shell wraps the public, logged-out marketing surface — landing page
-and rules. Desktop uses a left control rail; mobile keeps the app-style
-bottom navigation. The post-login portal uses AppShell.
-
-Nav trimmed to just Play + Rules during the World Cup informal run. The
-prior Leagues / Leaderboard / History / Fixtures items were sending real
-players down "pick a pool" / demo-data routes that didn't match what the
-current product actually offers (one £10 World Cup tier). Restore the
-full nav from MarketingShell.tsx.bak when PL/Champ pools come back
-online after WC retirement (~22 July, arch §15).
+This shell wraps the public, logged-out marketing surface — landing, leagues
+preview, leaderboard, history, rules. Desktop uses a left control rail; mobile
+keeps the app-style bottom navigation. The post-login portal uses AppShell.
 */
 
 import { Link, useLocation } from "wouter";
-import { CreditCard, House, LogIn, ShieldQuestion, User } from "lucide-react";
+import { CreditCard, House, LayoutList, LogIn, ScrollText, ShieldQuestion, Trophy, User } from "lucide-react";
 import { BrandLogo } from "./BrandLogo";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 
 const navItems = [
-  { href: "/",      label: "Play",  icon: House          },
-  { href: "/rules", label: "Rules", icon: ShieldQuestion },
+  { href: "/",            label: "Play",        icon: House         },
+  { href: "/leagues",     label: "Leagues",     icon: Trophy        },
+  { href: "/leaderboard", label: "Leaderboard", icon: LayoutList    },
+  { href: "/history",     label: "History",     icon: ScrollText    },
+  { href: "/rules",       label: "Rules",       icon: ShieldQuestion },
 ];
 
 export function MarketingShell({ children }: { children: React.ReactNode }) {

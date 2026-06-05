@@ -1,28 +1,20 @@
 import { GlassPanel, SectionHeader } from "@/components/predictor10/Primitives";
 
-/*
-"How it works" — three steps, tuned for the World Cup informal run.
-The previous "Pick a pool" step caused confusion because there's only one
-pool to enter (no choice to make). Replaced with a "Predict every match"
-step that's specific to the WC format. Backup of the original 3-step
-version sits at HowItWorks.tsx.bak.
-*/
-
 const steps = [
   {
     number: 1,
-    title: "Sign up & enter",
-    body: "Email, password, date of birth. Age verified at sign-up. One £10 entry secures your place in the bracket.",
+    title: "Sign up",
+    body: "Thirty seconds, email and date of birth. Age verified at sign-up. While we're in test mode there's no payment to set up.",
   },
   {
     number: 2,
-    title: "Predict every match",
-    body: "104 matches from group stage to the final. Predict the full-time score for each — no extra time, no penalties counted. Edit your picks any time up until kickoff.",
+    title: "Pick a pool",
+    body: "World cup bracket, match-by-match, or both. Enter with the virtual credits we grant you weekly. Edit your picks until kickoff.",
   },
   {
     number: 3,
     title: "Climb the table",
-    body: "Five points for an exact score, two for the right result, zero otherwise. Top three at the end of the tournament share the prize fund 60 / 25 / 15.",
+    body: "Five points for an exact score, two for the right result. Live leaderboards, weekly winners, end-of-tournament prizes.",
   },
 ];
 
@@ -31,7 +23,7 @@ export function HowItWorks() {
     <GlassPanel>
       <SectionHeader
         eyebrow="How it works"
-        title="Three steps."
+        title="Three steps. No card needed."
       />
 
       <div className="mt-6 grid gap-3 md:grid-cols-3">
