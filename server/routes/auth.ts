@@ -17,7 +17,7 @@ Deferred (pre-launch, when Resend is wired):
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { hash, verify } from "@node-rs/argon2";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { users } from "../db/schema/users";
 import {
@@ -38,10 +38,43 @@ const ARGON2_OPTS = {
   parallelism: 1,
 };
 
+// Reserved nicknames — case-insensitive. Block impersonation of staff
+// roles and the brand. Easy to extend without a migration.
+const RESERVED_NICKNAMES = new Set([
+  "admin",
+  "administrator",
+  "moderator",
+  "mod",
+  "predictor10",
+  "predictor",
+  "support",
+  "system",
+  "staff",
+  "official",
+  "help",
+  "you",
+]);
+
+// Letters, digits, underscore. 3–15 chars. No spaces, no punctuation, no
+// emoji — keeps the league-table column rendering clean and predictable.
+const NICKNAME_PATTERN = /^[A-Za-z0-9_]{3,15}$/;
+
 const signupSchema = z.object({
   email: z.string().email("That email doesn't look right.").max(320).trim().toLowerCase(),
   password: z.string().min(8, "Password must be at least 8 characters.").max(128),
-  displayName: z.string().min(2, "Display name must be at least 2 characters.").max(24).trim(),
+  firstName: z.string().min(1, "First name is required.").max(40).trim(),
+  lastName: z.string().min(1, "Last name is required.").max(40).trim(),
+  nickname: z
+    .string()
+    .trim()
+    .regex(
+      NICKNAME_PATTERN,
+      "Nickname must be 3–15 characters, letters/digits/underscore only.",
+    )
+    .refine(
+      (v) => !RESERVED_NICKNAMES.has(v.toLowerCase()),
+      "That nickname is reserved. Please choose another.",
+    ),
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be YYYY-MM-DD."),
   country: z.string().length(2, "Country must be a 2-letter code.").toUpperCase(),
   marketingConsent: z.boolean(),
@@ -84,6 +117,9 @@ type PublicUser = {
   id: string;
   email: string;
   displayName: string;
+  firstName: string | null;
+  lastName: string | null;
+  nickname: string | null;
   avatarInitials: string | null;
   emailVerified: boolean;
   countryCode: string;
@@ -95,6 +131,9 @@ function publicUser(u: typeof users.$inferSelect): PublicUser {
     id: u.id,
     email: u.email,
     displayName: u.displayName,
+    firstName: u.firstName,
+    lastName: u.lastName,
+    nickname: u.nickname,
     avatarInitials: u.avatarInitials,
     emailVerified: u.emailVerifiedAt != null,
     countryCode: u.countryCode,
@@ -117,7 +156,8 @@ router.post("/signup", async (req: Request, res: Response): Promise<void> => {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid signup payload." });
     return;
   }
-  const { email, password, displayName, dateOfBirth, country, marketingConsent } = parsed.data;
+  const { email, password, firstName, lastName, nickname, dateOfBirth, country, marketingConsent } =
+    parsed.data;
 
   if (ageInYears(dateOfBirth) < 18) {
     res.status(400).json({ error: "You must be 18 or over to create an account." });
@@ -130,8 +170,23 @@ router.post("/signup", async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
+  // Case-insensitive nickname uniqueness. Belt-and-braces — the partial
+  // unique index on lower(nickname) will also reject collisions if a race
+  // slips through, but the explicit pre-check gives a clean error message.
+  const [nicknameClash] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(sql`lower(${users.nickname}) = ${nickname.toLowerCase()}`);
+  if (nicknameClash) {
+    res.status(409).json({ error: "That nickname is already taken. Please choose another." });
+    return;
+  }
+
   const passwordHash = await hash(password, ARGON2_OPTS);
-  const avatarInitials = displayName.slice(0, 2).toUpperCase();
+  // display_name kept populated during the migration window — falls back to
+  // the chosen nickname so anything still reading it sees a sensible value.
+  const displayName = nickname;
+  const avatarInitials = nickname.slice(0, 2).toUpperCase();
   const now = new Date();
 
   const [user] = await db
@@ -140,6 +195,9 @@ router.post("/signup", async (req: Request, res: Response): Promise<void> => {
       email,
       passwordHash,
       displayName,
+      firstName,
+      lastName,
+      nickname,
       avatarInitials,
       dateOfBirth,
       countryCode: country,

@@ -1,6 +1,7 @@
 import {
   pgTable, uuid, varchar, text, timestamp, boolean, jsonb, pgEnum, index, uniqueIndex, date,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const kycStatusEnum = pgEnum("kyc_status", [
   "not_required",
@@ -31,6 +32,18 @@ export const users = pgTable(
     // Profile
     displayName: varchar("display_name", { length: 24 }).notNull(),
     avatarInitials: varchar("avatar_initials", { length: 4 }),
+
+    // Real name — collected at signup for KYC/AML; never publicly displayed.
+    // Nullable during the V1 migration window so existing rows survive
+    // db:push before the backfill script runs; signup form enforces NOT NULL
+    // at the app layer for every new user.
+    firstName: varchar("first_name", { length: 40 }),
+    lastName: varchar("last_name", { length: 40 }),
+
+    // Public handle shown in league tables, history, etc. Case-insensitive
+    // uniqueness via the lower(nickname) index below. Immutable in V1;
+    // change policy decided later.
+    nickname: varchar("nickname", { length: 20 }),
 
     // Identity (collected at sign-up)
     dateOfBirth: date("date_of_birth").notNull(),
@@ -74,6 +87,11 @@ export const users = pgTable(
     emailIdx: uniqueIndex("users_email_idx").on(t.email),
     statusIdx: index("users_status_idx").on(t.accountStatus),
     anonymisedIdx: index("users_anonymised_idx").on(t.anonymisedAt),
+    // Case-insensitive uniqueness on nickname. Partial — NULLs (legacy rows
+    // pre-backfill, anonymised users) are excluded.
+    nicknameLowerIdx: uniqueIndex("users_nickname_lower_idx")
+      .on(sql`lower(${t.nickname})`)
+      .where(sql`${t.nickname} IS NOT NULL`),
   }),
 );
 

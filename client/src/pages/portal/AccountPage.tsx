@@ -26,6 +26,13 @@ export default function AccountPage() {
   const { user, logout } = useAuth();
   const initials = (user?.avatar ?? "··").slice(0, 2);
 
+  // "First Last" for display. NULL last name (legacy rows pre-backfill,
+  // e.g. Wez + Jason) falls back to just the first name.
+  const fullName =
+    user?.firstName && user?.lastName
+      ? `${user.firstName} ${user.lastName}`
+      : user?.firstName ?? null;
+
   return (
     <div className="px-4 py-6">
       {/* Profile summary */}
@@ -42,11 +49,29 @@ export default function AccountPage() {
         </span>
         <div className="min-w-0">
           <h1 className="truncate font-['Barlow_Condensed'] text-[1.4rem] font-bold uppercase tracking-[0.05em] text-white">
-            {user?.name ?? "—"}
+            {user?.nickname ?? user?.name ?? "—"}
           </h1>
           <p className="truncate text-xs text-white/50">{user?.email ?? ""}</p>
         </div>
       </div>
+
+      {/* Profile details — full name (private) + nickname (public). Read
+          only for V1; the Settings sub-page below is still placeholder and
+          will host the editor once it's built. */}
+      <dl className="mt-5 grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-white/10 bg-white/[0.06] text-sm">
+        <div className="flex items-center justify-between bg-[#070d0a] px-4 py-3">
+          <dt className="text-white/55">Full name</dt>
+          <dd className="truncate text-right font-medium text-white/90">
+            {fullName ?? <span className="text-white/35">Not set</span>}
+          </dd>
+        </div>
+        <div className="flex items-center justify-between bg-[#070d0a] px-4 py-3">
+          <dt className="text-white/55">Nickname</dt>
+          <dd className="truncate text-right font-medium text-white/90">
+            {user?.nickname ?? <span className="text-white/35">Not set</span>}
+          </dd>
+        </div>
+      </dl>
 
       {/* Nav rows — History live, rest placeholder */}
       <ul className="mt-6 divide-y divide-white/[0.06] overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">

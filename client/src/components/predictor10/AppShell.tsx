@@ -71,7 +71,10 @@ function LiveBadge({ count }: { count: number }) {
 
 function TopBar() {
   const { user } = useAuth();
-  const firstName = user?.name?.split(" ")[0] ?? "";
+  // Prefer the real first name for the "Hi, X" greeting — friendlier than
+  // the nickname for users who chose a handle that isn't their actual name.
+  // Falls back to the nickname (user.name) when first name isn't set.
+  const firstName = user?.firstName ?? user?.name ?? "";
   const initials = (user?.avatar ?? "··").slice(0, 2);
   // TODO: replace with `useLiveMatches()` hook reading /api/live (arch §9.2). Hard-zero today.
   const liveCount = 0;

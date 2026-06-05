@@ -38,7 +38,9 @@ export default function RegisterPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [displayName, setDisplayName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [nickname, setNickname] = useState("");
   const [day, setDay] = useState("");
   const [month, setMonth] = useState("");
   const [year, setYear] = useState("");
@@ -53,12 +55,17 @@ export default function RegisterPage() {
     e.preventDefault();
     setError("");
 
-    if (!email || !password || !displayName) {
-      setError("Email, password and display name are all required.");
+    if (!email || !password || !firstName || !lastName || !nickname) {
+      setError("All name and contact fields are required.");
       return;
     }
     if (password.length < 8) {
       setError("Password must be at least 8 characters.");
+      return;
+    }
+    // Mirror server: 3–15 chars, letters/digits/underscore only.
+    if (!/^[A-Za-z0-9_]{3,15}$/.test(nickname)) {
+      setError("Nickname must be 3–15 characters, letters/digits/underscore only.");
       return;
     }
     if (!day || !month || !year) {
@@ -85,7 +92,9 @@ export default function RegisterPage() {
       await register({
         email,
         password,
-        displayName,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        nickname: nickname.trim(),
         dateOfBirth: dob.toISOString().slice(0, 10),
         country,
         marketingConsent: marketing,
@@ -137,15 +146,44 @@ export default function RegisterPage() {
           />
         </AuthField>
 
-        <AuthField label="Display name" hint="Shown on the leaderboard.">
+        <AuthField label="First name">
           <input
             type="text"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+            autoComplete="given-name"
+            placeholder="e.g. James"
+            disabled={loading}
+            maxLength={40}
+            className={inputClasses}
+          />
+        </AuthField>
+
+        <AuthField label="Last name">
+          <input
+            type="text"
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            autoComplete="family-name"
+            placeholder="e.g. Woodhouse"
+            disabled={loading}
+            maxLength={40}
+            className={inputClasses}
+          />
+        </AuthField>
+
+        <AuthField
+          label="Nickname"
+          hint="Shown on the leaderboard. 3–15 characters, letters/digits/underscore only. Must be unique."
+        >
+          <input
+            type="text"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
             autoComplete="nickname"
             placeholder="e.g. WezL"
             disabled={loading}
-            maxLength={24}
+            maxLength={15}
             className={inputClasses}
           />
         </AuthField>

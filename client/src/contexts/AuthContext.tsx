@@ -29,8 +29,16 @@ import { setUnauthorizedHandler } from "@/lib/portal-api";
 export type User = {
   id: string;
   email: string;
+  /** Public handle — nickname when set, falls back to legacy displayName. */
   name: string;
+  /** Two-letter avatar initials derived from the public name. */
   avatar: string;
+  /** Real first name — KYC/profile field, never public. May be NULL for legacy rows. */
+  firstName: string | null;
+  /** Real last name — KYC/profile field, never public. May be NULL for legacy rows. */
+  lastName: string | null;
+  /** Canonical public handle, unique platform-wide. May be NULL for legacy rows. */
+  nickname: string | null;
   emailVerified?: boolean;
   country?: string;
   marketingConsent?: boolean;
@@ -39,7 +47,9 @@ export type User = {
 export type RegisterPayload = {
   email: string;
   password: string;
-  displayName: string;
+  firstName: string;
+  lastName: string;
+  nickname: string;
   dateOfBirth: string; // YYYY-MM-DD
   country: string;
   marketingConsent: boolean;
@@ -61,6 +71,9 @@ type ServerUser = {
   id: string;
   email: string;
   displayName: string;
+  firstName: string | null;
+  lastName: string | null;
+  nickname: string | null;
   avatarInitials: string | null;
   emailVerified: boolean;
   countryCode: string;
@@ -68,11 +81,18 @@ type ServerUser = {
 };
 
 function mapServerUser(s: ServerUser): User {
+  // Public name preference: nickname → displayName → email local-part. The
+  // last is a safety net for any malformed row; in practice everything has
+  // at least a displayName.
+  const publicName = s.nickname ?? s.displayName ?? s.email.split("@")[0];
   return {
     id: s.id,
     email: s.email,
-    name: s.displayName,
-    avatar: s.avatarInitials ?? s.displayName.slice(0, 2).toUpperCase(),
+    name: publicName,
+    avatar: s.avatarInitials ?? publicName.slice(0, 2).toUpperCase(),
+    firstName: s.firstName,
+    lastName: s.lastName,
+    nickname: s.nickname,
     emailVerified: s.emailVerified,
     country: s.countryCode,
     marketingConsent: s.marketingConsent,

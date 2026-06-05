@@ -1361,13 +1361,18 @@ export async function getPoolEntries(
     firstNonTerminalIdx === -1 ? null : firstNonTerminalIdx + 1;
 
   // 4. Entries aggregate — one grouped query, mirrors settleOnePool's score
-  // aggregate with users joined for displayName. LEFT JOIN predictions so
+  // aggregate with users joined for the public name. LEFT JOIN predictions so
   // entries with zero predictions still show up (0/0/0) at the bottom.
+  //
+  // displayName here is the public-facing handle. After the nickname
+  // migration (V1), users.nickname is the canonical public name; rows that
+  // pre-date the migration (or anonymised accounts) still have a
+  // display_name we fall back to. COALESCE keeps both code paths happy.
   const rows = await db
     .select({
       entryId: poolEntries.id,
       userId: poolEntries.userId,
-      displayName: users.displayName,
+      displayName: sql<string>`COALESCE(${users.nickname}, ${users.displayName})`,
       finalRank: poolEntries.finalRank,
       finalPoints: poolEntries.finalPoints,
       points: sql<number>`COALESCE(SUM(${predictions.pointsAwarded}), 0)::int`,
@@ -1381,6 +1386,7 @@ export async function getPoolEntries(
     .groupBy(
       poolEntries.id,
       poolEntries.userId,
+      users.nickname,
       users.displayName,
       poolEntries.finalRank,
       poolEntries.finalPoints,
