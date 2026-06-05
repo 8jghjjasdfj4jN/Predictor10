@@ -46,7 +46,6 @@ export default function RegisterPage() {
   const [year, setYear] = useState("");
   const [country, setCountry] = useState("GB");
   const [terms, setTerms] = useState(false);
-  const [marketing, setMarketing] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -97,7 +96,10 @@ export default function RegisterPage() {
         nickname: nickname.trim(),
         dateOfBirth: dob.toISOString().slice(0, 10),
         country,
-        marketingConsent: marketing,
+        // Marketing consent checkbox removed from the form (UK GDPR
+        // requires explicit opt-in; absence of a tick = no consent).
+        // Server schema still expects the field, so we always send false.
+        marketingConsent: false,
       });
       // Honour the `redirect` query param when present (deep-link from a
       // portal URL). Defaults to home otherwise. Same guard as LoginPage.
@@ -233,18 +235,6 @@ export default function RegisterPage() {
               <a href="/terms" className="font-semibold text-emerald-300 hover:text-emerald-200">terms of use</a>{" "}
               and{" "}
               <a href="/privacy" className="font-semibold text-emerald-300 hover:text-emerald-200">privacy policy</a>.
-            </span>
-          </label>
-          <label className="flex cursor-pointer items-start gap-3 text-[0.85rem] leading-5 text-white/65">
-            <input
-              type="checkbox"
-              checked={marketing}
-              onChange={(e) => setMarketing(e.target.checked)}
-              disabled={loading}
-              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-emerald-400"
-            />
-            <span>
-              Send me match reminders and round results by email. <span className="text-white/40">(Optional, you can change this anytime.)</span>
             </span>
           </label>
         </div>
