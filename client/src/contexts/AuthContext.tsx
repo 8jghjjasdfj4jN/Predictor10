@@ -64,6 +64,15 @@ type AuthContextType = {
   register: (payload: RegisterPayload) => Promise<void>;
   logout: () => Promise<void>;
   updateName: (name: string) => void;
+  /**
+   * Calls PATCH /api/account/nickname with the new value. Validates server-
+   * side (pattern, reserved list, uniqueness). On success, refreshes the
+   * user state from the server response so the new nickname appears
+   * everywhere `useAuth().user` is read (header greeting, account page,
+   * etc). Throws an Error with a user-facing message on validation failure
+   * or collision — the caller renders that into the form.
+   */
+  updateNickname: (nickname: string) => Promise<void>;
 };
 
 // Server response shape — kept private; mapped to client User via mapServerUser.
@@ -229,9 +238,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser({ ...user, name, avatar: name.slice(0, 2).toUpperCase() });
   };
 
+  const updateNickname = async (nickname: string): Promise<void> => {
+    const res = await fetch("/api/account/nickname", {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nickname }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      user?: ServerUser;
+      error?: string;
+    };
+    if (!res.ok) {
+      throw new Error(data.error ?? "Couldn't update nickname. Please try again.");
+    }
+    if (data.user) {
+      setUser(mapServerUser(data.user));
+    }
+  };
+
   return (
     <AuthContext.Provider
-      value={{ user, isLoggedIn: !!user, isLoading, login, register, logout, updateName }}
+      value={{
+        user,
+        isLoggedIn: !!user,
+        isLoading,
+        login,
+        register,
+        logout,
+        updateName,
+        updateNickname,
+      }}
     >
       {children}
     </AuthContext.Provider>

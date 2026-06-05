@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { authMiddleware } from "./lib/auth-middleware";
 import authRouter from "./routes/auth";
+import accountRouter from "./routes/account";
 import portalRouter from "./routes/portal";
 import adminRouter from "./routes/admin";
 import { startScheduler } from "./lib/scheduler";
@@ -31,6 +32,7 @@ async function startServer() {
   const server = createServer(app);
 
   app.use("/api/auth", authRouter);
+  app.use("/api/account", accountRouter);
   app.use("/api/admin", adminRouter);
   app.use("/api", portalRouter);
 
