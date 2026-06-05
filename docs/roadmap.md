@@ -97,6 +97,10 @@ Notable deviations from the original weekly schedule:
 | 3a.10b | ✅ shipped | FT-only scoring for WC knockouts. `extractRegulationScore()` reads `score.regularTime` when `duration !== 'REGULAR'` |
 | 3a.11 | ✅ shipped | Persistent-after-entry Home cards (supersedes Rule #18's hide-on-entry), tab labelling for tournaments ("Group MD" + "Knockout Stages"), group letter column (`events.group_label`) with "Group A" rendered on rows, fully-entered count bug fix, refresh bug fix (broken analytics script removed) |
 | 3a.11+ | ✅ shipped | Knockout Stages tab sub-headings (Round of 32 / R16 / QF / SF / 3rd-place / Final via new `events.fd_stage` column), tournament-aware standings status pill (`liveStatusLabel` server-computed). Slot pairing labels DEFERRED — 495 FIFA Annex C combinations make a static map impractical; FD auto-resolves teams June 27 |
+| 3a.12 | ✅ shipped | WC entry £30 → £10 (informal-run pricing). Seed extended to sync existing tier rows when config diverges. Pot label on Tables (`£10 · 3 players · Pot £30`). 75/25 prize-fund disclosure on Home (always visible). Home WC card explainer updated to "One £10 entry" |
+| 3a.13 | ✅ shipped | Users table gains `first_name` / `last_name` / `nickname` columns + partial unique index on `lower(nickname)`. Signup form replaces Display Name with First + Last + Nickname. Backfill script populated all 11 existing users. Editable nickname via `PATCH /api/account/nickname` (audit-logged). AccountPage profile gains 2-row name details card with inline nickname editor. AppShell greeting now uses real first name. Marketing consent checkbox removed (UK GDPR — opt-in only, no checkbox = no consent) |
+| 3a.14 | ✅ shipped | Logged-out marketing surface refocused to WC-only. `.tsx.bak` backups of original Home / HeroSection / LeagueShowcase / HowItWorks / MarketingShell preserved alongside. Multi-tier "pick a pool" UI removed. Nav trimmed to Play + Rules. LeaderboardPreview + TrustBand dropped from Home assembly (mock-data confusion + contradictory copy) |
+| 3a.15 | ✅ shipped | Admin portal: `users.is_admin` + `users.is_paid` columns, new `server/routes/admin-portal.ts`, new `AdminPage.tsx` with user list + Paid checkbox + password reset modal, 5th "Admin" tab in bottom nav for admins. Founding admins (Wez/James/Jason) promoted via new `seedAdmins()` step. Three-layer defence: client tab hide + server 404 + client page guard. All admin actions audit-logged for licence application record-keeping |
 
 ### Original scope (preserved for context)
 
@@ -110,14 +114,16 @@ Notable deviations from the original weekly schedule:
 
 ### Definition of done
 
-Step 3a is complete. As of step 3a.11+, the World Cup is fully end-to-end on Predictor10 with parity to Premier League:
-- A user signs in, sees PL + WC cards on Home, taps WC, reads the explainer, enters for £30 (mock).
-- Their WC entry appears in the TOURNAMENT section of Predict.
+Step 3a is complete. As of step 3a.15, the World Cup is fully end-to-end on Predictor10 with parity to Premier League **and is operating live for the pre-licence informal friends' run**:
+- A user signs in (first / last / nickname collected at signup), sees the WC card on Home (`£10 entry · 75/25 prize-fund disclosure shown`), enters for £10 (mock-mode payment row + offline £10 confirmed via the admin portal's Paid checkbox).
+- Their WC entry appears in the TOURNAMENT section of Predict. The league table shows them by nickname.
 - They predict every group-stage match (with knockout rows rendered as "TBD vs TBD · Awaiting teams" until FD resolves them after June 27).
 - Group matches lock 1hr before each kickoff; FT-only scoring on knockouts (no ET, no penalties).
 - Postponed matches (forfeit policy) score 0 unless rescheduled.
-- The WC pool will settle within ~20 min of the Final's full-time whistle on Sun 19 Jul 2026, with payouts to top 3.
+- The WC pool will settle within ~20 min of the Final's full-time whistle on Sun 19 Jul 2026, with payouts to top 3 (60 / 25 / 15 of the player pot).
+- 11 users on the platform. 3 admins (Wez, James Woodhouse, Jason) manage payments via the new `/admin` portal.
 - PL's flow is unaffected. Championship's flow is unaffected. The retired Pound tier remains retired.
+- Logged-out marketing site is WC-only (multi-tier marketing preserved as `.tsx.bak` files for restoration when 2026/27 domestic season opens).
 
 ### After the Final: WC retirement
 

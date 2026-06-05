@@ -945,3 +945,109 @@ The same pattern applies. For each new tournament:
 6. After the Final settles: add the tier slug to `RETIRED_TIER_SLUGS`, flip the competition to `isActive: false`, deploy, re-seed.
 
 The `RETIRED_TIER_SLUGS` array grows over time. That's fine — each slug only takes one `UPDATE` per seed run, and the list of retired tiers is itself useful audit metadata.
+
+
+## 16. Users, names, nicknames, KYC
+
+Added in step 3a.13 to clean up the legacy single-`display_name` model where users had been inconsistently entering full names (`"James Woodhouse"`) and handles (`"Jason"`) into the same field.
+
+### Column model
+
+The `users` table now carries three name-shaped columns alongside the original `display_name`:
+
+| Column | Purpose | Public? | Required at signup? |
+|---|---|---|---|
+| `first_name` (varchar 40, nullable) | KYC field | NO — admin view + own profile only | YES (NOT NULL at app layer; nullable in DB only to let legacy rows survive `db:push`) |
+| `last_name` (varchar 40, nullable) | KYC field | NO — admin view + own profile only | YES (same as above) |
+| `nickname` (varchar 20, nullable) | Public handle | YES — league tables, history, leaderboards | YES (3–15 chars, `[A-Za-z0-9_]`, unique) |
+| `display_name` (varchar 24, NOT NULL) | Legacy column; kept populated to nickname for backwards compat | Fallback if `nickname` is NULL | Auto-set from nickname during signup |
+
+Uniqueness on nickname is a **partial unique index** on `lower(nickname) WHERE nickname IS NOT NULL`. Case-insensitive; NULLs (legacy rows pre-backfill, anonymised users) are excluded so multiple `NULL`s don't collide.
+
+### Validation rules
+
+- **Nickname pattern**: `^[A-Za-z0-9_]{3,15}$`. No spaces, no punctuation, no emoji — keeps league-table column rendering clean and predictable across mobile widths.
+- **Reserved list** (case-insensitive): `admin`, `administrator`, `moderator`, `mod`, `predictor10`, `predictor`, `support`, `system`, `staff`, `official`, `help`, `you`. Defined in both `server/routes/auth.ts` (signup) and `server/routes/account.ts` (edit) — kept in sync manually. Refactor into a shared module if the list grows further.
+- **First / last name**: 1–40 chars each, trimmed. No further restrictions in V1 — KYC verification (which would check against ID document) happens at licence grant.
+
+### Standings display
+
+`server/lib/portal-data.ts` standings query returns `COALESCE(users.nickname, users.display_name)` as the entry's public name. DTO field is still called `displayName` for backwards compatibility, but the value is the nickname when set. The audit log preserves the historical nickname-at-time-of-settlement; live standings reflect the current nickname.
+
+### Edit flow
+
+`PATCH /api/account/nickname` — session-gated, validates against the same rules as signup, returns 409 on collision. Writes `audit_log` row with action `user.profile_update`, before/after = `{nickname: old, new}`, metadata `{field: "nickname"}`. The audit log is the historical record for any post-settlement renames; LCCP 3-year retention applies (survives anonymisation).
+
+90-day cooldown not yet enforced — current need is small and audit-logged. Tighten before public launch / licence grant.
+
+First/last names are not user-editable in V1. The Settings sub-page (placeholder under AccountPage's NAV_ROWS) will host the edit flow once it ships. Until then, admin SQL or the seed script handles corrections.
+
+### Backfill
+
+`server/scripts/backfill-names.ts` is the one-shot script that populated the 11 pre-step-3a.13 users. Splits legacy `display_name` on whitespace into first/last; strips non-alphanumeric chars from `display_name` to seed the nickname (with `1`, `2`, … suffix on collision). Idempotent — only touches rows where `first_name IS NULL`. Safe to re-run.
+
+
+## 17. Admin portal
+
+Added in step 3a.15. First user-facing administrative surface. Distinct from `/api/admin/*` (machine-to-machine, X-Admin-Token gated, for cron jobs / maintenance) which still exists.
+
+### Access model
+
+Two new boolean columns on `users`:
+
+- `is_admin BOOLEAN NOT NULL DEFAULT false` — gates the `/admin` route and the Admin bottom-nav tab.
+- `is_paid BOOLEAN NOT NULL DEFAULT false` — admin-tracked confirmation of off-platform £10 receipt during the WC informal run. Cleared when WC retires (or repurposed for the next informal-payment competition).
+
+Admin grants are managed via `seed.ts`, not from in-app. The `FOUNDING_ADMIN_EMAILS` constant in `server/scripts/seed.ts` is the canonical allowlist. `seedAdmins()` is idempotent and bidirectional — promotes any user whose email matches, demotes any user with `is_admin=true` whose email doesn't match. To add a future admin: edit the constant, deploy, run `pnpm seed`.
+
+### Defence-in-depth
+
+Three independent layers gate admin functionality. All three must agree the user is an admin for the surface to be visible / usable:
+
+1. **Client — tab visibility**: `AppShell.BottomNav` uses `user?.isAdmin === true` (strict equality) to decide whether to render the 5th "Admin" tab. Non-admins see the original 4-tab nav with no indication an admin tab exists. Grid swaps from `grid-cols-4` to `grid-cols-5` dynamically.
+2. **Server — request gating**: `requireAdmin` middleware on `/api/admin-portal/*` returns **HTTP 404**, not 403, to non-admins. The surface is masked entirely — non-admins can't even confirm the endpoints exist.
+3. **Client — page guard**: `AdminPage.tsx` checks `user?.isAdmin !== true` at mount and refuses to call the API; renders "Not found." immediately. Direct navigation to `/admin` therefore yields the same result as any other unknown URL.
+
+The decision to return 404 (not 403) on the server is deliberate. 403 signals "this exists but you can't have it"; 404 keeps the surface invisible.
+
+### Endpoints (server-side, `server/routes/admin-portal.ts`)
+
+| Endpoint | Body | Effect | Audit action |
+|---|---|---|---|
+| `GET /api/admin-portal/users` | — | List all users with id, email, names, nickname, signup date, country, status flags. Password hashes never returned. | — (read-only) |
+| `POST /api/admin-portal/users/:id/password` | `{newPassword}` | Argon2-hashes and writes the new password. Password value is NEVER written to logs. | `user.password_change` with `{performedBy, performedByEmail, adminInitiated: true}` |
+| `PATCH /api/admin-portal/users/:id/paid` | `{isPaid}` | Toggle the `is_paid` flag. No-op when state already matches (no audit row written in that case). | `admin.action` with `{field: "isPaid", performedBy, performedByEmail}` and before/after |
+
+### UI (`client/src/pages/portal/AdminPage.tsx`)
+
+Mobile-first user list. Each row is a card with:
+- Public handle (nickname or display_name fallback) + Admin pill if applicable
+- Full name + email + country + join date
+- Right-side controls: "Paid" checkbox (optimistic update with rollback on server error) + "Reset password" button (opens modal)
+
+Password reset modal is intentionally simple — admin types the new value, taps Save, sees "Saved" confirmation, modal auto-closes. The user is told the new password out of band (the platform doesn't email it).
+
+No search / sort / pagination in V1 — 11 users fits comfortably on one mobile screen. Revisit if the user base grows past ~50.
+
+### Audit-log impact
+
+Every paid toggle and every password reset writes to `audit_log` with the acting admin's id and email in metadata. Provides demonstrable record-keeping for the UKGC licence application — proves admin actions are tracked and attributable.
+
+### Test-user cleanup
+
+Removing a test user completely from the platform (e.g. an admin spinning up a throwaway account to verify a flow) follows this transactional psql pattern from Render Shell:
+
+```bash
+psql "$DATABASE_URL" <<'EOF'
+BEGIN;
+DELETE FROM payments      WHERE user_id = (SELECT id FROM users WHERE email = '<test-email>');
+DELETE FROM pool_entries  WHERE user_id = (SELECT id FROM users WHERE email = '<test-email>');
+DELETE FROM audit_log     WHERE user_id = (SELECT id FROM users WHERE email = '<test-email>');
+DELETE FROM users         WHERE email   = '<test-email>' RETURNING email, nickname;
+COMMIT;
+EOF
+```
+
+Order matters: `payments` first (no cascade from anywhere else hits it), then `pool_entries` (cascades `predictions` via the `pool_entry_id` FK), then `audit_log` (no compliance value for a test user). The final `DELETE FROM users` cascades `sessions`, `email_verifications`, `password_resets`, `session_minutes`, `user_limits`, `self_exclusions` via their `ON DELETE CASCADE` FKs.
+
+For real (non-test) users who need to leave the platform, the licensed anonymisation flow (dormant — built into the schema, exposed at licence grant) is the correct path. This SQL block is only for clean test-account removal during development.
