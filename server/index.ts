@@ -8,6 +8,7 @@ import authRouter from "./routes/auth";
 import accountRouter from "./routes/account";
 import portalRouter from "./routes/portal";
 import adminRouter from "./routes/admin";
+import adminPortalRouter from "./routes/admin-portal";
 import { startScheduler } from "./lib/scheduler";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -34,6 +35,7 @@ async function startServer() {
   app.use("/api/auth", authRouter);
   app.use("/api/account", accountRouter);
   app.use("/api/admin", adminRouter);
+  app.use("/api/admin-portal", adminPortalRouter);
   app.use("/api", portalRouter);
 
   // Static frontend

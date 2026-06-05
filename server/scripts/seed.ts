@@ -32,6 +32,7 @@ import { db } from "../db";
 import { sports, competitions, stages, events } from "../db/schema/sports";
 import { leagues } from "../db/schema/leagues";
 import { pools } from "../db/schema/pools";
+import { users } from "../db/schema/users";
 import { ROUNDS_BY_CODE, roundForMatchday } from "../lib/rounds";
 import {
   fetchAllMatchesForSeason,
@@ -603,6 +604,52 @@ async function syncOpenPoolPrizeStructure(
   log(`  ${synced} pool(s) updated, ${skippedAlreadyMatching} already matching`);
 }
 
+// ─── Admin promotion ────────────────────────────────────────────────────
+//
+// Founding admin allowlist. Promotes any user whose email matches one of
+// these to is_admin=true; demotes any other user that has is_admin=true
+// (so the seed file is the canonical source of truth). Idempotent — safe
+// to re-run, only writes when state actually diverges.
+//
+// Future expansion paths:
+//   • Promote more founders here.
+//   • Add a higher-tier super-admin UI that flips this column from in-app.
+//   • Move to a separate admin_grants table if/when grants need scoping
+//     beyond a single boolean.
+
+const FOUNDING_ADMIN_EMAILS = [
+  "westley@sweetbyte.co.uk",
+  "mrwoodhouse@live.co.uk",
+  "jgs2011@hotmail.co.uk",
+];
+
+async function seedAdmins() {
+  log("admin allowlist…");
+
+  // Lowercase comparison — emails are stored lowercased at signup but be
+  // defensive in case any legacy rows kept a different casing.
+  const allowedLower = FOUNDING_ADMIN_EMAILS.map((e) => e.toLowerCase());
+
+  const all = await db.select({ id: users.id, email: users.email, isAdmin: users.isAdmin }).from(users);
+  let promoted = 0;
+  let demoted = 0;
+  for (const u of all) {
+    const shouldBeAdmin = allowedLower.includes(u.email.toLowerCase());
+    if (shouldBeAdmin && !u.isAdmin) {
+      await db.update(users).set({ isAdmin: true }).where(eq(users.id, u.id));
+      log(`  promoted ${u.email}`);
+      promoted++;
+    } else if (!shouldBeAdmin && u.isAdmin) {
+      await db.update(users).set({ isAdmin: false }).where(eq(users.id, u.id));
+      log(`  demoted ${u.email}`);
+      demoted++;
+    }
+  }
+  if (promoted === 0 && demoted === 0) {
+    log(`  no changes (${allowedLower.length} admin(s) already set)`);
+  }
+}
+
 // ─── Orchestration ────────────────────────────────────────────────────────
 
 async function main() {
@@ -615,6 +662,7 @@ async function main() {
   const stagesByCode = await syncFixtures(competitionsByCode);
   await seedPoolsForCurrentRound(competitionsByCode, stagesByCode, tiersBySlug);
   await syncOpenPoolPrizeStructure(tiersBySlug);
+  await seedAdmins();
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   log(`done in ${elapsed}s ✓`);

@@ -426,3 +426,78 @@ export async function fetchPoolEntries(poolId: string): Promise<PoolEntriesPaylo
   }
   return (await res.json()) as PoolEntriesPayload;
 }
+
+// ─── Admin portal ────────────────────────────────────────────────────────
+
+export type AdminUser = {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  nickname: string | null;
+  displayName: string;
+  countryCode: string;
+  dateOfBirth: string;
+  emailVerified: boolean;
+  accountStatus: string;
+  isAdmin: boolean;
+  isPaid: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+};
+
+export class AdminAccessError extends Error {
+  constructor() {
+    super("Admin access required.");
+    this.name = "AdminAccessError";
+  }
+}
+
+export async function fetchAdminUsers(): Promise<AdminUser[]> {
+  const res = await fetch("/api/admin-portal/users", { credentials: "include" });
+  notify401IfNeeded(res);
+  if (res.status === 404) throw new AdminAccessError();
+  if (!res.ok) throw new Error(`Failed to load users (${res.status}).`);
+  const data = (await res.json()) as { users: AdminUser[] };
+  return data.users;
+}
+
+export async function setAdminUserPaid(userId: string, isPaid: boolean): Promise<void> {
+  const res = await fetch(`/api/admin-portal/users/${encodeURIComponent(userId)}/paid`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ isPaid }),
+  });
+  notify401IfNeeded(res);
+  if (!res.ok) {
+    let message = `Failed to update paid status (${res.status}).`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = data.error;
+    } catch {
+      /* non-JSON */
+    }
+    throw new Error(message);
+  }
+}
+
+export async function resetAdminUserPassword(userId: string, newPassword: string): Promise<void> {
+  const res = await fetch(`/api/admin-portal/users/${encodeURIComponent(userId)}/password`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ newPassword }),
+  });
+  notify401IfNeeded(res);
+  if (!res.ok) {
+    let message = `Failed to reset password (${res.status}).`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = data.error;
+    } catch {
+      /* non-JSON */
+    }
+    throw new Error(message);
+  }
+}

@@ -45,6 +45,20 @@ export const users = pgTable(
     // change policy decided later.
     nickname: varchar("nickname", { length: 20 }),
 
+    // Operational flags managed by the admin portal (/admin in-app, not the
+    // machine-to-machine /api/admin endpoints).
+    //
+    // isAdmin gates access to the user-management screen. Set via seed for
+    // the founding admins (Wez, James, Jason); future admins are promoted
+    // by direct SQL or — eventually — a higher-tier super-admin UI.
+    //
+    // isPaid tracks whether the admin has confirmed receipt of the
+    // off-platform £10 entry fee during the pre-licence WC informal run.
+    // Cleared when WC retires; can be repurposed for the next informal
+    // round or dropped at that point.
+    isAdmin: boolean("is_admin").notNull().default(false),
+    isPaid: boolean("is_paid").notNull().default(false),
+
     // Identity (collected at sign-up)
     dateOfBirth: date("date_of_birth").notNull(),
     countryCode: varchar("country_code", { length: 2 }).notNull(),

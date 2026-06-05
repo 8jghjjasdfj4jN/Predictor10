@@ -13,7 +13,7 @@ redirects route those URLs elsewhere anyway).
 */
 
 import { Link, useLocation } from "wouter";
-import { House, ListChecks, Trophy, User2 } from "lucide-react";
+import { House, ListChecks, Shield, Trophy, User2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -31,6 +31,15 @@ const NAV: NavItem[] = [
   { href: "/tables",  label: "Tables",  icon: Trophy,     matchPrefix: "/tables"   },
   { href: "/account", label: "Account", icon: User2,      matchPrefix: "/account"  },
 ];
+
+// Appended for users.is_admin only. Sits to the right of Account so the
+// usual 4 tabs keep their muscle-memory positions; admins see a 5-tab grid.
+const ADMIN_NAV: NavItem = {
+  href: "/admin",
+  label: "Admin",
+  icon: Shield,
+  matchPrefix: "/admin",
+};
 
 function isActive(currentPath: string, item: NavItem) {
   if (item.matchPrefix) return currentPath === item.href || currentPath.startsWith(`${item.matchPrefix}/`);
@@ -145,6 +154,9 @@ function TopBar() {
 
 function BottomNav() {
   const [location] = useLocation();
+  const { user } = useAuth();
+  // Admins see a 5th tab; everyone else keeps the 4-tab grid.
+  const items: NavItem[] = user?.isAdmin ? [...NAV, ADMIN_NAV] : NAV;
   return (
     <nav
       className={cn(
@@ -154,8 +166,8 @@ function BottomNav() {
       )}
       aria-label="Primary"
     >
-      <ul className="grid grid-cols-4 gap-1">
-        {NAV.map((item) => {
+      <ul className={cn("grid gap-1", items.length === 5 ? "grid-cols-5" : "grid-cols-4")}>
+        {items.map((item) => {
           const Icon = item.icon;
           const active = isActive(location, item);
           return (

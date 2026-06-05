@@ -31,6 +31,7 @@ import PoolDetailPage from "./pages/portal/PoolDetailPage";
 import PoolTablePage from "./pages/portal/PoolTablePage";
 import AccountPage from "./pages/portal/AccountPage";
 import AccountHistoryPage from "./pages/portal/AccountHistoryPage";
+import AdminPage from "./pages/portal/AdminPage";
 import EnterPage from "./pages/portal/EnterPage";
 
 // Tiny declarative redirect helper. Wouter 3 ships `Redirect`, but we avoid
@@ -85,6 +86,11 @@ function PortalRouter() {
         {/* Account */}
         <Route path="/account/history" component={AccountHistoryPage} />
         <Route path="/account" component={AccountPage} />
+
+        {/* Admin portal — server-side gated on users.is_admin. Non-admins
+            who navigate here get a "Not found" page rendered by AdminPage
+            itself when the GET /users 404s. */}
+        <Route path="/admin" component={AdminPage} />
 
         {/* Tournament entry confirm (arch §8.6.1, step 3a.7) */}
         <Route path="/enter/:competitionSlug" component={EnterPage} />

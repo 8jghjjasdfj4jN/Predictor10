@@ -39,6 +39,10 @@ export type User = {
   lastName: string | null;
   /** Canonical public handle, unique platform-wide. May be NULL for legacy rows. */
   nickname: string | null;
+  /** True for the founding admin allowlist. Gates the /admin route and the Admin bottom-nav tab. */
+  isAdmin: boolean;
+  /** WC informal-run paid flag — admin-managed, off-platform payment tracker. */
+  isPaid: boolean;
   emailVerified?: boolean;
   country?: string;
   marketingConsent?: boolean;
@@ -87,6 +91,8 @@ type ServerUser = {
   emailVerified: boolean;
   countryCode: string;
   marketingConsent: boolean;
+  isAdmin: boolean;
+  isPaid: boolean;
 };
 
 function mapServerUser(s: ServerUser): User {
@@ -102,6 +108,8 @@ function mapServerUser(s: ServerUser): User {
     firstName: s.firstName,
     lastName: s.lastName,
     nickname: s.nickname,
+    isAdmin: s.isAdmin,
+    isPaid: s.isPaid,
     emailVerified: s.emailVerified,
     country: s.countryCode,
     marketingConsent: s.marketingConsent,

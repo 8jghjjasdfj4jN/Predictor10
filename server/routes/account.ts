@@ -70,6 +70,8 @@ type PublicUser = {
   emailVerified: boolean;
   countryCode: string;
   marketingConsent: boolean;
+  isAdmin: boolean;
+  isPaid: boolean;
 };
 
 function publicUser(u: typeof users.$inferSelect): PublicUser {
@@ -84,6 +86,8 @@ function publicUser(u: typeof users.$inferSelect): PublicUser {
     emailVerified: u.emailVerifiedAt != null,
     countryCode: u.countryCode,
     marketingConsent: u.marketingConsent,
+    isAdmin: u.isAdmin,
+    isPaid: u.isPaid,
   };
 }
 
