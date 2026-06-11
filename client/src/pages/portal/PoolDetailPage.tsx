@@ -478,6 +478,10 @@ function EnteredView({ entryId }: { entryId: string }) {
             </p>
           </div>
           <LiveTableLink tableHref={tableHref} />
+          <p className="font-['Manrope'] text-[0.72rem] leading-snug text-white/45">
+            Each match locks 1 hour before kick-off. Edit your picks any time
+            until then.
+          </p>
         </div>
       )}
 
