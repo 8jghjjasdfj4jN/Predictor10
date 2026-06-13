@@ -66,14 +66,32 @@ function stageLabelFor(match: OpponentMatch): string | null {
 }
 
 /**
- * Most-recent-first ordering. Only matches that have kicked off are shown
- * (see the page filter), so this is a plain newest-kickoff-first sort: any
- * live match leads, then the match that finished before it, and so on back
- * through the played matches. Several simultaneous live matches share the
- * same kickoff and sit together at the top.
+ * Ordering tier for a shown match. 0 = live, 1 = locked-but-not-kicked-off,
+ * 2 = finished / terminal. Drives the live → about-to-start → played layout.
  */
-function sortByRecency(a: OpponentMatch, b: OpponentMatch): number {
-  return new Date(b.kickoffAt).getTime() - new Date(a.kickoffAt).getTime();
+function matchTier(m: OpponentMatch): number {
+  const finished = m.outcome !== null;
+  const kicked = new Date(m.kickoffAt).getTime() <= Date.now();
+  const terminalUnplayed =
+    m.status === "postponed" || m.status === "cancelled" || m.status === "void";
+  if (!finished && !terminalUnplayed && kicked) return 0; // live / in play
+  if (!finished && !terminalUnplayed && !kicked) return 1; // locked, awaiting kick-off
+  return 2; // finished or terminal-unplayed
+}
+
+/**
+ * Live matches first (newest kick-off on top), then the locked matches about
+ * to start (soonest first), then the played matches (most recent first). Reads
+ * top-to-bottom as now → soon → history. Several simultaneous live matches sit
+ * together at the top.
+ */
+function sortByState(a: OpponentMatch, b: OpponentMatch): number {
+  const ta = matchTier(a);
+  const tb = matchTier(b);
+  if (ta !== tb) return ta - tb;
+  const ak = new Date(a.kickoffAt).getTime();
+  const bk = new Date(b.kickoffAt).getTime();
+  return ta === 1 ? ak - bk : bk - ak; // awaiting: soonest first; else newest first
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────
@@ -113,18 +131,49 @@ function ScoreBox({ children, tone }: { children: React.ReactNode; tone: "solid"
   );
 }
 
+/** Pulsing red "LIVE" badge — the radar-ping dot gives an in-play match juice. */
+function LiveBadge() {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/40 bg-rose-500/15 px-2 py-0.5">
+      <span className="relative flex h-2 w-2">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
+      </span>
+      <span className="font-['Manrope'] text-[0.64rem] font-bold uppercase tracking-[0.18em] text-rose-200">
+        Live
+      </span>
+    </span>
+  );
+}
+
+/** Calm amber status for a locked match that hasn't kicked off yet. */
+function AwaitingKickoffBadge() {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-0.5">
+      <Lock className="h-2.5 w-2.5 text-amber-200/80" aria-hidden />
+      <span className="font-['Manrope'] text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-amber-200/90">
+        Locked · awaiting kick-off
+      </span>
+    </span>
+  );
+}
+
 /**
- * Single read-only match row. Renders one of five states, depending on the
- * lock-gated payload from the server:
- *   - awaiting teams (null team) → "Awaiting teams"
+ * Single read-only match row. Only locked-or-later matches reach here (the
+ * page filters out anything still open). Three live states:
+ *   - awaiting kick-off → locked, not started yet ("Locked · awaiting kick-off")
+ *   - live → kicked off, not finished ("LIVE", pulsing)
  *   - finished → FT score + their pick + points pill
- *   - locked, predicted → their pick + lock chip
- *   - locked, no pick → "No pick"
- *   - not yet locked → "Hidden until kick-off" + predicted / not-yet tag
  */
 function OpponentRow({ match }: { match: OpponentMatch }) {
   const awaitingTeams = match.homeTeam === null || match.awayTeam === null;
   const finished = match.outcome !== null;
+  const kicked = new Date(match.kickoffAt).getTime() <= Date.now();
+  const terminalUnplayed =
+    match.status === "postponed" || match.status === "cancelled" || match.status === "void";
+  const isLive = !finished && !awaitingTeams && !terminalUnplayed && kicked;
+  const isAwaitingKickoff = !finished && !awaitingTeams && !terminalUnplayed && !kicked;
+
   const meta = [
     stageLabelFor(match),
     match.groupLabel ? `Group ${match.groupLabel}` : null,
@@ -132,6 +181,17 @@ function OpponentRow({ match }: { match: OpponentMatch }) {
   ]
     .filter(Boolean)
     .join(" · ");
+
+  // Their pick, rendered read-only. Shared by the live + awaiting states.
+  const pickBlock = match.prediction ? (
+    <div className="flex items-center gap-1.5">
+      <ScoreBox tone="solid">{match.prediction.homeScore}</ScoreBox>
+      <span className="text-white/40">-</span>
+      <ScoreBox tone="solid">{match.prediction.awayScore}</ScoreBox>
+    </div>
+  ) : (
+    <span className="font-['Manrope'] text-[0.74rem] text-white/45">No pick</span>
+  );
 
   let right: React.ReactNode;
   if (awaitingTeams) {
@@ -157,40 +217,40 @@ function OpponentRow({ match }: { match: OpponentMatch }) {
         </div>
       </div>
     );
-  } else if (match.predictionVisible) {
-    // Locked but not yet finished — reveal the pick (or "no pick").
-    right = match.prediction ? (
-      <div className="flex items-center gap-1.5">
-        <Lock className="h-3 w-3 text-white/35" aria-hidden />
-        <ScoreBox tone="solid">{match.prediction.homeScore}</ScoreBox>
-        <span className="text-white/40">-</span>
-        <ScoreBox tone="solid">{match.prediction.awayScore}</ScoreBox>
+  } else if (isLive) {
+    right = (
+      <div className="flex flex-col items-end gap-1.5">
+        <LiveBadge />
+        {pickBlock}
       </div>
-    ) : (
-      <span className="font-['Manrope'] text-[0.74rem] text-white/45">No pick</span>
+    );
+  } else if (isAwaitingKickoff) {
+    right = (
+      <div className="flex flex-col items-end gap-1.5">
+        <AwaitingKickoffBadge />
+        {pickBlock}
+      </div>
     );
   } else {
-    // Not yet locked — scores withheld by the server. Show only whether a pick
-    // exists, never the values.
+    // Terminal-but-unplayed (postponed / cancelled / void) — show their pick
+    // with a muted note. Rare; forfeit-policy matches score 0.
     right = (
       <div className="flex flex-col items-end gap-1">
-        <span className="font-['Manrope'] text-[0.72rem] text-white/45">Hidden until kick-off</span>
-        <span
-          className={cn(
-            "rounded-full border px-2 py-0.5 font-['Manrope'] text-[0.64rem] font-semibold",
-            match.hasPrediction
-              ? "border-emerald-300/25 bg-emerald-400/[0.07] text-emerald-200/80"
-              : "border-white/12 bg-white/[0.03] text-white/45",
-          )}
-        >
-          {match.hasPrediction ? "Predicted" : "Not yet predicted"}
+        <span className="font-['Manrope'] text-[0.7rem] uppercase tracking-[0.14em] text-white/45">
+          {match.status === "postponed" ? "Postponed" : match.status === "cancelled" ? "Cancelled" : "Void"}
         </span>
+        {pickBlock}
       </div>
     );
   }
 
   return (
-    <div className="flex items-center justify-between gap-3 px-3 py-3">
+    <div
+      className={cn(
+        "flex items-center justify-between gap-3 px-3 py-3",
+        isLive && "bg-rose-500/[0.06]",
+      )}
+    >
       <div className="min-w-0 flex-1">
         <div className="truncate font-['Manrope'] text-[0.84rem] text-white/90">
           {displayTeamName(match.homeTeam)} <span className="text-white/40">v</span>{" "}
@@ -287,13 +347,10 @@ export default function OpponentPredictionsPage() {
   }
 
   const { pool, player } = payload;
-  // Only show matches that have kicked off — live and finished. Future and
-  // not-yet-started matches are omitted entirely (nothing to reveal, nothing
-  // to hide). Newest kickoff first, so any live match leads.
-  const now = Date.now();
-  const shown = payload.matches
-    .filter((m) => new Date(m.kickoffAt).getTime() <= now)
-    .sort(sortByRecency);
+  // Show matches that have locked (1hr before kick-off) onwards — locked,
+  // live, and finished. Anything still open is omitted (its picks are hidden
+  // by the server anyway). Order: live → about to start → played.
+  const shown = payload.matches.filter((m) => m.isLocked).sort(sortByState);
 
   return (
     <div className="space-y-5 px-4 py-7 pb-10">
@@ -320,7 +377,7 @@ export default function OpponentPredictionsPage() {
       {shown.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-8 text-center">
           <p className="font-['Manrope'] text-[0.82rem] leading-relaxed text-white/55">
-            No matches have kicked off yet. Picks appear here once matches go live.
+            No matches have locked yet. Picks appear here once a match locks, 1 hour before kick-off.
           </p>
         </div>
       ) : (
