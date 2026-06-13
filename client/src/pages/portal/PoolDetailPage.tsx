@@ -19,7 +19,7 @@ Two top-level branches inside the entered view, both driven by EntryDetail:
              footer pill. Decided Rule #11.
 */
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useRoute } from "wouter";
 import {
   ArrowLeft,
@@ -73,8 +73,40 @@ function formatSavedAgo(savedAt: number, now: number): string {
 }
 
 // Used by the day-grouper headers within the active GW.
-function formatDayHeader(iso: string): string {
-  return formatDate(iso); // e.g. "Sat 22 Aug"
+/**
+ * Predict-screen ordering tier. Lower = higher up the feed.
+ *   0 = open: still predictable (teams known, not locked, not started) → TOP
+ *   1 = locked, about to start (within the 1hr pre-kickoff window)
+ *   2 = live (kicked off, not finished)
+ *   3 = played: finished or terminal (postponed / cancelled / void)
+ *   4 = awaiting teams (unresolved knockout slots) → BOTTOM
+ * Competition-agnostic — used for PL, cups and WC alike.
+ */
+function predictTier(m: EntryMatch): number {
+  const finished = m.outcome !== null;
+  const terminalUnplayed =
+    m.status === "postponed" || m.status === "cancelled" || m.status === "void";
+  if (finished || terminalUnplayed) return 3;
+  const teamsKnown = m.homeTeam !== null && m.awayTeam !== null;
+  if (!teamsKnown) return 4;
+  const kicked = new Date(m.kickoffAt).getTime() <= Date.now();
+  if (kicked) return 2; // live (kicked off, no result yet)
+  if (m.isLocked) return 1; // locked, awaiting kick-off
+  return 0; // open — needs predicting
+}
+
+/**
+ * Sorts so the nearest still-predictable game is always on top. Open and
+ * about-to-start games go soonest-first (nearest deadline first); live and
+ * played games go newest-first (most recent at the top of their block).
+ */
+function comparePredict(a: EntryMatch, b: EntryMatch): number {
+  const ta = predictTier(a);
+  const tb = predictTier(b);
+  if (ta !== tb) return ta - tb;
+  const ak = new Date(a.kickoffAt).getTime();
+  const bk = new Date(b.kickoffAt).getTime();
+  return ta === 2 || ta === 3 ? bk - ak : ak - bk;
 }
 
 function formatSettledDate(iso: string): string {
@@ -368,62 +400,17 @@ function EnteredView({ entryId }: { entryId: string }) {
     [],
   );
 
-  // Group the active GW's matches for the row list.
-  //   - Numbered matchdays (group-stage GWs + league rounds): day-grouped
-  //     so rows sit under "FRI 12 JUN" / "SAT 13 JUN" headers.
-  //   - Knockout Stages bucket (matchday === -1, tournament comps):
-  //     stage-grouped so rows sit under "Round of 32" / "Round of 16" /
-  //     "Quarter-finals" / "Semi-finals" / "Third-place playoff" / "Final"
-  //     headers. Stages render in tournament order regardless of when
-  //     football-data slots in kickoffs.
-  const groupedActive = useMemo(() => {
+  // Order the active GW's matches into a single feed (arch §13 Rule #12,
+  // refined): the games you can still predict float to the top, soonest
+  // kick-off first, so the nearest deadline is always at the top. Then the
+  // games about to start, then live, then played (most recent first). Fully
+  // competition-agnostic — PL, cups and WC all run through this one path.
+  const orderedActive = useMemo(() => {
     if (!entry || activeMatchday === null) return [];
-    const active = entry.matches.filter((m) => (m.matchday ?? -1) === activeMatchday);
-
-    // Knockouts path — group by fdStage with a canonical sort order.
-    if (activeMatchday === -1) {
-      const stageOrder: Record<string, number> = {
-        LAST_32: 1,
-        LAST_16: 2,
-        QUARTER_FINALS: 3,
-        SEMI_FINALS: 4,
-        THIRD_PLACE_PLAYOFF: 5,
-        FINAL: 6,
-      };
-      const stageDisplay: Record<string, string> = {
-        LAST_32: "Round of 32",
-        LAST_16: "Round of 16",
-        QUARTER_FINALS: "Quarter-finals",
-        SEMI_FINALS: "Semi-finals",
-        THIRD_PLACE_PLAYOFF: "Third-place playoff",
-        FINAL: "Final",
-      };
-      const byStage = new Map<string, EntryMatch[]>();
-      for (const m of active) {
-        const key = m.fdStage ?? "OTHER";
-        if (!byStage.has(key)) byStage.set(key, []);
-        byStage.get(key)!.push(m);
-      }
-      return [...byStage.entries()]
-        .sort((a, b) => (stageOrder[a[0]] ?? 99) - (stageOrder[b[0]] ?? 99))
-        .map(([key, matches]) => ({
-          dayLabel: stageDisplay[key] ?? "Other",
-          matches,
-        }));
-    }
-
-    // Default path — day-grouped.
-    const groups: { dayLabel: string; matches: EntryMatch[] }[] = [];
-    for (const m of active) {
-      const dayLabel = formatDayHeader(m.kickoffAt);
-      const last = groups[groups.length - 1];
-      if (last && last.dayLabel === dayLabel) {
-        last.matches.push(m);
-      } else {
-        groups.push({ dayLabel, matches: [m] });
-      }
-    }
-    return groups;
+    return entry.matches
+      .filter((m) => (m.matchday ?? -1) === activeMatchday)
+      .slice()
+      .sort(comparePredict);
   }, [entry, activeMatchday]);
 
   if (loadError) {
@@ -494,26 +481,17 @@ function EnteredView({ entryId }: { entryId: string }) {
         poolSettled={isSettled}
       />
 
-      <div className="space-y-4">
-        {groupedActive.map((group) => (
-          <Fragment key={group.dayLabel}>
-            <p className="font-['Manrope'] text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-white/45">
-              {group.dayLabel}
-            </p>
-            <div className="space-y-2">
-              {group.matches.map((m) => (
-                <PredictMatchRow
-                  key={m.eventId}
-                  match={m}
-                  entryId={entry.id}
-                  onSaved={onSaved}
-                  onError={onError}
-                />
-              ))}
-            </div>
-          </Fragment>
+      <div className="space-y-2">
+        {orderedActive.map((m) => (
+          <PredictMatchRow
+            key={m.eventId}
+            match={m}
+            entryId={entry.id}
+            onSaved={onSaved}
+            onError={onError}
+          />
         ))}
-        {groupedActive.length === 0 && (
+        {orderedActive.length === 0 && (
           <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center">
             <p className="font-['Manrope'] text-[0.78rem] text-white/45">
               No matches in this gameweek.

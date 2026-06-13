@@ -44,6 +44,9 @@ type Props = {
 };
 
 const TIME_FMT = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
   hour: "2-digit",
   minute: "2-digit",
   hour12: false,
@@ -69,6 +72,22 @@ function parseScore(text: string): number | null {
 function displayTeamName(name: string | null): string {
   if (!name) return "TBD";
   return name.replace(/\s+FC$/, "").replace(/\s+AFC$/, "");
+}
+
+const KNOCKOUT_STAGE_DISPLAY: Record<string, string> = {
+  LAST_32: "Round of 32",
+  LAST_16: "Round of 16",
+  QUARTER_FINALS: "Quarter-finals",
+  SEMI_FINALS: "Semi-finals",
+  THIRD_PLACE_PLAYOFF: "Third-place playoff",
+  FINAL: "Final",
+};
+
+/** Round name for knockout fixtures; null for group/league matches. */
+function stageLabelFor(match: EntryMatch): string | null {
+  if (!match.fdStage) return null;
+  if (match.fdStage === "GROUP_STAGE" || match.fdStage === "REGULAR_SEASON") return null;
+  return KNOCKOUT_STAGE_DISPLAY[match.fdStage] ?? null;
 }
 
 function pointsTone(points: number): "emerald" | "amber" | "rose" {
@@ -220,6 +239,14 @@ function FinishedView({ match }: { match: EntryMatch }) {
       </div>
 
       <div className="mt-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-['Manrope'] text-[0.7rem] text-white/55">
+        <span className="text-white/45">{formatKickoff(match.kickoffAt)}</span>
+        <span aria-hidden className="text-white/20">·</span>
+        {stageLabelFor(match) && (
+          <>
+            <span className="font-semibold text-emerald-200/75">{stageLabelFor(match)}</span>
+            <span aria-hidden className="text-white/20">·</span>
+          </>
+        )}
         {match.groupLabel && (
           <>
             <span className="font-semibold text-emerald-200/75">Group {match.groupLabel}</span>
@@ -382,6 +409,12 @@ function EditableOrLockedView({
 
       <div className="mt-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-['Manrope'] text-[0.7rem] text-white/45">
         <span>{formatKickoff(match.kickoffAt)}</span>
+        {stageLabelFor(match) && (
+          <>
+            <span aria-hidden className="text-white/20">·</span>
+            <span className="font-semibold text-emerald-200/75">{stageLabelFor(match)}</span>
+          </>
+        )}
         {match.groupLabel && (
           <>
             <span aria-hidden className="text-white/20">·</span>
