@@ -352,12 +352,37 @@ First user-facing admin surface. Distinct from `/api/admin/*` (machine-to-machin
 - **Test-user cleanup pattern** (post-deploy): for removing a test user completely from DB + WC standings, transactional `psql "$DATABASE_URL"` block from Render Shell. Delete order: `payments` → `pool_entries` (cascades `predictions`) → `audit_log` → `users` (cascades `sessions`/`email_verifications`/`password_resets`/`session_minutes`/`user_limits`/`self_exclusions`). Wrap in `BEGIN`/`COMMIT` so it's atomic. Verified working — Wez wiped `wez@thegreenagents.com` after admin testing.
 
 
-### Live deployment state (post step 3a.15)
+### Step 3a.16 — Pre-WC audit + P1/P2 production fixes + predict lock note + manual late entries (June 11 2026)
+
+Full read-only audit of the prediction → lock → scoring → settlement → standings stack ahead of the group stage (kickoff June 11). Core maths confirmed sound: FT-only scoring, server-side lock enforcement, null-team gating, shared `rankEntries` tie-break (standings == settlement), idempotent settlement, penny-accurate payout rounding, WC prize structure (60/25/15, 25% house, £10), and the `(league_id, stage_id)` unique index that makes a duplicate WC pool impossible. Five issues found, graded P1–P4:
+
+- **P1 (fixed, deployed)** — duplicate entry race. `pool_entries` had no `(pool_id, user_id)` unique index; `enterPool`'s pre-flight SELECT-then-INSERT could let a double-tap / second tab / network retry create two entries + two debit payments for one user, inflating entryCount → pot → prize breakdown and putting the user on the table twice. Fix: `uniqueIndex("pool_entries_pool_user_idx").on(poolId, userId)` in `schema/pools.ts` + `enterPool` now wraps the insert in try/catch, recognises Postgres `23505` via `isUniqueViolation()`, rolls the transaction back (no orphan payment) and resolves to "already entered". Deployed; dedupe-check query confirmed zero existing duplicates; `pnpm db:push` built the index clean.
+- **P2 (fixed, deployed)** — settlement racing unscored predictions. Outcome-write and prediction-scoring in `outcome-sync.ts` are separate non-transactional steps, and the scheduler runs sync (5 min) and settle (15 min) as independent crons that can overlap; a settle pass could observe a finished event whose predictions weren't yet scored and count them as 0 (worst case: the Final). Fix: `findReadyPoolIds()` in `pool-settle.ts` gained a `NOT EXISTS` guard — a pool is not "ready" while any of its predictions on a `status='finished'` event has `points_awarded IS NULL`. Next sync scores them, pool settles on the following pass. Score source untouched (still 90-min FT only). Cancelled/void + forfeit-postponed predictions stay null but their events aren't 'finished', so they don't trip the guard.
+- **P3 (left as-is by choice)** — first-write-wins on `event_outcomes` means a football-data score correction is never re-applied. Wez's call: do NOT build auto-correction — silently rewriting a settled score is the dangerous path (a bad FD value could flip results and the whole leaderboard). Admin-only "scores diverged" alert was considered and deferred. No code change. See follow-up.
+- **P4 (dropped)** — display breakdown renders 3 prize lines even when a pool has <3 entrants; unpaid split evaporates as mock dead money. Irrelevant at WC entry volumes. Dropped.
+
+Also this step:
+- **Predict-screen lock note** — `PoolDetailPage.tsx` now shows one muted line on live (non-settled) entries: "Each match locks 1 hour before kick-off. Edit your picks any time until then." No logic change; client page component only (does not touch `vite.config.ts` / `client/index.html`, so the step 2v crossorigin refresh fix is unaffected — verified the built `index.html` carries `crossorigin` only on the fonts preconnect, never on the module script).
+- **Manual late entries (admin override)** — Wez allowed two late entrants (Waynebow, bert) to predict the opener after the 1-hour lock. Predictions inserted directly via Render Shell: Waynebow Mexico 2-0 South Africa, bert Mexico 2-1 South Africa. `points_awarded` left NULL so the normal scheduler scoring picks them up at FT. Rows tagged `ip_address='admin-shell-late-entry'` for audit. Orientation computed from the event row in SQL (not hardcoded) to rule out a reversed scoreline. Governance flag raised — see follow-ups.
+
+Verification before delivery: `pnpm install --frozen-lockfile` clean, `pnpm build` exit 0, `tsc` unchanged at 18 pre-existing errors (zero new).
+
+### Step 3a.17 — Predict-screen lock-rejection display fix (June 13 2026)
+
+Live bug surfaced during the group stage. A user (Wez) loaded the predict screen before a match's 1-hour lock, then tried to change a saved prediction (Qatar 0-1 → 0-2 Switzerland) ~9 min before kickoff — i.e. ~51 min *after* the lock (lock = kickoff − 1hr). The server correctly rejected the post-lock write with 403 (verified against the live DB: stored value stayed 0-1, `updated_at` unchanged from the first save on 5 June), so the lock itself was never broken. But the client left the typed-but-unsaved "2" on screen, showing a phantom 0-2 that only cleared on a hard refresh.
+
+Cause: `PredictMatchRow.tsx` reset its local input state only when the *saved* prediction changed (the snapshot-reset effect). A lock-rejection by definition leaves the saved value unchanged, so the reset never fired and the rejected value lingered in local state.
+
+Fix: in the auto-save catch block, when the error is a 403 lock-rejection, explicitly revert `homeText`/`awayText` to the saved prediction (or empty if none). The row snaps back to the real saved pick immediately; the parent's existing one-shot refetch then flips `isLocked` and the row renders its read-only locked state. No save-loop — after the revert the values equal the saved ones and the lock guard short-circuits the auto-save effect anyway. Client-only: no server, schema, build-config, or `vite.config.ts` / `client/index.html` change (step 2v crossorigin refresh fix unaffected — built `index.html` still carries `crossorigin` only on the fonts preconnect).
+
+No data correction needed — the DB always held the correct 0-1; the bug was purely cosmetic with no scoring or money impact. Verification: `tsc` unchanged at 18 pre-existing errors (zero new), `pnpm build` exit 0.
+
+### Live deployment state (post step 3a.17)
 - Render web service deployed at `https://predictor10.com`. Build green.
 - **Render plan: Starter ($7/month)**. Always-on — no idle spin-down. Cold starts only occur on deploy / crash recovery. Single instance.
-- **11 real users on the platform**. WC entries flowing in (3 entries verified live at time of last check; £30 informal pot growing per £10 entry).
+- **11 real users on the platform**, WC entries flowing in. **Group stage is underway** — opener Mexico v South Africa kicked off 11 June 19:00 UTC. Two late entrants (Waynebow, bert) were manually given opener predictions via shell after the lock (step 3a.16).
 - **Render Postgres state**:
-  - Schema includes everything through step 3a.15: `postponedPolicy` enum + column on competitions, nullable `home_team`/`away_team` on events, `group_label` and `fd_stage` columns on events, `first_name` / `last_name` / `nickname` / `is_admin` / `is_paid` columns on users, partial unique index on `lower(nickname)`.
+  - Schema includes everything through step 3a.16: `postponedPolicy` enum + column on competitions, nullable `home_team`/`away_team` on events, `group_label` and `fd_stage` columns on events, `first_name` / `last_name` / `nickname` / `is_admin` / `is_paid` columns on users, partial unique index on `lower(nickname)`, and (new in 3a.16) the `pool_entries_pool_user_idx` unique index on `(pool_id, user_id)`.
   - 3 competitions: `premier-league` (active, wait, 9 stages, 380 events, 5 pools incl. retired Pound), `championship` (active, wait, 9 stages, 552 events, 0 pools — between seasons), `world-cup-2026` (active, forfeit, 1 stage, 104 events, 1 pool, entry £10).
   - 6 tiers (leagues): Pound £1 (inactive), Fiver £5, Tenner £10, Pony £25, Big One £50, World Cup 2026 £10 (was £30 — synced down in step 3a.12).
   - 3 users flagged `is_admin=true`: Wez (westley@sweetbyte.co.uk), James Woodhouse (mrwoodhouse@live.co.uk), Jason (jgs2011@hotmail.co.uk).
@@ -469,8 +494,9 @@ These are Wez's explicit choices from the IA redesign / Pound retirement / auth 
 
 Carry forward, none urgent for the next step:
 
-- **`pool_entries` has no `uniqueIndex(pool_id, user_id)`** — Decided Rule #2 enforcement at the DB layer. Pre-flight check in `enterPool` catches double-tap; a true concurrent race could still produce two rows. Schema migration needed before public launch.
-- **First-write-wins on `event_outcomes`** — score corrections from football-data not re-recorded automatically. Step 2l added fixture-metadata refresh; outcome reconciliation is still a separate pass needed before public launch.
+- **`pool_entries` `(pool_id, user_id)` unique index — RESOLVED in step 3a.16.** `pool_entries_pool_user_idx` is now live (Decided Rule #2 enforced at the DB layer); `enterPool` catches the `23505` collision and resolves to "already entered". No longer a pre-launch flag.
+- **First-write-wins on `event_outcomes`** — score corrections from football-data not re-recorded automatically (P3). **June 2026 decision: deliberately left as-is.** Auto-correction is the dangerous path — a transient bad FD value could flip a settled result and rewrite the leaderboard. An admin-only "stored score diverges from FD" alert was considered and deferred (not built). Revisit as a *manual-review* tool, never silent auto-overwrite, before public launch.
+- **Manual late-entry override has no app-side feature** — late predictions for Waynebow/bert (step 3a.16) were inserted by raw shell SQL, tagged `ip_address='admin-shell-late-entry'`. Fine for the informal friends' run and Wez's call, but every override is a post-lock prediction with no in-app record of *why*. Before licence grant, build a proper governed "admin late-entry" action (reason field, audit row) rather than carrying the shell habit forward — a regulator would expect lock exceptions to be ruled, not ad-hoc.
 - **No `DELETE` for predictions** — overwrite-only after first save; "half-saved" is a UI-only state. Matches Decided Rule #12. Confirm at pre-launch.
 - **Audit log volume** — every prediction save writes a `prediction.updated` row. Pool settlement writes one row per pool with full ranks + payouts in metadata. Indexed but disk grows. Revisit before public launch.
 - **`/api/pools`, `/api/tiers`, `/api/pools/competition/:slug` from arch §11** — collapsed into `/api/competitions`. Decide before pre-launch whether separate endpoints are needed.
@@ -524,8 +550,7 @@ No schema changes required. No code-path changes required outside seed config.
 
 - **SiteFooter "test mode" banner** — still claims "free-to-play, virtual credits, no real money accepted". Contradicts the £10 informal-run reality. Rewrite to: pre-licence informal run framing (£10 entry between friends, offline settlement, platform doesn't process payments yet, real-money play enabled when UKGC pool betting licence is granted). Pre-application blocker.
 - **UKGC application narrative** — assemble: informal WC private-betting evidence, audit-log dumps showing admin actions are recorded, schema readiness for the licensed flip (the dormant `licensed.ts` tables), responsible-gambling tooling status, KYC plan. Aim for application ~1 month into the new domestic season after WC retires.
-- **Resend + email verification** — signup currently creates an unverified account. Wire up `RESEND_API_KEY`, transactional templates, magic-link flow. Pre-licence-grant blocker (UKGC expects email verification to be live before real money).
-- **`pool_entries` unique index `(pool_id, user_id)`** — DB-level Decided Rule #2 enforcement, closing the concurrent-double-tap race. Pre-licence-grant blocker.
+- **Resend + email verification** — signup currently creates an unverified account. Wire up `RESEND_API_KEY`, transactional templates, magic-link flow. Pre-licence-grant blocker (UKGC expects email verification to be live before real money). **This is now the last remaining pre-licence-grant code blocker** — the `pool_entries` unique index (previously listed here) was shipped in step 3a.16.
 
 ### Carried-forward (lower priority, not licence-blocking)
 
