@@ -182,9 +182,13 @@ function OpponentRow({ match }: { match: OpponentMatch }) {
     .filter(Boolean)
     .join(" · ");
 
-  // Their pick, rendered read-only. Shared by the live + awaiting states.
+  // Their pick, rendered read-only and clearly labelled "Pick" so it can't be
+  // mistaken for the actual score. Shared by the live + awaiting states.
   const pickBlock = match.prediction ? (
     <div className="flex items-center gap-1.5">
+      <span className="font-['Manrope'] text-[0.6rem] font-semibold uppercase tracking-[0.14em] text-white/45">
+        Pick
+      </span>
       <ScoreBox tone="solid">{match.prediction.homeScore}</ScoreBox>
       <span className="text-white/40">-</span>
       <ScoreBox tone="solid">{match.prediction.awayScore}</ScoreBox>
@@ -200,13 +204,18 @@ function OpponentRow({ match }: { match: OpponentMatch }) {
     const pick = match.prediction;
     right = (
       <div className="flex flex-col items-end gap-1">
-        <span className="font-['Manrope'] text-[0.7rem] uppercase tracking-[0.14em] text-white/45">
-          FT {match.outcome.homeScore}-{match.outcome.awayScore}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="font-['Manrope'] text-[0.6rem] font-semibold uppercase tracking-[0.14em] text-emerald-300/70">
+            FT
+          </span>
+          <span className="font-['Barlow_Condensed'] text-[1.05rem] font-bold tabular-nums text-white">
+            {match.outcome.homeScore}-{match.outcome.awayScore}
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           {pick ? (
             <>
-              <span className="font-['Manrope'] text-[0.74rem] text-white/70">
+              <span className="font-['Manrope'] text-[0.74rem] text-white/65">
                 Pick {pick.homeScore}-{pick.awayScore}
               </span>
               {pick.points != null && <PointsPill points={pick.points} />}
