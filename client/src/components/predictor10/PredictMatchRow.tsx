@@ -134,6 +134,18 @@ export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
         const isLockRejection =
           err instanceof SavePredictionError && err.status === 403;
         const message = err instanceof Error ? err.message : "Couldn't save.";
+        if (isLockRejection) {
+          // Server refused a post-lock edit. The saved prediction is unchanged,
+          // so the snapshot-reset effect above won't fire (it only resets when
+          // the saved value changes). Revert the inputs here so the row stops
+          // showing the phantom unsaved value and snaps back to the real saved
+          // pick. The parent refetch then flips isLocked and the row renders
+          // its read-only locked state.
+          const savedHome = match.prediction?.homeScore ?? null;
+          const savedAway = match.prediction?.awayScore ?? null;
+          setHomeText(savedHome == null ? "" : String(savedHome));
+          setAwayText(savedAway == null ? "" : String(savedAway));
+        }
         onError(message, isLockRejection);
       } finally {
         setSaving(false);
