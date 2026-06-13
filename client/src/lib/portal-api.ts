@@ -427,6 +427,91 @@ export async function fetchPoolEntries(poolId: string): Promise<PoolEntriesPaylo
   return (await res.json()) as PoolEntriesPayload;
 }
 
+// ─── Opponent predictions (lock-gated view of another entrant's picks) ─────
+
+export type OpponentMatchPrediction = {
+  homeScore: number;
+  awayScore: number;
+  points: number | null;
+  isExact: boolean | null;
+  isCorrectResult: boolean | null;
+};
+
+export type OpponentMatch = {
+  eventId: string;
+  matchday: number | null;
+  homeTeam: string | null;
+  awayTeam: string | null;
+  homeTeamShort: string | null;
+  awayTeamShort: string | null;
+  groupLabel: string | null;
+  fdStage: string | null;
+  kickoffAt: string;
+  predictionLockAt: string;
+  isLocked: boolean;
+  status: "scheduled" | "live" | "finished" | "postponed" | "cancelled" | "void";
+  // True once the match has locked (or the entry is the viewer's own). Only
+  // then does `prediction` carry scores — before lock the server omits them.
+  predictionVisible: boolean;
+  // Whether the player made a pick. Revealed pre-lock; only the scores are hidden.
+  hasPrediction: boolean;
+  // Non-null ONLY when predictionVisible.
+  prediction: OpponentMatchPrediction | null;
+  outcome: EntryMatchOutcome | null;
+};
+
+export type EntryPredictionsPayload = {
+  pool: {
+    id: string;
+    status: "draft" | "open" | "locked" | "settled" | "void";
+    competitionShortName: string;
+    competitionSlug: string;
+    tierName: string;
+    roundName: string;
+    isTournamentStyle: boolean;
+    matchdayLabel: string;
+    nullBucketLabel: string;
+  };
+  player: {
+    entryId: string;
+    displayName: string;
+    isYou: boolean;
+  };
+  pointsVisibleTotal: number;
+  matches: OpponentMatch[];
+};
+
+export class FetchEntryPredictionsError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+    this.name = "FetchEntryPredictionsError";
+  }
+}
+
+export async function fetchEntryPredictions(
+  poolId: string,
+  entryId: string,
+): Promise<EntryPredictionsPayload> {
+  const res = await fetch(
+    `/api/pools/${encodeURIComponent(poolId)}/entries/${encodeURIComponent(entryId)}/predictions`,
+    { credentials: "include" },
+  );
+  notify401IfNeeded(res);
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = data.error;
+    } catch {
+      // non-JSON error body
+    }
+    throw new FetchEntryPredictionsError(message, res.status);
+  }
+  return (await res.json()) as EntryPredictionsPayload;
+}
+
 // ─── Admin portal ────────────────────────────────────────────────────────
 
 export type AdminUser = {

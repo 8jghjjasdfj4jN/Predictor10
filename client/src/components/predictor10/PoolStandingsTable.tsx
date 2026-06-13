@@ -20,21 +20,20 @@ Standalone callers (PoolTablePage) omit `maxRows` to get the full list.
 */
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Trophy } from "lucide-react";
+import { Link } from "wouter";
+import { ChevronDown, ChevronRight, ChevronUp, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PoolEntry } from "@/lib/portal-api";
 
 // ─── Sub-components ──────────────────────────────────────────────────────
 
-function LeaderboardRow({ entry }: { entry: PoolEntry }) {
+function LeaderboardRow({ entry, href }: { entry: PoolEntry; href?: string }) {
   const isPodium = entry.rank >= 1 && entry.rank <= 3;
-  return (
-    <div
-      className={cn(
-        "grid grid-cols-[28px_1fr_36px_36px_44px] items-center gap-2 px-3 py-3",
-        entry.isYou && "bg-emerald-400/[0.08]",
-      )}
-    >
+  const gridCols = href
+    ? "grid-cols-[28px_1fr_36px_36px_44px_16px]"
+    : "grid-cols-[28px_1fr_36px_36px_44px]";
+  const inner = (
+    <>
       <span
         className={cn(
           "text-center font-['Barlow_Condensed'] text-[1rem] font-extrabold tabular-nums",
@@ -65,15 +64,43 @@ function LeaderboardRow({ entry }: { entry: PoolEntry }) {
       >
         {entry.points}
       </span>
+      {href && (
+        <ChevronRight className="h-3.5 w-3.5 justify-self-end text-white/30" aria-hidden />
+      )}
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className={cn(
+          "grid items-center gap-2 px-3 py-3",
+          gridCols,
+          "min-h-[44px] transition hover:bg-white/[0.04]",
+          "outline-none focus-visible:bg-white/[0.04]",
+          entry.isYou && "bg-emerald-400/[0.08] hover:bg-emerald-400/[0.12]",
+        )}
+        aria-label={`See ${entry.isYou ? "your" : `${entry.displayName}'s`} predictions`}
+      >
+        {inner}
+      </Link>
+    );
+  }
+
+  return (
+    <div className={cn("grid items-center gap-2 px-3 py-3", gridCols, entry.isYou && "bg-emerald-400/[0.08]")}>
+      {inner}
     </div>
   );
 }
 
-function ColumnHeader() {
+function ColumnHeader({ hasLink }: { hasLink?: boolean }) {
   return (
     <div
       className={cn(
-        "grid grid-cols-[28px_1fr_36px_36px_44px] gap-2 px-3 py-2.5",
+        "grid gap-2 px-3 py-2.5",
+        hasLink ? "grid-cols-[28px_1fr_36px_36px_44px_16px]" : "grid-cols-[28px_1fr_36px_36px_44px]",
         "border-b border-white/10 bg-white/[0.02]",
         "font-['Manrope'] text-[0.6rem] font-semibold uppercase tracking-[0.22em] text-white/45",
       )}
@@ -83,6 +110,7 @@ function ColumnHeader() {
       <span className="text-right">Exact</span>
       <span className="text-right">Res</span>
       <span className="text-right">Pts</span>
+      {hasLink && <span aria-hidden />}
     </div>
   );
 }
@@ -128,9 +156,14 @@ type PoolStandingsTableProps = {
    * "↓ M more ↓" expander. Omit for the full standalone table (PoolTablePage).
    */
   maxRows?: number;
+  /**
+   * When provided, each row becomes a tappable link to the given href —
+   * used to open a player's lock-gated predictions. Omit to keep static rows.
+   */
+  linkTo?: (entry: PoolEntry) => string;
 };
 
-export function PoolStandingsTable({ entries, maxRows }: PoolStandingsTableProps) {
+export function PoolStandingsTable({ entries, maxRows, linkTo }: PoolStandingsTableProps) {
   const [expanded, setExpanded] = useState(false);
 
   const total = entries.length;
@@ -149,11 +182,11 @@ export function PoolStandingsTable({ entries, maxRows }: PoolStandingsTableProps
   return (
     <div className="space-y-2">
       <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
-        <ColumnHeader />
+        <ColumnHeader hasLink={Boolean(linkTo)} />
 
         <div className="divide-y divide-white/5">
           {visible.map((e) => (
-            <LeaderboardRow key={e.entryId} entry={e} />
+            <LeaderboardRow key={e.entryId} entry={e} href={linkTo?.(e)} />
           ))}
         </div>
 
@@ -170,7 +203,7 @@ export function PoolStandingsTable({ entries, maxRows }: PoolStandingsTableProps
               · · ·
             </div>
             <div className="border-t border-white/10">
-              <LeaderboardRow entry={youEntry} />
+              <LeaderboardRow entry={youEntry} href={linkTo?.(youEntry)} />
             </div>
           </>
         )}

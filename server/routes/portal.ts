@@ -24,11 +24,13 @@ import {
   getAccountHistory,
   getCompetitionsWithOpenPools,
   getEntryDetail,
+  getEntryPredictionsForViewer,
   getPoolDetail,
   getPoolEntries,
   getUserOpenEntries,
   upsertPrediction,
   type EnterPoolError,
+  type GetEntryPredictionsError,
   type GetPoolEntriesError,
   type UpsertPredictionError,
 } from "../lib/portal-data";
@@ -163,6 +165,45 @@ router.get("/pools/:id/entries", async (req: Request, res: Response): Promise<vo
     res.status(500).json({ error: "Failed to load pool entries." });
   }
 });
+
+// ─── Opponent predictions (tap a player on the table → see their picks) ───
+
+const ENTRY_PREDICTIONS_ERROR_MAP: Record<
+  GetEntryPredictionsError,
+  { status: number; message: string }
+> = {
+  POOL_NOT_FOUND: { status: 404, message: "Pool not found." },
+  ENTRY_NOT_FOUND: { status: 404, message: "Player not found in this pool." },
+  NOT_AUTHENTICATED: { status: 401, message: "Sign in to view predictions." },
+  NOT_ENTRANT: { status: 403, message: "Only entrants can view predictions." },
+};
+
+// Lock-gated view of one entrant's picks. Same access rule as the table:
+// public when settled, auth + entrant for live pools. The server omits any
+// pick whose match hasn't locked yet (predictionLockAt > now) — the scores are
+// never in the response, so they can't be read off the wire (anti-cheat).
+router.get(
+  "/pools/:poolId/entries/:entryId/predictions",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const viewerUserId = req.user?.id ?? null;
+      const outcome = await getEntryPredictionsForViewer(
+        req.params.poolId,
+        req.params.entryId,
+        viewerUserId,
+      );
+      if (!outcome.ok) {
+        const { status, message } = ENTRY_PREDICTIONS_ERROR_MAP[outcome.error];
+        res.status(status).json({ error: message });
+        return;
+      }
+      res.json(outcome.data);
+    } catch (err) {
+      console.error("[portal] /pools/:poolId/entries/:entryId/predictions failed:", err);
+      res.status(500).json({ error: "Failed to load predictions." });
+    }
+  },
+);
 
 // ─── Entry detail + predictions (step 2f) ────────────────────────────────
 

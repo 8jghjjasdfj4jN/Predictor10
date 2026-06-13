@@ -29,6 +29,7 @@ import PredictPage from "./pages/portal/PredictPage";
 import TablesPage from "./pages/portal/TablesPage";
 import PoolDetailPage from "./pages/portal/PoolDetailPage";
 import PoolTablePage from "./pages/portal/PoolTablePage";
+import OpponentPredictionsPage from "./pages/portal/OpponentPredictionsPage";
 import AccountPage from "./pages/portal/AccountPage";
 import AccountHistoryPage from "./pages/portal/AccountHistoryPage";
 import AdminPage from "./pages/portal/AdminPage";
@@ -99,6 +100,7 @@ function PortalRouter() {
             compatibility. `/table` is more specific — must come before the
             generic /:poolId match. PoolTablePage stays mounted at the old
             URL because Account History's [Table →] still links there. */}
+        <Route path="/pools/:competitionSlug/:poolId/table/:entryId" component={OpponentPredictionsPage} />
         <Route path="/pools/:competitionSlug/:poolId/table" component={PoolTablePage} />
         <Route path="/pools/:competitionSlug/:poolId">
           {(params) => (

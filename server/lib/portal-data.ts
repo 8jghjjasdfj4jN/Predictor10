@@ -1585,3 +1585,269 @@ export async function getPoolEntries(
     },
   };
 }
+
+// ─── Opponent predictions (view another entrant's picks, lock-gated) ───────
+
+export type OpponentMatchPredictionDto = {
+  homeScore: number;
+  awayScore: number;
+  points: number | null;
+  isExact: boolean | null;
+  isCorrectResult: boolean | null;
+};
+
+export type OpponentMatchDto = {
+  eventId: string;
+  matchday: number | null;
+  homeTeam: string | null;
+  awayTeam: string | null;
+  homeTeamShort: string | null;
+  awayTeamShort: string | null;
+  groupLabel: string | null;
+  fdStage: string | null;
+  kickoffAt: string;
+  predictionLockAt: string;
+  isLocked: boolean; // predictionLockAt <= now
+  status: "scheduled" | "live" | "finished" | "postponed" | "cancelled" | "void";
+  // Anti-cheat gate (arch §13 Rule #7 reused as a visibility rule). A pick is
+  // only revealed once the match has locked (1hr before kickoff) — by then the
+  // viewer's own pick for the same match is locked too, so seeing it can't help
+  // them. Own-entry views bypass the gate (you can always see your own picks).
+  predictionVisible: boolean;
+  // Whether the target made a pick at all. Safe to reveal pre-lock — only the
+  // score values are withheld (Wez's call: "hide the score only"). Knowing
+  // someone has predicted carries no copying advantage.
+  hasPrediction: boolean;
+  // NON-NULL ONLY WHEN predictionVisible. The server never emits an unlocked
+  // pick's scores — they are not in the payload at all, so they can't be read
+  // off the wire.
+  prediction: OpponentMatchPredictionDto | null;
+  outcome: EntryMatchOutcomeDto | null;
+};
+
+export type EntryPredictionsDto = {
+  pool: {
+    id: string;
+    status: "draft" | "open" | "locked" | "settled" | "void";
+    competitionShortName: string;
+    competitionSlug: string;
+    tierName: string;
+    roundName: string;
+    isTournamentStyle: boolean;
+    matchdayLabel: string; // "GW" | "MD" | "Group MD"
+    nullBucketLabel: string; // "Knockout Stages" | "Unscheduled"
+  };
+  player: {
+    entryId: string;
+    displayName: string; // public handle (nickname → displayName), never real name
+    isYou: boolean;
+  };
+  // Sum of points across matches whose picks are visible. Points only exist
+  // post-finish (which is always post-lock), so this never leaks anything.
+  pointsVisibleTotal: number;
+  matches: OpponentMatchDto[];
+};
+
+export type GetEntryPredictionsError =
+  | "POOL_NOT_FOUND"
+  | "ENTRY_NOT_FOUND"
+  | "NOT_AUTHENTICATED"
+  | "NOT_ENTRANT";
+
+export type GetEntryPredictionsOutcome =
+  | { ok: true; data: EntryPredictionsDto }
+  | { ok: false; error: GetEntryPredictionsError };
+
+/**
+ * One entrant's predictions for a pool, lock-gated so picks for matches that
+ * haven't locked yet are never returned (anti-cheat — arch §13 Rule #7 reused
+ * as a visibility rule). Powers the "tap a player on the table → see their
+ * picks" screen.
+ *
+ * Access mirrors getPoolEntries (the table itself):
+ *   - Pool not found → POOL_NOT_FOUND (404)
+ *   - Pool settled → public; any caller gets the picks (all locked by then).
+ *   - Pool live + viewer not auth'd → NOT_AUTHENTICATED (401)
+ *   - Pool live + viewer not entered → NOT_ENTRANT (403)
+ *   - Target entry not in this pool → ENTRY_NOT_FOUND (404)
+ *
+ * The lock gate is the whole point: a pick's scores are only included in the
+ * payload when the match has locked (predictionLockAt <= now). Before that the
+ * scores are omitted entirely — not sent and hidden, just absent — so they
+ * can't be read from network traffic. Own-entry requests bypass the gate.
+ */
+export async function getEntryPredictionsForViewer(
+  poolId: string,
+  entryId: string,
+  viewerUserId: string | null,
+): Promise<GetEntryPredictionsOutcome> {
+  // 1. Pool meta.
+  const [meta] = await db
+    .select({
+      poolId: pools.id,
+      poolStatus: pools.status,
+      stageId: stages.id,
+      stageName: stages.name,
+      competitionShortName: competitions.shortName,
+      competitionName: competitions.name,
+      competitionSlug: competitions.slug,
+      competitionExternalId: competitions.externalId,
+      competitionPostponedPolicy: competitions.postponedPolicy,
+      tierName: leagues.name,
+    })
+    .from(pools)
+    .innerJoin(competitions, eq(pools.competitionId, competitions.id))
+    .innerJoin(stages, eq(pools.stageId, stages.id))
+    .innerJoin(leagues, eq(pools.leagueId, leagues.id))
+    .where(eq(pools.id, poolId));
+
+  if (!meta) return { ok: false, error: "POOL_NOT_FOUND" };
+
+  const isSettled = meta.poolStatus === "settled";
+
+  // 2. Access gating — identical to the league table. Settled pools are
+  // public; live pools require auth + an existing entry in this pool.
+  if (!isSettled) {
+    if (!viewerUserId) return { ok: false, error: "NOT_AUTHENTICATED" };
+    const [own] = await db
+      .select({ id: poolEntries.id })
+      .from(poolEntries)
+      .where(and(eq(poolEntries.poolId, poolId), eq(poolEntries.userId, viewerUserId)));
+    if (!own) return { ok: false, error: "NOT_ENTRANT" };
+  }
+
+  // 3. Target entry — must belong to THIS pool. Join users for the public
+  // handle. 404 if the entry doesn't exist or isn't in this pool (no leak).
+  const [target] = await db
+    .select({
+      entryId: poolEntries.id,
+      userId: poolEntries.userId,
+      displayName: sql<string>`COALESCE(${users.nickname}, ${users.displayName})`,
+    })
+    .from(poolEntries)
+    .innerJoin(users, eq(poolEntries.userId, users.id))
+    .where(and(eq(poolEntries.id, entryId), eq(poolEntries.poolId, poolId)));
+
+  if (!target) return { ok: false, error: "ENTRY_NOT_FOUND" };
+
+  const isOwnEntry = viewerUserId !== null && target.userId === viewerUserId;
+
+  // 4. All events in the Round, with outcomes.
+  const eventRows = await db
+    .select({
+      id: events.id,
+      matchday: events.matchday,
+      homeTeam: events.homeTeam,
+      awayTeam: events.awayTeam,
+      homeTeamShort: events.homeTeamShort,
+      awayTeamShort: events.awayTeamShort,
+      groupLabel: events.groupLabel,
+      fdStage: events.fdStage,
+      kickoffAt: events.kickoffAt,
+      predictionLockAt: events.predictionLockAt,
+      status: events.status,
+      outcomeHome: eventOutcomes.homeScore,
+      outcomeAway: eventOutcomes.awayScore,
+      outcomeFinishedAt: eventOutcomes.finishedAt,
+    })
+    .from(events)
+    .leftJoin(eventOutcomes, eq(eventOutcomes.eventId, events.id))
+    .where(eq(events.stageId, meta.stageId))
+    .orderBy(asc(events.kickoffAt));
+
+  // 5. The target entry's predictions.
+  const predictionRows = await db
+    .select({
+      eventId: predictions.eventId,
+      homeScore: predictions.homeScorePredicted,
+      awayScore: predictions.awayScorePredicted,
+      pointsAwarded: predictions.pointsAwarded,
+      isExact: predictions.isExact,
+      isCorrectResult: predictions.isCorrectResult,
+    })
+    .from(predictions)
+    .where(eq(predictions.poolEntryId, entryId));
+
+  const predByEventId = new Map(predictionRows.map((p) => [p.eventId, p]));
+
+  const now = Date.now();
+  let pointsVisibleTotal = 0;
+
+  const matches: OpponentMatchDto[] = eventRows.map((e) => {
+    const isLocked = e.predictionLockAt.getTime() <= now;
+    const predictionVisible = isLocked || isOwnEntry;
+    const pred = predByEventId.get(e.id);
+    const hasPrediction = pred !== undefined;
+
+    // The anti-cheat guarantee lives on this next line: a pick object is only
+    // built when predictionVisible. Otherwise `prediction` is null and the raw
+    // scores never enter the response.
+    const prediction: OpponentMatchPredictionDto | null =
+      predictionVisible && pred
+        ? {
+            homeScore: pred.homeScore,
+            awayScore: pred.awayScore,
+            points: pred.pointsAwarded,
+            isExact: pred.isExact,
+            isCorrectResult: pred.isCorrectResult,
+          }
+        : null;
+
+    if (prediction?.points != null) pointsVisibleTotal += prediction.points;
+
+    return {
+      eventId: e.id,
+      matchday: e.matchday,
+      homeTeam: e.homeTeam,
+      awayTeam: e.awayTeam,
+      homeTeamShort: e.homeTeamShort,
+      awayTeamShort: e.awayTeamShort,
+      groupLabel: e.groupLabel,
+      fdStage: e.fdStage,
+      kickoffAt: e.kickoffAt.toISOString(),
+      predictionLockAt: e.predictionLockAt.toISOString(),
+      isLocked,
+      status: e.status,
+      predictionVisible,
+      hasPrediction,
+      prediction,
+      outcome:
+        e.outcomeHome != null && e.outcomeAway != null && e.outcomeFinishedAt
+          ? {
+              homeScore: e.outcomeHome,
+              awayScore: e.outcomeAway,
+              finishedAt: e.outcomeFinishedAt.toISOString(),
+            }
+          : null,
+    };
+  });
+
+  const externalCode = meta.competitionExternalId ?? "";
+  const isTournamentStyle = meta.competitionPostponedPolicy === "forfeit";
+  const matchdayLabel = isTournamentStyle ? "Group MD" : externalCode === "ELC" ? "MD" : "GW";
+  const nullBucketLabel = isTournamentStyle ? "Knockout Stages" : "Unscheduled";
+
+  return {
+    ok: true,
+    data: {
+      pool: {
+        id: meta.poolId,
+        status: meta.poolStatus,
+        competitionShortName: meta.competitionShortName ?? meta.competitionName,
+        competitionSlug: meta.competitionSlug,
+        tierName: meta.tierName,
+        roundName: meta.stageName,
+        isTournamentStyle,
+        matchdayLabel,
+        nullBucketLabel,
+      },
+      player: {
+        entryId: target.entryId,
+        displayName: target.displayName,
+        isYou: isOwnEntry,
+      },
+      pointsVisibleTotal,
+      matches,
+    },
+  };
+}

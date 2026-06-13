@@ -653,6 +653,9 @@ export default function TablesPage() {
               <PoolStandingsTable
                 entries={standingsState.payload.entries}
                 maxRows={STANDINGS_MAX_ROWS}
+                linkTo={(e) =>
+                  `/pools/${standingsState.payload.pool.competitionSlug}/${standingsState.payload.pool.id}/table/${e.entryId}`
+                }
               />
               <TieBreakFooter />
             </>

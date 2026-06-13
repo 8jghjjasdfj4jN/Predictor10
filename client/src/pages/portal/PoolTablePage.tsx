@@ -230,7 +230,12 @@ export default function PoolTablePage() {
         <EmptyStandings settled={isSettled} />
       ) : (
         <>
-          <PoolStandingsTable entries={entries} />
+          <PoolStandingsTable
+            entries={entries}
+            linkTo={(e) =>
+              `/pools/${params?.competitionSlug ?? ""}/${poolId}/table/${e.entryId}`
+            }
+          />
           <TieBreakFooter />
         </>
       )}
