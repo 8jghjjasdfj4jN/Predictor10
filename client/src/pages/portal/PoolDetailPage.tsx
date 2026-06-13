@@ -75,12 +75,13 @@ function formatSavedAgo(savedAt: number, now: number): string {
 // Used by the day-grouper headers within the active GW.
 /**
  * Predict-screen ordering tier. Lower = higher up the feed.
- *   0 = open: still predictable (teams known, not locked, not started) → TOP
- *   1 = locked, about to start (within the 1hr pre-kickoff window)
- *   2 = live (kicked off, not finished)
- *   3 = played: finished or terminal (postponed / cancelled / void)
+ *   0 = live: kicked off, not finished → TOP, with the pulsing LIVE badge
+ *   1 = open: still predictable (teams known, not locked, not started)
+ *   2 = locked, about to start (within the 1hr pre-kickoff window)
+ *   3 = played: finished or terminal (postponed / cancelled / void) — history
  *   4 = awaiting teams (unresolved knockout slots) → BOTTOM
- * Competition-agnostic — used for PL, cups and WC alike.
+ * Once a live game finishes it moves from tier 0 to tier 3, dropping into the
+ * historical block. Competition-agnostic — PL, cups and WC alike.
  */
 function predictTier(m: EntryMatch): number {
   const finished = m.outcome !== null;
@@ -90,15 +91,15 @@ function predictTier(m: EntryMatch): number {
   const teamsKnown = m.homeTeam !== null && m.awayTeam !== null;
   if (!teamsKnown) return 4;
   const kicked = new Date(m.kickoffAt).getTime() <= Date.now();
-  if (kicked) return 2; // live (kicked off, no result yet)
-  if (m.isLocked) return 1; // locked, awaiting kick-off
-  return 0; // open — needs predicting
+  if (kicked) return 0; // live — kicked off, no result yet
+  if (!m.isLocked) return 1; // open — needs predicting
+  return 2; // locked, awaiting kick-off
 }
 
 /**
- * Sorts so the nearest still-predictable game is always on top. Open and
- * about-to-start games go soonest-first (nearest deadline first); live and
- * played games go newest-first (most recent at the top of their block).
+ * Live games on top (newest kick-off first — several at once cluster together),
+ * then the games you can still predict (nearest deadline first), then those
+ * about to start, then the played games (most recent first), then awaiting.
  */
 function comparePredict(a: EntryMatch, b: EntryMatch): number {
   const ta = predictTier(a);
@@ -106,7 +107,7 @@ function comparePredict(a: EntryMatch, b: EntryMatch): number {
   if (ta !== tb) return ta - tb;
   const ak = new Date(a.kickoffAt).getTime();
   const bk = new Date(b.kickoffAt).getTime();
-  return ta === 2 || ta === 3 ? bk - ak : ak - bk;
+  return ta === 0 || ta === 3 ? bk - ak : ak - bk; // live & played newest-first; else soonest-first
 }
 
 function formatSettledDate(iso: string): string {

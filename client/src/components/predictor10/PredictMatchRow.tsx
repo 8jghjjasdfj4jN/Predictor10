@@ -305,6 +305,21 @@ function PointsPill({ points, tone }: { points: number; tone: "emerald" | "amber
 
 // ─── Editable / Locked view (no outcome yet) ─────────────────────────────
 
+/** Pulsing red LIVE badge — same juice as the player-predictions view. */
+function LiveBadge() {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/40 bg-rose-500/15 px-2 py-0.5">
+      <span className="relative flex h-2 w-2">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
+      </span>
+      <span className="font-['Manrope'] text-[0.62rem] font-bold uppercase tracking-[0.18em] text-rose-200">
+        Live
+      </span>
+    </span>
+  );
+}
+
 function EditableOrLockedView({
   match,
   homeText,
@@ -321,6 +336,11 @@ function EditableOrLockedView({
   saving: boolean;
 }) {
   const awaitingTeams = match.homeTeam === null || match.awayTeam === null;
+  const kicked = new Date(match.kickoffAt).getTime() <= Date.now();
+  const terminalUnplayed =
+    match.status === "postponed" || match.status === "cancelled" || match.status === "void";
+  // No outcome yet (FinishedView handles finished). Kicked off + playable = live.
+  const isLive = kicked && !awaitingTeams && !terminalUnplayed;
   const homeNum = parseScore(homeText);
   const awayNum = parseScore(awayText);
   const halfSaved =
@@ -333,8 +353,11 @@ function EditableOrLockedView({
     (homeNum !== (match.prediction?.homeScore ?? null) ||
       awayNum !== (match.prediction?.awayScore ?? null));
 
+  // Live rows show the pulsing LIVE badge instead of a text status tag.
   let metaTag: { label: string; tone: "neutral" | "emerald" | "amber" | "muted" } | null = null;
-  if (awaitingTeams) {
+  if (isLive) {
+    metaTag = null;
+  } else if (awaitingTeams) {
     metaTag = { label: "Awaiting teams", tone: "muted" };
   } else if (match.isLocked) {
     metaTag = hasSavedPrediction
@@ -358,13 +381,15 @@ function EditableOrLockedView({
     <div
       className={cn(
         "rounded-2xl border px-3.5 py-3 transition",
-        match.isLocked
-          ? "border-white/8 bg-white/[0.015]"
-          : halfSaved
-            ? "border-amber-300/25 bg-amber-400/[0.03]"
-            : hasSavedPrediction && !editedSinceSave
-              ? "border-emerald-400/20 bg-emerald-400/[0.025]"
-              : "border-white/10 bg-white/[0.03]",
+        isLive
+          ? "border-rose-400/30 bg-rose-500/[0.06]"
+          : match.isLocked
+            ? "border-white/8 bg-white/[0.015]"
+            : halfSaved
+              ? "border-amber-300/25 bg-amber-400/[0.03]"
+              : hasSavedPrediction && !editedSinceSave
+                ? "border-emerald-400/20 bg-emerald-400/[0.025]"
+                : "border-white/10 bg-white/[0.03]",
       )}
     >
       <div className="flex items-center gap-2.5">
@@ -419,6 +444,12 @@ function EditableOrLockedView({
           <>
             <span aria-hidden className="text-white/20">·</span>
             <span className="font-semibold text-emerald-200/75">Group {match.groupLabel}</span>
+          </>
+        )}
+        {isLive && (
+          <>
+            <span aria-hidden className="text-white/20">·</span>
+            <LiveBadge />
           </>
         )}
         {metaTag && (
