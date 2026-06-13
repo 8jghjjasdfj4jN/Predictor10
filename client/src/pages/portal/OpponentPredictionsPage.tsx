@@ -50,14 +50,6 @@ function displayTeamName(name: string | null): string {
   return name.replace(/\s+FC$/, "").replace(/\s+AFC$/, "");
 }
 
-const KNOCKOUT_STAGE_ORDER: Record<string, number> = {
-  LAST_32: 1,
-  LAST_16: 2,
-  QUARTER_FINALS: 3,
-  SEMI_FINALS: 4,
-  THIRD_PLACE_PLAYOFF: 5,
-  FINAL: 6,
-};
 const KNOCKOUT_STAGE_DISPLAY: Record<string, string> = {
   LAST_32: "Round of 32",
   LAST_16: "Round of 16",
@@ -66,6 +58,23 @@ const KNOCKOUT_STAGE_DISPLAY: Record<string, string> = {
   THIRD_PLACE_PLAYOFF: "Third-place playoff",
   FINAL: "Final",
 };
+
+function stageLabelFor(match: OpponentMatch): string | null {
+  if (!match.fdStage) return null;
+  if (match.fdStage === "GROUP_STAGE" || match.fdStage === "REGULAR_SEASON") return null;
+  return KNOCKOUT_STAGE_DISPLAY[match.fdStage] ?? null;
+}
+
+/**
+ * Most-recent-first ordering. Only matches that have kicked off are shown
+ * (see the page filter), so this is a plain newest-kickoff-first sort: any
+ * live match leads, then the match that finished before it, and so on back
+ * through the played matches. Several simultaneous live matches share the
+ * same kickoff and sit together at the top.
+ */
+function sortByRecency(a: OpponentMatch, b: OpponentMatch): number {
+  return new Date(b.kickoffAt).getTime() - new Date(a.kickoffAt).getTime();
+}
 
 // ─── Sub-components ──────────────────────────────────────────────────────
 
@@ -116,6 +125,13 @@ function ScoreBox({ children, tone }: { children: React.ReactNode; tone: "solid"
 function OpponentRow({ match }: { match: OpponentMatch }) {
   const awaitingTeams = match.homeTeam === null || match.awayTeam === null;
   const finished = match.outcome !== null;
+  const meta = [
+    stageLabelFor(match),
+    match.groupLabel ? `Group ${match.groupLabel}` : null,
+    formatKickoff(match.kickoffAt),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   let right: React.ReactNode;
   if (awaitingTeams) {
@@ -181,55 +197,12 @@ function OpponentRow({ match }: { match: OpponentMatch }) {
           {displayTeamName(match.awayTeam)}
         </div>
         <div className="mt-0.5 truncate font-['Manrope'] text-[0.68rem] text-white/40">
-          {match.groupLabel ? `Group ${match.groupLabel} · ` : ""}
-          {formatKickoff(match.kickoffAt)}
+          {meta}
         </div>
       </div>
       <div className="shrink-0">{right}</div>
     </div>
   );
-}
-
-type Group = { label: string; matches: OpponentMatch[] };
-
-function buildGroups(payload: EntryPredictionsPayload): Group[] {
-  const { matches, pool } = payload;
-  const numbered = new Map<number, OpponentMatch[]>();
-  const nullBucket: OpponentMatch[] = [];
-
-  for (const m of matches) {
-    if (m.matchday == null) nullBucket.push(m);
-    else {
-      const list = numbered.get(m.matchday) ?? [];
-      list.push(m);
-      numbered.set(m.matchday, list);
-    }
-  }
-
-  const groups: Group[] = Array.from(numbered.entries())
-    .sort(([a], [b]) => a - b)
-    .map(([md, ms]) => ({ label: `${pool.matchdayLabel} ${md}`, matches: ms }));
-
-  if (nullBucket.length > 0) {
-    if (pool.isTournamentStyle) {
-      // Sub-group the knockout bucket by football-data stage so the rows sit
-      // under "Round of 32" / "Round of 16" / … like the prediction screen.
-      const byStage = new Map<string, OpponentMatch[]>();
-      for (const m of nullBucket) {
-        const key = m.fdStage ?? "OTHER";
-        if (!byStage.has(key)) byStage.set(key, []);
-        byStage.get(key)!.push(m);
-      }
-      const stageGroups = Array.from(byStage.entries())
-        .sort((a, b) => (KNOCKOUT_STAGE_ORDER[a[0]] ?? 99) - (KNOCKOUT_STAGE_ORDER[b[0]] ?? 99))
-        .map(([key, ms]) => ({ label: KNOCKOUT_STAGE_DISPLAY[key] ?? "Other", matches: ms }));
-      groups.push(...stageGroups);
-    } else {
-      groups.push({ label: pool.nullBucketLabel, matches: nullBucket });
-    }
-  }
-
-  return groups;
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────
@@ -314,7 +287,13 @@ export default function OpponentPredictionsPage() {
   }
 
   const { pool, player } = payload;
-  const groups = buildGroups(payload);
+  // Only show matches that have kicked off — live and finished. Future and
+  // not-yet-started matches are omitted entirely (nothing to reveal, nothing
+  // to hide). Newest kickoff first, so any live match leads.
+  const now = Date.now();
+  const shown = payload.matches
+    .filter((m) => new Date(m.kickoffAt).getTime() <= now)
+    .sort(sortByRecency);
 
   return (
     <div className="space-y-5 px-4 py-7 pb-10">
@@ -338,24 +317,19 @@ export default function OpponentPredictionsPage() {
         </p>
       </header>
 
-      <p className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2.5 font-['Manrope'] text-[0.72rem] leading-5 text-white/50">
-        Each match's picks become visible to everyone once it locks, 1 hour before kick-off. Until then, scores stay hidden.
-      </p>
-
-      <div className="space-y-5">
-        {groups.map((group) => (
-          <section key={group.label} className="space-y-2">
-            <h2 className="px-1 font-['Manrope'] text-[0.66rem] font-semibold uppercase tracking-[0.22em] text-white/45">
-              {group.label}
-            </h2>
-            <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] divide-y divide-white/5">
-              {group.matches.map((m) => (
-                <OpponentRow key={m.eventId} match={m} />
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
+      {shown.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-8 text-center">
+          <p className="font-['Manrope'] text-[0.82rem] leading-relaxed text-white/55">
+            No matches have kicked off yet. Picks appear here once matches go live.
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] divide-y divide-white/5">
+          {shown.map((m) => (
+            <OpponentRow key={m.eventId} match={m} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
