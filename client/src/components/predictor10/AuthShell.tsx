@@ -30,10 +30,6 @@ export function AuthShell({ children }: { children: ReactNode }) {
           <div className="rounded-[1.6rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.4)] backdrop-blur-xl sm:p-8">
             {children}
           </div>
-
-          <div className="rounded-2xl border border-amber-300/22 bg-amber-300/6 px-4 py-3 text-center text-[0.78rem] leading-5 text-amber-100/80">
-            <strong className="font-semibold text-amber-200">Test mode:</strong> Free-to-play with virtual credits only. No real money is accepted while we're in test mode.
-          </div>
         </div>
       </div>
     </div>

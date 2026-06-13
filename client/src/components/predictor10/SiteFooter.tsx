@@ -16,18 +16,13 @@ const linkGroups = [
 export function SiteFooter() {
   return (
     <div className="space-y-6 rounded-[1.6rem] border border-white/10 bg-black/30 p-5 sm:p-7">
-      <div className="rounded-[1.2rem] border border-amber-300/22 bg-amber-300/6 px-4 py-3 text-[0.82rem] leading-6 text-amber-100/85">
-        <strong className="font-semibold text-amber-200">Test mode:</strong>{" "}
-        Predictor10 is currently operating as a free-to-play prediction game with virtual credits. No real money is accepted, awarded, or withdrawable. Real-money play will be enabled when the UKGC pool betting licence is granted.
-      </div>
-
       <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr_1fr_1fr]">
         <div className="space-y-4">
           <p className="text-[0.62rem] font-semibold uppercase tracking-[0.32em] text-white/40">
             Predictor10
           </p>
           <p className="max-w-md text-sm leading-6 text-white/60">
-            A football prediction pool, in test mode through the 2026 world cup. Built for league competition, scored on knowledge, run on transparent rules.
+            A football prediction pool for the 2026 world cup. Built for league competition, scored on knowledge, run on transparent rules.
           </p>
           <div className="rounded-[1rem] border border-dashed border-white/15 bg-white/3 px-4 py-3">
             <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-white/55">

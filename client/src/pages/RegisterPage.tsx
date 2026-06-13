@@ -119,7 +119,7 @@ export default function RegisterPage() {
           Create your account
         </h1>
         <p className="text-sm text-white/55">
-          Free to play. Thirty seconds. Email confirmation will follow.
+          Takes about thirty seconds.
         </p>
       </div>
 
