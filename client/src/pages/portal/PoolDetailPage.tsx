@@ -523,6 +523,7 @@ function EnteredView({ entryId }: { entryId: string }) {
                 entryId={entry.id}
                 onSaved={onSaved}
                 onError={onError}
+                onLockElapsed={load}
               />
               {dist && (
                 <PickDistribution

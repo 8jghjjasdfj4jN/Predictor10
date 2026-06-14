@@ -26,7 +26,7 @@ Auto-save (editable rows only):
 The "Live (in-play)" state lives behind live-sync — step 2j+.
 */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -41,6 +41,9 @@ type Props = {
   entryId: string;
   onSaved: (response: SavePredictionResponse) => void;
   onError: (message: string, isLockRejection: boolean) => void;
+  /** Fired once when this row's prediction lock elapses, so the parent can
+      refetch and flip the row to its read-only locked state promptly. */
+  onLockElapsed?: () => void;
 };
 
 const TIME_FMT = new Intl.DateTimeFormat("en-GB", {
@@ -96,7 +99,7 @@ function pointsTone(points: number): "emerald" | "amber" | "rose" {
   return "rose";
 }
 
-export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
+export function PredictMatchRow({ match, entryId, onSaved, onError, onLockElapsed }: Props) {
   // For finished matches we render a static "FT" view — auto-save is bypassed.
   // For editable + locked-no-outcome rows we track input state as before.
   const isFinished = match.outcome !== null;
@@ -198,6 +201,7 @@ export function PredictMatchRow({ match, entryId, onSaved, onError }: Props) {
       onHome={setHomeText}
       onAway={setAwayText}
       saving={saving}
+      onLockElapsed={onLockElapsed}
     />
   );
 }
@@ -305,6 +309,69 @@ function PointsPill({ points, tone }: { points: number; tone: "emerald" | "amber
 
 // ─── Editable / Locked view (no outcome yet) ─────────────────────────────
 
+/**
+ * Compact, self-ticking countdown chip for the meta line. Renders "Locks in
+ * 2h 14m" / "Kicks off in 47m" / "38s" and disappears at zero. `onExpire`
+ * fires once when it crosses zero (used by the lock countdown to nudge a
+ * parent refetch so the row flips to locked).
+ */
+function formatRemaining(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
+}
+
+function Countdown({
+  targetIso,
+  prefix,
+  onExpire,
+  urgent,
+}: {
+  targetIso: string;
+  prefix: string;
+  onExpire?: () => void;
+  urgent?: boolean;
+}) {
+  const target = useMemo(() => new Date(targetIso).getTime(), [targetIso]);
+  const [remaining, setRemaining] = useState(() => target - Date.now());
+  const firedRef = useRef(false);
+  const onExpireRef = useRef(onExpire);
+  onExpireRef.current = onExpire;
+
+  useEffect(() => {
+    firedRef.current = false;
+    function tick() {
+      const r = target - Date.now();
+      setRemaining(r);
+      if (r <= 0 && !firedRef.current) {
+        firedRef.current = true;
+        onExpireRef.current?.();
+      }
+    }
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [target]);
+
+  if (remaining <= 0) return null;
+
+  const isUrgent = !!urgent && remaining <= 15 * 60 * 1000;
+  return (
+    <span
+      className={cn(
+        "tabular-nums",
+        isUrgent ? "font-semibold text-amber-300/90" : "text-white/55",
+      )}
+    >
+      {prefix} {formatRemaining(remaining)}
+    </span>
+  );
+}
+
 /** Pulsing red LIVE badge — same juice as the player-predictions view. */
 function LiveBadge() {
   return (
@@ -327,6 +394,7 @@ function EditableOrLockedView({
   onHome,
   onAway,
   saving,
+  onLockElapsed,
 }: {
   match: EntryMatch;
   homeText: string;
@@ -334,6 +402,7 @@ function EditableOrLockedView({
   onHome: (v: string) => void;
   onAway: (v: string) => void;
   saving: boolean;
+  onLockElapsed?: () => void;
 }) {
   const awaitingTeams = match.homeTeam === null || match.awayTeam === null;
   const kicked = new Date(match.kickoffAt).getTime() <= Date.now();
@@ -376,6 +445,14 @@ function EditableOrLockedView({
   const inputDisabled = match.isLocked || awaitingTeams;
   const displayHome = (match.isLocked && !hasSavedPrediction) || awaitingTeams ? "" : homeText;
   const displayAway = (match.isLocked && !hasSavedPrediction) || awaitingTeams ? "" : awayText;
+
+  // At most one countdown per row, contextual to its state:
+  //   open & predictable → time until prediction lock
+  //   locked, not yet kicked off → time until kick-off
+  //   live / finished / awaiting teams / terminal → none
+  const showLockCountdown = !match.isLocked && !awaitingTeams && !isLive && !terminalUnplayed;
+  const showKickoffCountdown =
+    match.isLocked && !isLive && !kicked && !terminalUnplayed && !awaitingTeams;
 
   return (
     <div
@@ -434,6 +511,23 @@ function EditableOrLockedView({
 
       <div className="mt-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-['Manrope'] text-[0.7rem] text-white/45">
         <span>{formatKickoff(match.kickoffAt)}</span>
+        {showLockCountdown && (
+          <>
+            <span aria-hidden className="text-white/20">·</span>
+            <Countdown
+              targetIso={match.predictionLockAt}
+              prefix="Locks in"
+              urgent
+              onExpire={onLockElapsed}
+            />
+          </>
+        )}
+        {showKickoffCountdown && (
+          <>
+            <span aria-hidden className="text-white/20">·</span>
+            <Countdown targetIso={match.kickoffAt} prefix="Kicks off in" />
+          </>
+        )}
         {stageLabelFor(match) && (
           <>
             <span aria-hidden className="text-white/20">·</span>
