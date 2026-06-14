@@ -377,7 +377,33 @@ Fix: in the auto-save catch block, when the error is a 403 lock-rejection, expli
 
 No data correction needed — the DB always held the correct 0-1; the bug was purely cosmetic with no scoring or money impact. Verification: `tsc` unchanged at 18 pre-existing errors (zero new), `pnpm build` exit 0.
 
-### Live deployment state (post step 3a.17)
+### Step 3a.18 — Player-predictions view, live status, predict-feed reorder, honest footer (June 14 2026)
+
+A run of in-flight gameplay/UX work during the group stage. All client-side except one new read-only server endpoint; no schema or package changes anywhere in the step.
+
+**1. Removed the "test mode / virtual credits / no real money" copy (pre-application honesty blocker).** The amber banner contradicted the live £10 reality. Deleted outright (Wez's call — delete, not reword) from three live surfaces: `SiteFooter.tsx` (amber banner + the "in test mode through the 2026 world cup" blurb line), `AuthShell.tsx` (the banner under the login/signup card), and `RegisterPage.tsx` ("Free to play. … Email confirmation will follow." → "Takes about thirty seconds." — also dropped the untrue email-confirmation claim, since Resend isn't wired yet). The `TrustBand.tsx` component is not rendered (already removed from `Home.tsx`); its copy is dead.
+
+**2. P3 score-correction gap — CLOSED, accepted (do not relitigate).** football-data first-write-wins means a feed correction after first write isn't re-applied. Discussed and accepted as low-risk: scoring is full-time-only (extra time + penalties already excluded via `extractRegulationScore`), and an official 90-minute FT score effectively never changes after the whistle (scorer reassignments don't change the line; VAR resolves pre-whistle). The realistic residual is a rare feed data-entry correction, usually within minutes. The "scores diverged" admin alert is **not being built** — dropped from follow-ups. Nothing deleted/auto-overwritten remains the rule.
+
+**3. NEW FEATURE — view another player's predictions (lock-gated, anti-cheat).** Tap any player row on the league table → a read-only screen of their picks for that pool.
+- Server: `getEntryPredictionsForViewer(poolId, entryId, viewerUserId)` in `portal-data.ts`, exposed at `GET /api/pools/:poolId/entries/:entryId/predictions`. Access mirrors the table exactly (public when settled; auth + entrant for live pools → 401/403; 404 for unknown pool/entry).
+- **Anti-cheat guarantee:** a pick's scores are included in the payload **only** when the match has locked (`predictionLockAt <= now`, i.e. `predictionVisible = isLocked || ownEntry`). Unlocked picks are omitted entirely — never sent, so they can't be read off the wire. This is safe because the lock is symmetric: by the time you can see someone's pick, your own pick for that match is locked too.
+- Client: new page `OpponentPredictionsPage.tsx` at route `/pools/:competitionSlug/:poolId/table/:entryId` (registered in `App.tsx` *before* the bare `/table` route). `fetchEntryPredictions` + types in `portal-api.ts`. Tap-through added to `PoolStandingsTable.tsx` via an optional `linkTo` prop, wired on both `PoolTablePage.tsx` (full table) and `TablesPage.tsx` (Tables tab).
+- Nickname-only display (never real names). Re-fetches on window focus while live so newly-locked picks appear.
+
+**4. Live status + juice.** Pulsing red "LIVE" badge (radar-ping dot + red row tint) on in-play matches, on **both** the player-predictions view and the Predict screen (`PredictMatchRow.tsx`). A distinct calm amber "Locked · awaiting kick-off" status marks the locked-but-not-started window (the hour between lock and kickoff). "Live" = kicked off (`kickoffAt <= now`) + not finished + not terminal; relies on the scheduler's `status='live'` sync (every 5 min) plus the kickoff-time derivation, so it shows within a few minutes of real kickoff and flips to the result a few minutes after FT. No live in-play score feed exists — actual scores only appear at full time.
+
+**5. Predict-screen feed reorder (Decided Rule #12 refined, competition-agnostic).** Inside the open GW/round tab, matches are now a single ordered feed instead of day-grouped: **live (top) → still-predictable (soonest deadline first) → locked-about-to-start → finished (most recent first) → awaiting-teams (bottom).** A finished live game drops into the historical block automatically. Day headers ("FRI 12 JUN") and knockout stage headers ("Round of 32") were removed from inside the tab; instead every row now shows its full date and, for knockouts, its round inline (`formatKickoff` now includes the date; `stageLabelFor` on the rows). The GW/round tabs themselves and the default-tab logic are unchanged. One shared code path (`PoolDetailPage` `comparePredict` / `predictTier`, `PredictMatchRow`) — applies to PL, cups and WC with zero per-competition branching.
+
+**6. Player-view ordering + clarity.** The player-predictions view shows locked-or-later matches only (live → about-to-start → finished), and every row clearly labels the prediction as "Pick" (so a pick can't be mistaken for a score) with the actual result shown as a prominent green "FT" + bold scoreline on finished rows.
+
+**Docs:** `portal-architecture.md` §15 updated with two notes — (a) all these gameplay features are competition-agnostic and carry to the Premier League/cups for free (restoring PL is marketing-only, the `.tsx.bak` rename), and (b) **removal of a competition from the active surfaces must be operator-triggered, not automatic** (see follow-up below).
+
+**Build verification:** `pnpm install --frozen-lockfile` + `pnpm build` exit 0. **tsc baseline dropped from 18 → 15** — the removed Predict-screen grouping code carried a few of the old pre-existing errors; zero new errors introduced anywhere this session. New baseline for future "zero new errors" checks is **15** (all in `client/src/lib/fixture-sync.ts`, `client/src/lib/outcome-sync.ts`, `server/lib/portal-data.ts`).
+
+**OPEN — not yet built, awaiting Wez's go (pre-Final operational priority):** the WC must not auto-disappear from Home/Tables when the Final settles. Today `getCompetitionsWithOpenPools` filters `pools.status='open'`, so a settled pool drops off the active surfaces the instant it settles — the same end-of-season vanish Wez disliked on PL. The agreed fix (not yet coded): keep a settled pool visible on the active surfaces while its competition is still `isActive=true`, so removal only happens at the manual retirement step (Wez's say-so). Nothing is ever deleted either way — settled data always remains in `/account/history` and at the settled-table URL. Build this before ~19–22 July.
+
+### Live deployment state (post step 3a.18)
 - Render web service deployed at `https://predictor10.com`. Build green.
 - **Render plan: Starter ($7/month)**. Always-on — no idle spin-down. Cold starts only occur on deploy / crash recovery. Single instance.
 - **11 real users on the platform**, WC entries flowing in. **Group stage is underway** — opener Mexico v South Africa kicked off 11 June 19:00 UTC. Two late entrants (Waynebow, bert) were manually given opener predictions via shell after the lock (step 3a.16).
@@ -546,9 +572,11 @@ When the WC Final settles and the pool reaches `status='settled'`, the comp + ti
 
 No schema changes required. No code-path changes required outside seed config.
 
+**PRE-FINAL CODE TASK (not yet built, agreed step 3a.18, needs Wez's go):** before the Final settles, change `getCompetitionsWithOpenPools` so a settled pool stays visible on the active surfaces (Home / Tables) while its competition is still `isActive=true`. Today it filters `pools.status='open'`, so the WC would auto-vanish the instant the Final settles — the end-of-season disappearance Wez disliked on PL. After the fix, removal from the active surfaces only happens at the manual retirement step above (operator-triggered). Nothing is ever deleted either way; settled data stays in `/account/history` and at the settled-table URL. Generic — also fixes the PL end-of-season vanish. See arch §15.
+
 ### Pre-licence application work
 
-- **SiteFooter "test mode" banner** — still claims "free-to-play, virtual credits, no real money accepted". Contradicts the £10 informal-run reality. Rewrite to: pre-licence informal run framing (£10 entry between friends, offline settlement, platform doesn't process payments yet, real-money play enabled when UKGC pool betting licence is granted). Pre-application blocker.
+- **SiteFooter "test mode" banner — RESOLVED in step 3a.18.** The "free-to-play / virtual credits / no real money" copy was deleted outright from `SiteFooter.tsx`, `AuthShell.tsx` and `RegisterPage.tsx`. No longer a pre-application blocker.
 - **UKGC application narrative** — assemble: informal WC private-betting evidence, audit-log dumps showing admin actions are recorded, schema readiness for the licensed flip (the dormant `licensed.ts` tables), responsible-gambling tooling status, KYC plan. Aim for application ~1 month into the new domestic season after WC retires.
 - **Resend + email verification** — signup currently creates an unverified account. Wire up `RESEND_API_KEY`, transactional templates, magic-link flow. Pre-licence-grant blocker (UKGC expects email verification to be live before real money). **This is now the last remaining pre-licence-grant code blocker** — the `pool_entries` unique index (previously listed here) was shipped in step 3a.16.
 
@@ -573,7 +601,8 @@ Routes as of step 3a.15:
 | `/account` | Profile summary with editable nickname + read-only full name |
 | `/account/history` | Settled-rounds history |
 | `/admin` | Admin portal (founding admins only — Wez/James/Jason). User list + Paid checkbox + password reset |
-| `/pools/:slug/:poolId/table` | Standalone league table with tournament-aware status pill |
+| `/pools/:slug/:poolId/table` | Standalone league table with tournament-aware status pill. Rows are tappable → opponent predictions |
+| `/pools/:slug/:poolId/table/:entryId` | Read-only view of another player's picks for the pool, lock-gated (step 3a.18) |
 | `/pools/:slug/:poolId` | Legacy — redirects to `/predict/:entryId` |
 | `/pools`, `/pools/:slug` | Legacy — redirect to `/tables` |
 | `/login`, `/register` | unchanged — `/register` now collects first/last/nickname instead of display name |
@@ -588,10 +617,11 @@ Server admin endpoints:
 | `POST /api/admin-portal/users/:id/password` | Session + `is_admin=true` | Reset a user's password (Argon2-hashed; audit-logged) |
 | `PATCH /api/admin-portal/users/:id/paid` | Session + `is_admin=true` | Toggle the WC off-platform paid flag (audit-logged) |
 | `PATCH /api/account/nickname` | Session (any user) | User updates their own nickname (audit-logged) |
+| `GET /api/pools/:poolId/entries/:entryId/predictions` | Public when settled; session + entrant when live | Lock-gated read of one entrant's picks (step 3a.18). Unlocked picks omitted from payload |
 
 ## What to do first
 
-1. Read all three docs in `/docs/` (architecture first, then this handoff, then roadmap). New arch sections from step 3a.15: §16 Users / nicknames / KYC names, §17 Admin portal.
-2. Skim recent file edits — particularly `server/db/schema/users.ts`, `server/routes/auth.ts`, `server/routes/account.ts`, `server/routes/admin-portal.ts`, `server/scripts/seed.ts`, `client/src/pages/RegisterPage.tsx`, `client/src/pages/portal/AccountPage.tsx`, `client/src/pages/portal/AdminPage.tsx`, `client/src/components/predictor10/AppShell.tsx`. These cover the step 3a.12–3a.15 changes.
-3. Ask Wez what's next. If it's WC retirement, see arch §15. If it's pre-licence application prep, the SiteFooter fix is the obvious next thing. If something else, propose your file plan in tabular form with folder paths.
+1. Read all three docs in `/docs/` (architecture first, then this handoff, then roadmap). Arch sections to note: §15 WC retirement playbook (now includes the operator-triggered-removal + carry-across notes), §16 Users / nicknames / KYC names, §17 Admin portal, §18 Player-predictions view + live status.
+2. Skim recent file edits from step 3a.18 — `client/src/pages/portal/OpponentPredictionsPage.tsx` (new), `server/lib/portal-data.ts` (`getEntryPredictionsForViewer`), `server/routes/portal.ts`, `client/src/lib/portal-api.ts`, `client/src/components/predictor10/PoolStandingsTable.tsx`, `client/src/pages/portal/PoolTablePage.tsx`, `client/src/pages/portal/TablesPage.tsx`, `client/src/App.tsx`, `client/src/pages/portal/PoolDetailPage.tsx` (feed ordering), `client/src/components/predictor10/PredictMatchRow.tsx` (date + round + LIVE badge), and the footer trio `SiteFooter.tsx` / `AuthShell.tsx` / `RegisterPage.tsx`.
+3. Ask Wez what's next. Current priority order: (a) the pre-Final settled-pool-visibility change (operational, agreed, awaiting go — see arch §15 / operational section above); (b) UKGC application narrative prep; (c) WC retirement after the Final (~19–22 July, trigger phrase "Read arch §15 and prepare the WC retirement files"); (d) Resend + email verification (last pre-licence-grant code blocker). Propose file plans in tabular form with folder paths; verify `pnpm install --frozen-lockfile` + `pnpm build` exit 0 with zero new tsc errors (**baseline is now 15**, not 18) before delivering.
 4. Wait for "go" before bulk-changing files.

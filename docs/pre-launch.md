@@ -135,8 +135,8 @@ To open public registration:
 - [ ] Round 1 issues triaged and fixed (or explicitly accepted as won't-fix)
 - [ ] Public registration flow tested without invite code
 - [ ] Marketing site copy reviewed and live
-- [ ] Footer disclosures: "test mode · no real money · pre-licence" clearly visible (anti-misleading-advert compliance)
-- [ ] FAQ page covers: how scoring works, what tiers cost, what "test mode" means, when payouts happen
+- [ ] Footer / disclosures carry **honest pre-licence framing** — NOT "test mode / virtual credits / no real money" (that copy was removed in step 3a.18 because it contradicts the live £10 reality). If any disclosure is shown pre-licence-grant, it should state the real position: real-money play enabled on UKGC pool betting licence grant. (anti-misleading-advert compliance)
+- [ ] FAQ page covers: how scoring works, what tiers cost, the pre-licence position, when payouts happen
 - [ ] §1.1 decisions all answered or defaults locked in
 - [ ] §3 compliance items all ✅
 - [ ] Round 2 stage + pools generated and tested
