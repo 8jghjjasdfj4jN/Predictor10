@@ -79,30 +79,40 @@ function formatSavedAgo(savedAt: number, now: number): string {
 /**
  * Predict-screen ordering tier. Lower = higher up the feed.
  *   0 = live: kicked off, not finished → TOP, with the pulsing LIVE badge
- *   1 = open: still predictable (teams known, not locked, not started)
- *   2 = locked, about to start (within the 1hr pre-kickoff window)
- *   3 = played: finished or terminal (postponed / cancelled / void) — history
- *   4 = awaiting teams (unresolved knockout slots) → BOTTOM
- * Once a live game finishes it moves from tier 0 to tier 3, dropping into the
- * historical block. Competition-agnostic — PL, cups and WC alike.
+ *   1 = recently finished: ended within the last hour → stays up with the live
+ *       games so you can see how you did right after the whistle
+ *   2 = open: still predictable (teams known, not locked, not started)
+ *   3 = locked, about to start (within the 1hr pre-kickoff window)
+ *   4 = played: finished over an hour ago or terminal (postponed / cancelled /
+ *       void) — settles into the historical block
+ *   5 = awaiting teams (unresolved knockout slots) → BOTTOM
+ * A finished game lingers in tier 1 for an hour before dropping to tier 4.
+ * Competition-agnostic — PL, cups and WC alike.
  */
+const RECENT_FINISH_MS = 60 * 60 * 1000;
+
 function predictTier(m: EntryMatch): number {
-  const finished = m.outcome !== null;
   const terminalUnplayed =
     m.status === "postponed" || m.status === "cancelled" || m.status === "void";
-  if (finished || terminalUnplayed) return 3;
+  if (m.outcome !== null) {
+    const finishedAt = new Date(m.outcome.finishedAt).getTime();
+    const recent = Number.isFinite(finishedAt) && Date.now() - finishedAt <= RECENT_FINISH_MS;
+    return recent ? 1 : 4;
+  }
+  if (terminalUnplayed) return 4;
   const teamsKnown = m.homeTeam !== null && m.awayTeam !== null;
-  if (!teamsKnown) return 4;
+  if (!teamsKnown) return 5;
   const kicked = new Date(m.kickoffAt).getTime() <= Date.now();
   if (kicked) return 0; // live — kicked off, no result yet
-  if (!m.isLocked) return 1; // open — needs predicting
-  return 2; // locked, awaiting kick-off
+  if (!m.isLocked) return 2; // open — needs predicting
+  return 3; // locked, awaiting kick-off
 }
 
 /**
- * Live games on top (newest kick-off first — several at once cluster together),
- * then the games you can still predict (nearest deadline first), then those
- * about to start, then the played games (most recent first), then awaiting.
+ * Live games on top (newest kick-off first), then games finished within the
+ * last hour (most recent first), then the games you can still predict (nearest
+ * deadline first), then those about to start, then older played games, then
+ * awaiting-teams slots at the bottom.
  */
 function comparePredict(a: EntryMatch, b: EntryMatch): number {
   const ta = predictTier(a);
@@ -110,7 +120,9 @@ function comparePredict(a: EntryMatch, b: EntryMatch): number {
   if (ta !== tb) return ta - tb;
   const ak = new Date(a.kickoffAt).getTime();
   const bk = new Date(b.kickoffAt).getTime();
-  return ta === 0 || ta === 3 ? bk - ak : ak - bk; // live & played newest-first; else soonest-first
+  // Live, recently-finished and older-played → newest first; else soonest first.
+  const newestFirst = ta === 0 || ta === 1 || ta === 4;
+  return newestFirst ? bk - ak : ak - bk;
 }
 
 function formatSettledDate(iso: string): string {

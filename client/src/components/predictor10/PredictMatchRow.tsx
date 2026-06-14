@@ -392,6 +392,79 @@ function LiveBadge() {
   );
 }
 
+// ─── Live view (kicked off, no result yet) ───────────────────────────────
+
+/**
+ * Live match: no result yet, but the pick stays front and centre. Big boxes
+ * show the user's predicted scoreline (clearly their pick, not a live score —
+ * we don't have a live feed), with the pulsing LIVE badge. Styled like the
+ * finished row so a live game never reads as "lost my prediction".
+ */
+function PickBox({ value }: { value: number | null }) {
+  return (
+    <div
+      className={cn(
+        "flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg",
+        "border border-white/15 bg-white/[0.06]",
+        "font-['Barlow_Condensed'] text-[1.3rem] font-extrabold leading-none text-white",
+      )}
+      aria-label={value == null ? "No prediction" : `Your predicted score ${value}`}
+    >
+      {value == null ? "–" : value}
+    </div>
+  );
+}
+
+function LivePredictionView({ match }: { match: EntryMatch }) {
+  const pred = match.prediction;
+  const stage = stageLabelFor(match);
+  return (
+    <div className="rounded-2xl border border-rose-400/30 bg-rose-500/[0.06] px-3.5 py-3">
+      <div className="flex items-center gap-2.5">
+        <div className="flex flex-1 items-center justify-end gap-2 min-w-0">
+          <span className="line-clamp-2 break-words font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase leading-[1.15] tracking-[0.02em] text-right text-white">
+            {displayTeamName(match.homeTeam)}
+          </span>
+        </div>
+
+        <PickBox value={pred?.homeScore ?? null} />
+        <span aria-hidden className="font-['Barlow_Condensed'] text-[1.1rem] font-extrabold text-white/40">
+          –
+        </span>
+        <PickBox value={pred?.awayScore ?? null} />
+
+        <div className="flex flex-1 items-center gap-2 min-w-0">
+          <span className="line-clamp-2 break-words font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase leading-[1.15] tracking-[0.02em] text-white">
+            {displayTeamName(match.awayTeam)}
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-['Manrope'] text-[0.7rem] text-white/55">
+        <LiveBadge />
+        {stage && (
+          <>
+            <span aria-hidden className="text-white/20">·</span>
+            <span className="font-semibold text-emerald-200/75">{stage}</span>
+          </>
+        )}
+        {match.groupLabel && (
+          <>
+            <span aria-hidden className="text-white/20">·</span>
+            <span className="font-semibold text-emerald-200/75">Group {match.groupLabel}</span>
+          </>
+        )}
+        <span aria-hidden className="text-white/20">·</span>
+        {pred ? (
+          <span className="font-semibold text-white/70">Your pick</span>
+        ) : (
+          <span className="text-white/45">No pick in</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function EditableOrLockedView({
   match,
   homeText,
@@ -458,6 +531,10 @@ function EditableOrLockedView({
   const showLockCountdown = !match.isLocked && !awaitingTeams && !isLive && !terminalUnplayed;
   const showKickoffCountdown =
     match.isLocked && !isLive && !kicked && !terminalUnplayed && !awaitingTeams;
+
+  // Live → dedicated card that keeps the pick prominent (handled separately
+  // from the editable/locked layout below).
+  if (isLive) return <LivePredictionView match={match} />;
 
   return (
     <div
@@ -530,7 +607,7 @@ function EditableOrLockedView({
         {showKickoffCountdown && (
           <>
             <span aria-hidden className="text-white/20">·</span>
-            <Countdown targetIso={match.kickoffAt} prefix="Kicks off in" />
+            <Countdown targetIso={match.kickoffAt} prefix="Kicks off in" onExpire={onLockElapsed} />
           </>
         )}
         {stageLabelFor(match) && (
