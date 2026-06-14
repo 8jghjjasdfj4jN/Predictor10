@@ -30,6 +30,9 @@ import TablesPage from "./pages/portal/TablesPage";
 import PoolDetailPage from "./pages/portal/PoolDetailPage";
 import PoolTablePage from "./pages/portal/PoolTablePage";
 import OpponentPredictionsPage from "./pages/portal/OpponentPredictionsPage";
+// ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md)
+import PoolChatPage from "./pages/portal/PoolChatPage";
+// ── WC CHAT (temporary) ── end
 import AccountPage from "./pages/portal/AccountPage";
 import AccountHistoryPage from "./pages/portal/AccountHistoryPage";
 import AdminPage from "./pages/portal/AdminPage";
@@ -102,6 +105,9 @@ function PortalRouter() {
             URL because Account History's [Table →] still links there. */}
         <Route path="/pools/:competitionSlug/:poolId/table/:entryId" component={OpponentPredictionsPage} />
         <Route path="/pools/:competitionSlug/:poolId/table" component={PoolTablePage} />
+        {/* ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md) */}
+        <Route path="/pools/:competitionSlug/:poolId/chat" component={PoolChatPage} />
+        {/* ── WC CHAT (temporary) ── end */}
         <Route path="/pools/:competitionSlug/:poolId">
           {(params) => (
             <LegacyPoolRedirect

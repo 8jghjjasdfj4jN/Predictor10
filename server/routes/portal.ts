@@ -34,6 +34,14 @@ import {
   type GetPoolEntriesError,
   type UpsertPredictionError,
 } from "../lib/portal-data";
+// ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md)
+import {
+  getPoolMessages,
+  postMessage,
+  type GetPoolMessagesError,
+  type PostMessageError,
+} from "../lib/chat-data";
+// ── WC CHAT (temporary) ── end
 
 const router = Router();
 
@@ -304,5 +312,74 @@ router.get("/account/history", requireAuth, async (req: Request, res: Response):
     res.status(500).json({ error: "Failed to load history." });
   }
 });
+
+// ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md)
+
+const CHAT_READ_ERROR_MAP: Record<GetPoolMessagesError, { status: number; message: string }> = {
+  POOL_NOT_FOUND: { status: 404, message: "Pool not found." },
+  NOT_AUTHENTICATED: { status: 401, message: "Sign in to view the chat." },
+  NOT_ENTRANT: { status: 403, message: "Only entrants can see this chat." },
+};
+
+const CHAT_POST_ERROR_MAP: Record<PostMessageError, { status: number; message: string }> = {
+  POOL_NOT_FOUND: { status: 404, message: "Pool not found." },
+  NOT_AUTHENTICATED: { status: 401, message: "Sign in to chat." },
+  NOT_ENTRANT: { status: 403, message: "Only entrants can post here." },
+  SELF_EXCLUDED: { status: 403, message: "Chat is unavailable while self-excluded." },
+  RATE_LIMITED: { status: 429, message: "Slow down a moment." },
+  EMPTY: { status: 400, message: "Message can't be empty." },
+  TOO_LONG: { status: 400, message: "Message is too long (max 500 characters)." },
+};
+
+const chatBodySchema = z.object({ body: z.string().min(1).max(2000) });
+
+router.get("/pools/:id/messages", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const viewerUserId = req.user?.id ?? null;
+    const outcome = await getPoolMessages(req.params.id, viewerUserId);
+    if (!outcome.ok) {
+      const { status, message } = CHAT_READ_ERROR_MAP[outcome.error];
+      res.status(status).json({ error: message });
+      return;
+    }
+    res.json(outcome.data);
+  } catch (err) {
+    console.error("[portal] GET /pools/:id/messages failed:", err);
+    res.status(500).json({ error: "Failed to load chat." });
+  }
+});
+
+router.post(
+  "/pools/:id/messages",
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    const userId = req.user!.id;
+    const poolId = req.params.id;
+
+    const parsed = chatBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Message can't be empty." });
+      return;
+    }
+
+    try {
+      const outcome = await postMessage({ poolId, userId, body: parsed.data.body });
+      if (!outcome.ok) {
+        const { status, message } = CHAT_POST_ERROR_MAP[outcome.error];
+        res.status(status).json({ error: message });
+        return;
+      }
+
+      // No separate audit row per message: pool_messages is itself the
+      // append-only record (who/what/when). Admin hides are audited instead.
+      res.status(201).json({ message: outcome.message });
+    } catch (err) {
+      console.error("[portal] POST /pools/:id/messages failed:", err);
+      res.status(500).json({ error: "Failed to send message." });
+    }
+  },
+);
+
+// ── WC CHAT (temporary) ── end
 
 export default router;

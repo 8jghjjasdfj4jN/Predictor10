@@ -586,3 +586,77 @@ export async function resetAdminUserPassword(userId: string, newPassword: string
     throw new Error(message);
   }
 }
+
+// ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md)
+
+export type ChatMessage = {
+  id: string;
+  body: string;
+  authorDisplayName: string;
+  isMine: boolean;
+  createdAt: string;
+};
+
+export type ChatPayload = {
+  viewer: { isEntrant: boolean };
+  messages: ChatMessage[];
+};
+
+/**
+ * Chat errors carry the HTTP status so the page can distinguish 401 (sign in),
+ * 403 (not an entrant), 404 (no pool) and surface the right copy.
+ */
+export class ChatError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+    this.name = "ChatError";
+  }
+}
+
+async function chatRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, { credentials: "include", ...init });
+  notify401IfNeeded(res);
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = data.error;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ChatError(message, res.status);
+  }
+  return (await res.json()) as T;
+}
+
+export async function fetchPoolMessages(poolId: string): Promise<ChatPayload> {
+  return chatRequest<ChatPayload>(`/api/pools/${encodeURIComponent(poolId)}/messages`);
+}
+
+export async function postPoolMessage(poolId: string, body: string): Promise<ChatMessage> {
+  const data = await chatRequest<{ message: ChatMessage }>(
+    `/api/pools/${encodeURIComponent(poolId)}/messages`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body }),
+    },
+  );
+  return data.message;
+}
+
+/** Admin-only — soft-delete (hide) a message. Server enforces is_admin. */
+export async function hidePoolMessage(messageId: string, reason?: string): Promise<void> {
+  await chatRequest<{ ok: true }>(
+    `/api/admin-portal/messages/${encodeURIComponent(messageId)}/hide`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(reason ? { reason } : {}),
+    },
+  );
+}
+
+// ── WC CHAT (temporary) ── end

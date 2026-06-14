@@ -39,6 +39,9 @@ import { db } from "../db";
 import { users } from "../db/schema/users";
 import { requireAuth } from "../lib/auth-middleware";
 import { writeAudit } from "../lib/audit";
+// ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md)
+import { hideMessage } from "../lib/chat-data";
+// ── WC CHAT (temporary) ── end
 
 const router = Router();
 
@@ -206,5 +209,58 @@ router.patch(
     res.json({ ok: true, isPaid });
   },
 );
+
+// ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md)
+
+// POST /messages/:id/hide — soft-delete (moderate) a chat message. Admin-only.
+// Audited as admin.action so the licence record shows every intervention.
+const hideMessageSchema = z.object({
+  reason: z.string().max(300).optional(),
+});
+
+router.post(
+  "/messages/:id/hide",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response): Promise<void> => {
+    const parsed = hideMessageSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid payload." });
+      return;
+    }
+
+    const outcome = await hideMessage({
+      messageId: req.params.id,
+      adminUserId: req.user!.id,
+      reason: parsed.data.reason ?? null,
+    });
+
+    if (!outcome.ok) {
+      res.status(404).json({ error: "Message not found." });
+      return;
+    }
+
+    await writeAudit({
+      req,
+      userId: req.user!.id,
+      action: "admin.action",
+      entityType: "pool_message",
+      entityId: outcome.messageId,
+      before: { body: outcome.previousBody, hidden: false },
+      after: { hidden: true },
+      metadata: {
+        field: "hiddenAt",
+        poolId: outcome.poolId,
+        reason: parsed.data.reason ?? null,
+        performedBy: req.user!.id,
+        performedByEmail: req.user!.email,
+      },
+    });
+
+    res.json({ ok: true });
+  },
+);
+
+// ── WC CHAT (temporary) ── end
 
 export default router;

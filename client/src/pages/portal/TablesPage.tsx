@@ -37,6 +37,9 @@ pool is unsettled, matching the standalone PoolTablePage's behaviour.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, ArrowRight } from "lucide-react";
+// ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md)
+import { MessageCircle } from "lucide-react";
+// ── WC CHAT (temporary) ── end
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -634,6 +637,27 @@ export default function TablesPage() {
             submitting={submitting}
             onEnterClick={handleEnterClick}
           />
+
+          {/* ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md) */}
+          {viewerIsEntered && (
+            <button
+              type="button"
+              onClick={() =>
+                setLocation(`/pools/${selectedCompetition.slug}/${selectedPool.id}/chat`)
+              }
+              className={cn(
+                "flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-300/25 bg-emerald-400/[0.06] px-4 py-3",
+                "font-['Manrope'] text-[0.82rem] font-semibold text-emerald-100 transition",
+                "hover:border-emerald-300/40 hover:bg-emerald-400/[0.1]",
+                "outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
+                "min-h-[44px]",
+              )}
+            >
+              <MessageCircle className="h-4 w-4" aria-hidden />
+              <span>Table chat</span>
+            </button>
+          )}
+          {/* ── WC CHAT (temporary) ── end */}
 
           {!viewerIsEntered ? (
             <PreEntryStandingsTeaser />
