@@ -366,6 +366,8 @@ export type EventDistribution = {
 };
 
 export type PoolDistribution = {
+  /** Total entrants in the pool — denominator for "x/y predicted". */
+  entrantCount: number;
   /** Keyed by eventId. Only locked events with at least one pick appear. */
   byEvent: Record<string, EventDistribution>;
 };

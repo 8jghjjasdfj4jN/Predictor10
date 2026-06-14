@@ -15,7 +15,7 @@ Access mirrors the league table / opponent-picks view:
   - Pool live, not entrant  → NOT_ENTRANT (403)
 */
 
-import { and, eq, lte } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 import { db } from "../db";
 import { pools, poolEntries, predictions } from "../db/schema/pools";
 import { events } from "../db/schema/sports";
@@ -32,6 +32,8 @@ export type EventDistribution = {
 };
 
 export type PoolDistributionDto = {
+  /** Total entrants in the pool — the denominator for "x/y predicted". */
+  entrantCount: number;
   /** Keyed by eventId. Only locked events with at least one prediction appear. */
   byEvent: Record<string, EventDistribution>;
 };
@@ -62,6 +64,14 @@ export async function getPoolPredictionDistribution(
     if (!own) return { ok: false, error: "NOT_ENTRANT" };
   }
 
+  // Pool entrant count — the denominator for "x/y predicted". Everyone in the
+  // pool was eligible to predict, so a gap means they didn't get a pick in.
+  const [entrantRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(poolEntries)
+    .where(eq(poolEntries.poolId, poolId));
+  const entrantCount = entrantRow?.count ?? 0;
+
   // Locked events in this Round only — the anti-cheat gate.
   const now = new Date();
   const lockedEvents = await db
@@ -70,7 +80,7 @@ export async function getPoolPredictionDistribution(
     .where(and(eq(events.stageId, meta.stageId), lte(events.predictionLockAt, now)));
 
   const lockedIds = new Set(lockedEvents.map((e) => e.id));
-  if (lockedIds.size === 0) return { ok: true, data: { byEvent: {} } };
+  if (lockedIds.size === 0) return { ok: true, data: { entrantCount, byEvent: {} } };
 
   // Every prediction in this pool; filter to locked events in JS (one Round's
   // worth — small enough that a scan + filter beats building an IN list).
@@ -117,5 +127,5 @@ export async function getPoolPredictionDistribution(
     byEvent[eventId].topScorelines = top;
   }
 
-  return { ok: true, data: { byEvent } };
+  return { ok: true, data: { entrantCount, byEvent } };
 }

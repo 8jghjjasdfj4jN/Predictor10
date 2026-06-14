@@ -23,12 +23,14 @@ function pct(n: number, total: number): number {
 
 export function PickDistribution({
   data,
+  entrantCount,
   yourHome,
   yourAway,
   homeShort,
   awayShort,
 }: {
   data: EventDistribution;
+  entrantCount?: number;
   yourHome: number | null;
   yourAway: number | null;
   homeShort: string | null;
@@ -45,7 +47,13 @@ export function PickDistribution({
   const homeLabel = homeShort ?? "Home";
   const awayLabel = awayShort ?? "Away";
 
-  const playersLabel = data.total === 1 ? "1 pick" : `${data.total} picks`;
+  // "21/23 picks" when we know the entrant total, else just "21 picks".
+  const playersLabel =
+    entrantCount && entrantCount > 0
+      ? `${data.total}/${entrantCount} picks`
+      : data.total === 1
+        ? "1 pick"
+        : `${data.total} picks`;
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/[0.02]">

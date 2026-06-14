@@ -33,8 +33,10 @@ import {
   savePrediction,
   SavePredictionError,
   type EntryMatch,
+  type EventDistribution,
   type SavePredictionResponse,
 } from "@/lib/portal-api";
+import { PickDistribution } from "./PickDistribution";
 
 type Props = {
   match: EntryMatch;
@@ -44,6 +46,11 @@ type Props = {
   /** Fired once when this row's prediction lock elapses, so the parent can
       refetch and flip the row to its read-only locked state promptly. */
   onLockElapsed?: () => void;
+  /** "How the table called it" for this match (locked matches only). Rendered
+      inside the card so it's unmistakably tied to this match. */
+  distribution?: EventDistribution;
+  /** Total entrants — denominator for the "x/y picks" label. */
+  entrantCount?: number;
 };
 
 const TIME_FMT = new Intl.DateTimeFormat("en-GB", {
@@ -99,7 +106,15 @@ function pointsTone(points: number): "emerald" | "amber" | "rose" {
   return "rose";
 }
 
-export function PredictMatchRow({ match, entryId, onSaved, onError, onLockElapsed }: Props) {
+export function PredictMatchRow({
+  match,
+  entryId,
+  onSaved,
+  onError,
+  onLockElapsed,
+  distribution,
+  entrantCount,
+}: Props) {
   // For finished matches we render a static "FT" view — auto-save is bypassed.
   // For editable + locked-no-outcome rows we track input state as before.
   const isFinished = match.outcome !== null;
@@ -191,7 +206,7 @@ export function PredictMatchRow({ match, entryId, onSaved, onError, onLockElapse
   // ─── Render dispatch ───────────────────────────────────────────────────
 
   if (isFinished) {
-    return <FinishedView match={match} />;
+    return <FinishedView match={match} distribution={distribution} entrantCount={entrantCount} />;
   }
   return (
     <EditableOrLockedView
@@ -202,13 +217,52 @@ export function PredictMatchRow({ match, entryId, onSaved, onError, onLockElapse
       onAway={setAwayText}
       saving={saving}
       onLockElapsed={onLockElapsed}
+      distribution={distribution}
+      entrantCount={entrantCount}
     />
   );
 }
 
 // ─── Finished view ───────────────────────────────────────────────────────
 
-function FinishedView({ match }: { match: EntryMatch }) {
+/**
+ * "How the table called it", rendered inside a match card so it's
+ * unmistakably tied to that match (important on PL weekends with several
+ * games at once). Null when there's no distribution (unlocked match).
+ */
+function MatchDistribution({
+  match,
+  distribution,
+  entrantCount,
+}: {
+  match: EntryMatch;
+  distribution?: EventDistribution;
+  entrantCount?: number;
+}) {
+  if (!distribution) return null;
+  return (
+    <div className="mt-2.5 border-t border-white/10 pt-2.5">
+      <PickDistribution
+        data={distribution}
+        entrantCount={entrantCount}
+        yourHome={match.prediction?.homeScore ?? null}
+        yourAway={match.prediction?.awayScore ?? null}
+        homeShort={match.homeTeamShort}
+        awayShort={match.awayTeamShort}
+      />
+    </div>
+  );
+}
+
+function FinishedView({
+  match,
+  distribution,
+  entrantCount,
+}: {
+  match: EntryMatch;
+  distribution?: EventDistribution;
+  entrantCount?: number;
+}) {
   // outcome is guaranteed non-null by caller.
   const out = match.outcome!;
   const pred = match.prediction;
@@ -271,6 +325,8 @@ function FinishedView({ match }: { match: EntryMatch }) {
           <span className="text-white/45">Missed — 0 pts</span>
         )}
       </div>
+
+      <MatchDistribution match={match} distribution={distribution} entrantCount={entrantCount} />
     </div>
   );
 }
@@ -415,7 +471,15 @@ function PickBox({ value }: { value: number | null }) {
   );
 }
 
-function LivePredictionView({ match }: { match: EntryMatch }) {
+function LivePredictionView({
+  match,
+  distribution,
+  entrantCount,
+}: {
+  match: EntryMatch;
+  distribution?: EventDistribution;
+  entrantCount?: number;
+}) {
   const pred = match.prediction;
   const stage = stageLabelFor(match);
   return (
@@ -461,6 +525,8 @@ function LivePredictionView({ match }: { match: EntryMatch }) {
           <span className="text-white/45">No pick in</span>
         )}
       </div>
+
+      <MatchDistribution match={match} distribution={distribution} entrantCount={entrantCount} />
     </div>
   );
 }
@@ -473,6 +539,8 @@ function EditableOrLockedView({
   onAway,
   saving,
   onLockElapsed,
+  distribution,
+  entrantCount,
 }: {
   match: EntryMatch;
   homeText: string;
@@ -481,6 +549,8 @@ function EditableOrLockedView({
   onAway: (v: string) => void;
   saving: boolean;
   onLockElapsed?: () => void;
+  distribution?: EventDistribution;
+  entrantCount?: number;
 }) {
   const awaitingTeams = match.homeTeam === null || match.awayTeam === null;
   const kicked = new Date(match.kickoffAt).getTime() <= Date.now();
@@ -534,7 +604,10 @@ function EditableOrLockedView({
 
   // Live → dedicated card that keeps the pick prominent (handled separately
   // from the editable/locked layout below).
-  if (isLive) return <LivePredictionView match={match} />;
+  if (isLive)
+    return (
+      <LivePredictionView match={match} distribution={distribution} entrantCount={entrantCount} />
+    );
 
   return (
     <div
@@ -646,6 +719,8 @@ function EditableOrLockedView({
           </>
         )}
       </div>
+
+      <MatchDistribution match={match} distribution={distribution} entrantCount={entrantCount} />
     </div>
   );
 }

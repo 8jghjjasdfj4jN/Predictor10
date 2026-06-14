@@ -42,7 +42,6 @@ import {
 } from "@/lib/portal-api";
 import { PredictGameweekTabs } from "@/components/predictor10/PredictGameweekTabs";
 import { PredictMatchRow } from "@/components/predictor10/PredictMatchRow";
-import { PickDistribution } from "@/components/predictor10/PickDistribution";
 
 // ─── Formatters ──────────────────────────────────────────────────────────
 
@@ -348,6 +347,7 @@ function EnteredView({ entryId }: { entryId: string }) {
   const [activeMatchday, setActiveMatchday] = useState<number | null>(null);
   const [footer, setFooter] = useState<FooterState>({ kind: "idle" });
   const [distribution, setDistribution] = useState<Record<string, EventDistribution>>({});
+  const [distEntrantCount, setDistEntrantCount] = useState(0);
   const lockRejectionFiredRef = useRef(false);
 
   async function load(): Promise<void> {
@@ -366,6 +366,7 @@ function EnteredView({ entryId }: { entryId: string }) {
     try {
       const payload = await fetchPoolDistribution(poolId);
       setDistribution(payload.byEvent);
+      setDistEntrantCount(payload.entrantCount);
     } catch {
       /* non-fatal — leave whatever we have */
     }
@@ -529,24 +530,16 @@ function EnteredView({ entryId }: { entryId: string }) {
         {orderedActive.map((m) => {
           const dist = m.isLocked ? distribution[m.eventId] : undefined;
           return (
-            <div key={m.eventId} className="space-y-2">
-              <PredictMatchRow
-                match={m}
-                entryId={entry.id}
-                onSaved={onSaved}
-                onError={onError}
-                onLockElapsed={load}
-              />
-              {dist && (
-                <PickDistribution
-                  data={dist}
-                  yourHome={m.prediction?.homeScore ?? null}
-                  yourAway={m.prediction?.awayScore ?? null}
-                  homeShort={m.homeTeamShort}
-                  awayShort={m.awayTeamShort}
-                />
-              )}
-            </div>
+            <PredictMatchRow
+              key={m.eventId}
+              match={m}
+              entryId={entry.id}
+              onSaved={onSaved}
+              onError={onError}
+              onLockElapsed={load}
+              distribution={dist}
+              entrantCount={distEntrantCount}
+            />
           );
         })}
         {orderedActive.length === 0 && (
