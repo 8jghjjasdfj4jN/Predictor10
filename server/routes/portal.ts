@@ -34,6 +34,10 @@ import {
   type GetPoolEntriesError,
   type UpsertPredictionError,
 } from "../lib/portal-data";
+import {
+  getPoolPredictionDistribution,
+  type GetDistributionError,
+} from "../lib/insight-data";
 // ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md)
 import {
   getPoolMessages,
@@ -310,6 +314,33 @@ router.get("/account/history", requireAuth, async (req: Request, res: Response):
   } catch (err) {
     console.error("[portal] /account/history failed:", err);
     res.status(500).json({ error: "Failed to load history." });
+  }
+});
+
+// ─── Pick distribution (how the table called a locked match) ─────────────
+
+const DISTRIBUTION_ERROR_MAP: Record<GetDistributionError, { status: number; message: string }> = {
+  POOL_NOT_FOUND: { status: 404, message: "Pool not found." },
+  NOT_AUTHENTICATED: { status: 401, message: "Sign in to view this." },
+  NOT_ENTRANT: { status: 403, message: "Only entrants can view this." },
+};
+
+// Locked-events-only aggregate of everyone's picks. Same access rule as the
+// table/opponent views: public when settled, auth + entrant while live. The
+// query never returns an unlocked event, so nothing leaks pre-lock.
+router.get("/pools/:id/distribution", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const viewerUserId = req.user?.id ?? null;
+    const outcome = await getPoolPredictionDistribution(req.params.id, viewerUserId);
+    if (!outcome.ok) {
+      const { status, message } = DISTRIBUTION_ERROR_MAP[outcome.error];
+      res.status(status).json({ error: message });
+      return;
+    }
+    res.json(outcome.data);
+  } catch (err) {
+    console.error("[portal] GET /pools/:id/distribution failed:", err);
+    res.status(500).json({ error: "Failed to load distribution." });
   }
 });
 

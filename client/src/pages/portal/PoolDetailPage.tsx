@@ -34,12 +34,15 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
   fetchEntryDetail,
+  fetchPoolDistribution,
   type EntryDetail,
   type EntryMatch,
+  type EventDistribution,
   type SavePredictionResponse,
 } from "@/lib/portal-api";
 import { PredictGameweekTabs } from "@/components/predictor10/PredictGameweekTabs";
 import { PredictMatchRow } from "@/components/predictor10/PredictMatchRow";
+import { PickDistribution } from "@/components/predictor10/PickDistribution";
 
 // ─── Formatters ──────────────────────────────────────────────────────────
 
@@ -332,6 +335,7 @@ function EnteredView({ entryId }: { entryId: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeMatchday, setActiveMatchday] = useState<number | null>(null);
   const [footer, setFooter] = useState<FooterState>({ kind: "idle" });
+  const [distribution, setDistribution] = useState<Record<string, EventDistribution>>({});
   const lockRejectionFiredRef = useRef(false);
 
   async function load(): Promise<void> {
@@ -344,6 +348,17 @@ function EnteredView({ entryId }: { entryId: string }) {
     }
   }
 
+  // Pick distribution is an enhancement — load it best-effort by poolId and
+  // never surface a failure (a missing/empty map just hides the panels).
+  const loadDistribution = useCallback(async (poolId: string) => {
+    try {
+      const payload = await fetchPoolDistribution(poolId);
+      setDistribution(payload.byEvent);
+    } catch {
+      /* non-fatal — leave whatever we have */
+    }
+  }, []);
+
   useEffect(() => {
     setEntry(null);
     setLoadError(null);
@@ -352,6 +367,22 @@ function EnteredView({ entryId }: { entryId: string }) {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entryId]);
+
+  // Load the pool's pick distribution once the entry resolves a poolId, and
+  // refresh it on window focus while the pool is unsettled (more matches lock
+  // over time). Mirrors the standings focus-refetch behaviour.
+  const poolId = entry?.poolId ?? null;
+  const poolSettledForDist = entry?.settledAt != null;
+  useEffect(() => {
+    if (!poolId) return;
+    void loadDistribution(poolId);
+    function onFocus() {
+      if (poolSettledForDist) return;
+      void loadDistribution(poolId!);
+    }
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [poolId, poolSettledForDist, loadDistribution]);
 
   const onSaved = useCallback(
     (response: SavePredictionResponse) => {
@@ -483,15 +514,28 @@ function EnteredView({ entryId }: { entryId: string }) {
       />
 
       <div className="space-y-2">
-        {orderedActive.map((m) => (
-          <PredictMatchRow
-            key={m.eventId}
-            match={m}
-            entryId={entry.id}
-            onSaved={onSaved}
-            onError={onError}
-          />
-        ))}
+        {orderedActive.map((m) => {
+          const dist = m.isLocked ? distribution[m.eventId] : undefined;
+          return (
+            <div key={m.eventId} className="space-y-2">
+              <PredictMatchRow
+                match={m}
+                entryId={entry.id}
+                onSaved={onSaved}
+                onError={onError}
+              />
+              {dist && (
+                <PickDistribution
+                  data={dist}
+                  yourHome={m.prediction?.homeScore ?? null}
+                  yourAway={m.prediction?.awayScore ?? null}
+                  homeShort={m.homeTeamShort}
+                  awayShort={m.awayTeamShort}
+                />
+              )}
+            </div>
+          );
+        })}
         {orderedActive.length === 0 && (
           <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center">
             <p className="font-['Manrope'] text-[0.78rem] text-white/45">

@@ -353,6 +353,27 @@ export async function fetchAccountHistory(): Promise<AccountHistory> {
   return getJson<AccountHistory>("/api/account/history");
 }
 
+// ─── Pick distribution (how the table called a locked match) ──────────────
+
+export type ScorelineCount = { home: number; away: number; count: number };
+
+export type EventDistribution = {
+  total: number;
+  homeWin: number;
+  draw: number;
+  awayWin: number;
+  topScorelines: ScorelineCount[];
+};
+
+export type PoolDistribution = {
+  /** Keyed by eventId. Only locked events with at least one pick appear. */
+  byEvent: Record<string, EventDistribution>;
+};
+
+export async function fetchPoolDistribution(poolId: string): Promise<PoolDistribution> {
+  return getJson<PoolDistribution>(`/api/pools/${encodeURIComponent(poolId)}/distribution`);
+}
+
 // ─── League table (step 2k) ──────────────────────────────────────────────
 
 export type PoolEntry = {
