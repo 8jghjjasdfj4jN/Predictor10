@@ -317,9 +317,12 @@ function PointsPill({ points, tone }: { points: number; tone: "emerald" | "amber
  */
 function formatRemaining(ms: number): string {
   const totalSec = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(totalSec / 3600);
+  const days = Math.floor(totalSec / 86400);
+  const h = Math.floor((totalSec % 86400) / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
+  // A day or more out: "1d 05:00" (days, then zero-padded hours:minutes).
+  if (days > 0) return `${days}d ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m`;
   return `${s}s`;
@@ -329,12 +332,14 @@ function Countdown({
   targetIso,
   prefix,
   onExpire,
-  urgent,
+  highlightUnderMs,
 }: {
   targetIso: string;
   prefix: string;
   onExpire?: () => void;
-  urgent?: boolean;
+  /** When remaining drops to/below this, the chip turns amber and slowly
+      pulses to draw the eye. Omit for no highlight (e.g. the kick-off chip). */
+  highlightUnderMs?: number;
 }) {
   const target = useMemo(() => new Date(targetIso).getTime(), [targetIso]);
   const [remaining, setRemaining] = useState(() => target - Date.now());
@@ -359,12 +364,12 @@ function Countdown({
 
   if (remaining <= 0) return null;
 
-  const isUrgent = !!urgent && remaining <= 15 * 60 * 1000;
+  const highlight = highlightUnderMs != null && remaining <= highlightUnderMs;
   return (
     <span
       className={cn(
         "tabular-nums",
-        isUrgent ? "font-semibold text-amber-300/90" : "text-white/55",
+        highlight ? "animate-pulse font-semibold text-amber-300/90" : "text-white/55",
       )}
     >
       {prefix} {formatRemaining(remaining)}
@@ -517,7 +522,7 @@ function EditableOrLockedView({
             <Countdown
               targetIso={match.predictionLockAt}
               prefix="Locks in"
-              urgent
+              highlightUnderMs={6 * 60 * 60 * 1000}
               onExpire={onLockElapsed}
             />
           </>
