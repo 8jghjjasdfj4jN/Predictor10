@@ -267,62 +267,79 @@ function FinishedView({
   const out = match.outcome!;
   const pred = match.prediction;
   const points = pred?.points ?? 0;
-  const tone = pred ? pointsTone(points) : "muted";
+  const tone = pred ? pointsTone(points) : "rose";
+  const stage = stageLabelFor(match);
 
+  // Settled/muted card so done matches read as "past" and recede against the
+  // live + about-to-start cards above them in the feed. The FULL TIME eyebrow
+  // names the result explicitly; the big boxes are neutral (not the emerald
+  // of an editable pick) so they can't be misread as "your score". The pick is
+  // given its own clearly-labelled chip rather than buried in the meta line —
+  // this is the same "result up top, your pick below" shape a live card adopts
+  // once a live-score feed is added (§20 / §9 parked livescores add-on).
   return (
-    <div
-      className={cn(
-        "rounded-2xl border px-3.5 py-3 transition",
-        "border-emerald-400/25 bg-emerald-400/[0.05]",
-      )}
-    >
+    <div className="rounded-2xl border border-white/8 bg-white/[0.02] px-3.5 py-3 transition">
+      <div className="mb-2 flex items-center justify-center gap-1.5">
+        <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-400/70" />
+        <span className="font-['Manrope'] text-[0.62rem] font-bold uppercase tracking-[0.2em] text-emerald-300/75">
+          Full time
+        </span>
+      </div>
+
       <div className="flex items-center gap-2.5">
         <div className="flex flex-1 items-center justify-end gap-2 min-w-0">
-          <span className="line-clamp-2 break-words font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase leading-[1.15] tracking-[0.02em] text-right text-white">
+          <span className="line-clamp-2 break-words font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase leading-[1.15] tracking-[0.02em] text-right text-white/90">
             {displayTeamName(match.homeTeam)}
           </span>
         </div>
 
         <FtScoreBox value={out.homeScore} />
-        <span aria-hidden className="font-['Barlow_Condensed'] text-[1.1rem] font-extrabold text-emerald-300/60">
+        <span aria-hidden className="font-['Barlow_Condensed'] text-[1.1rem] font-extrabold text-white/35">
           –
         </span>
         <FtScoreBox value={out.awayScore} />
 
         <div className="flex flex-1 items-center gap-2 min-w-0">
-          <span className="line-clamp-2 break-words font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase leading-[1.15] tracking-[0.02em] text-white">
+          <span className="line-clamp-2 break-words font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase leading-[1.15] tracking-[0.02em] text-white/90">
             {displayTeamName(match.awayTeam)}
           </span>
         </div>
       </div>
 
-      <div className="mt-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-['Manrope'] text-[0.7rem] text-white/55">
-        <span className="text-white/45">{formatKickoff(match.kickoffAt)}</span>
-        <span aria-hidden className="text-white/20">·</span>
-        {stageLabelFor(match) && (
-          <>
-            <span className="font-semibold text-emerald-200/75">{stageLabelFor(match)}</span>
-            <span aria-hidden className="text-white/20">·</span>
-          </>
-        )}
-        {match.groupLabel && (
-          <>
-            <span className="font-semibold text-emerald-200/75">Group {match.groupLabel}</span>
-            <span aria-hidden className="text-white/20">·</span>
-          </>
-        )}
-        <span className="font-semibold text-emerald-300/85">FT</span>
-        <span aria-hidden className="text-white/20">·</span>
+      {(formatKickoff(match.kickoffAt) || stage || match.groupLabel) && (
+        <div className="mt-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-['Manrope'] text-[0.7rem] text-white/45">
+          <span>{formatKickoff(match.kickoffAt)}</span>
+          {stage && (
+            <>
+              <span aria-hidden className="text-white/20">·</span>
+              <span className="font-semibold text-emerald-200/70">{stage}</span>
+            </>
+          )}
+          {match.groupLabel && (
+            <>
+              <span aria-hidden className="text-white/20">·</span>
+              <span className="font-semibold text-emerald-200/70">Group {match.groupLabel}</span>
+            </>
+          )}
+        </div>
+      )}
+
+      <div className="mt-2.5 flex items-center justify-center gap-2.5 rounded-xl border border-white/8 bg-white/[0.02] px-3 py-2">
+        <span className="font-['Manrope'] text-[0.6rem] font-semibold uppercase tracking-[0.16em] text-white/45">
+          Your pick
+        </span>
         {pred ? (
           <>
-            <span>
-              You: {pred.homeScore}-{pred.awayScore}
+            <span className="font-['Barlow_Condensed'] text-[1.05rem] font-bold tabular-nums text-white/85">
+              {pred.homeScore} – {pred.awayScore}
             </span>
-            <span aria-hidden className="text-white/20">·</span>
-            <PointsPill points={points} tone={tone === "muted" ? "rose" : tone} />
+            <PointsPill points={points} tone={tone} />
           </>
         ) : (
-          <span className="text-white/45">Missed — 0 pts</span>
+          <>
+            <span className="font-['Manrope'] text-[0.74rem] text-white/45">No pick in</span>
+            <PointsPill points={0} tone="rose" />
+          </>
         )}
       </div>
 
@@ -336,7 +353,7 @@ function FtScoreBox({ value }: { value: number }) {
     <div
       className={cn(
         "flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg",
-        "border border-emerald-400/40 bg-emerald-500/20",
+        "border border-white/12 bg-white/10",
         "font-['Barlow_Condensed'] text-[1.3rem] font-extrabold leading-none text-white",
       )}
       aria-label={`Full-time score ${value}`}
