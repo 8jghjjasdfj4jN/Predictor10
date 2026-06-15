@@ -1,6 +1,6 @@
 # Predictor10 — Portal Architecture
 
-Last updated: May 2026 (post step 3a.11+) · Status: Step 3a complete; World Cup live end-to-end.
+Last updated: June 2026 (post step 3a.19) · Status: Step 3a complete; World Cup live end-to-end; group-stage engagement features shipped.
 
 This doc describes the post-login user portal: navigation, pages, data, and the path from "user clicks a tier" to "predictions submitted." It assumes the schema in `server/db/schema/` and the public-facing pages in `client/src/components/predictor10/`.
 
@@ -801,7 +801,7 @@ These resolve previously-open questions. They flow into build:
 9. **Prize structure (locked in step 2n).** Top 3 per pool win money. Splits applied to the **player pot** (= gross pot × 0.75 after the 25% operator commission): 60% / 25% / 15%. Identical across all four active tiers. Splits + houseFeePct stored in `pools.prizeStructure` jsonb (snapshotted at pool creation) so tier-level changes can be tuned later without retroactive effects on settled pools. **Test mode behaviour:** all transactions recorded as `payments.mode = 'mock'` — no real money charged, no real money paid. Prize calculations and "winners" still compute and display in UI for end-to-end testing of the settlement engine. At licence flip, the same code path becomes real: charges via Stripe, payouts via configured rail, commission posted to operator account. **Retired tiers (Pound):** keep their original `prizeStructure` snapshot (70/20/10, no houseFeePct) so existing open pools settle under the rules they were opened under.
 10. **Tie-breaker.** Order of comparison when entries are tied on points: (1) **Total exact-score predictions** (5pt entries) — more wins. (2) **Total correct-result predictions** (2pt entries) — more wins. (3) Still tied → split prize evenly between tied entries.
 11. **Settled rounds → archive.** Once a Round settles, its pools no longer appear in the active Tables tab or Home tab. They move to `/account/history` — a per-user archive of every pool the user entered, with their final rank, points, and any payout. The prediction screen (`/predict/:entryId`) stays accessible in read-only mode so users can deep-link to old results, but discoverability is via the archive, not the active surfaces. The settled-pool league table URL (`/pools/:slug/:poolId/table`) is also preserved as the `[Table →]` target from Account History.
-12. **Predict screen design — locked.** Entered-state-only screen at `/predict/:entryId` (step 2m URL — keeps the Predict bottom-nav tab highlighted; was `/pools/:competitionSlug/:poolId` pre-step-2m, which mixed pre-entry and post-entry states). Top tabs for each Gameweek in the Round (e.g. `GW1 24 pts ✓ | GW2 5/10 | GW3 0/10 | GW4 0/10`). Default tab on load = the current Gameweek (the first GW that hasn't fully completed). All matches in the selected GW shown in full — no "+N more" truncation. Day groupers within a GW for chronology (Sat/Sun/Mon). Match rows render four states: **finished** (FT score + your prediction + points pill), **saved & locked** (kickoff <1hr away, no edits), **half-saved** (one score entered), **editable** (empty boxes, "tap to predict"). Auto-save on every input change (debounced ~800ms) with a footer indicator confirming persistence. No manual "Save" button. The pre-entry flow (window check → late-entry modal → POST `/enter`) lives on the Tables tab now (§8.6). **Refined step 3a.18:** the day groupers and knockout stage headers *inside* a tab were removed in favour of a single ordered feed — **live (top, pulsing LIVE badge) → still-predictable (soonest deadline first) → locked-about-to-start ("Locked · awaiting kick-off") → finished (most recent first) → awaiting-teams**. Each row now carries its own full date and, for knockouts, its round inline (no headers). A finished live game drops into the historical block automatically. The GW/round tabs and default-tab logic are unchanged. Competition-agnostic (one code path for PL/cups/WC). See §18.
+12. **Predict screen design — locked.** Entered-state-only screen at `/predict/:entryId` (step 2m URL — keeps the Predict bottom-nav tab highlighted; was `/pools/:competitionSlug/:poolId` pre-step-2m, which mixed pre-entry and post-entry states). Top tabs for each Gameweek in the Round (e.g. `GW1 24 pts ✓ | GW2 5/10 | GW3 0/10 | GW4 0/10`). Default tab on load = the current Gameweek (the first GW that hasn't fully completed). All matches in the selected GW shown in full — no "+N more" truncation. Day groupers within a GW for chronology (Sat/Sun/Mon). Match rows render four states: **finished** (FT score + your prediction + points pill), **saved & locked** (kickoff <1hr away, no edits), **half-saved** (one score entered), **editable** (empty boxes, "tap to predict"). Auto-save on every input change (debounced ~800ms) with a footer indicator confirming persistence. No manual "Save" button. The pre-entry flow (window check → late-entry modal → POST `/enter`) lives on the Tables tab now (§8.6). **Refined step 3a.18:** the day groupers and knockout stage headers *inside* a tab were removed in favour of a single ordered feed — **live (top, pulsing LIVE badge) → still-predictable (soonest deadline first) → locked-about-to-start ("Locked · awaiting kick-off") → finished (most recent first) → awaiting-teams**. Each row now carries its own full date and, for knockouts, its round inline (no headers). A finished live game drops into the historical block automatically. The GW/round tabs and default-tab logic are unchanged. Competition-agnostic (one code path for PL/cups/WC). See §18. **Refined again step 3a.19:** the feed order was corrected and given live/timing treatments — see §20 (the step 3a.18 order wrongly ranked about-to-start below still-predictable; now: live → about-to-start → recently-finished → still-predictable → older-played → awaiting).
 13. **Settlement gate for non-played fixtures.** A pool settles when every event in its Round is either `finished` with an `event_outcomes` row, OR in a terminal non-played state (`cancelled` / `void`). `Postponed` events still block settlement — they may yet be rescheduled inside the Round window. Predictions on cancelled or void events keep `points_awarded = null` and render as "Missed — 0 pts" (no match means no score to compare against). Without this rule, a single postponement could deadlock a pool indefinitely. **Scoring-completeness guard (step 3a.16):** the gate additionally requires that no prediction on a `finished` event still has `points_awarded IS NULL`. Outcome-write and prediction-scoring are separate, non-transactional steps in `outcome-sync`, and the scheduler runs sync (5 min) and settle (15 min) as independent crons that can overlap — so without this guard a settle pass racing a mid-flight sync (or a crash between the two writes) could count a real, correct prediction as 0, worst case on the Final. Cancelled/void and forfeit-postponed predictions deliberately stay null, but their events aren't `finished`, so they don't trip the guard; the next sync scores any pending finished-event predictions and the pool settles on the following pass.
 14. **Payout rounding.** Operator commission is computed first (`houseFeePence = floor(grossPotPence × houseFeePct)`, so players are never overpaid from sub-penny remainders). The remaining `playerPotPence` is split across paying ranks: `playerPot × split ÷ tied_count`, rounded to 2 decimal places at storage. After all line items are computed, any 1-2p rounding residual goes to rank 1 — line items must sum exactly to `playerPotPence × sum(splits)` so the books balance. The same `computeDisplayBreakdown` helper feeds both settlement and the API display amounts, so the breakdown shown on Tables / Home matches what actually gets paid to the penny. Cosmetic precision for `mode='mock'`; real-money operation post-licence switches to integer-pence arithmetic throughout.
 15. **Zero-entry pools settle silently.** A pool reaching its settlement gate with `entry_count = 0` still gets marked `settled` — pot is 0, no `payments` rows are written, audit log records the settlement with `entryCount: 0`. Handles the rare race between the stale-pool cleanup script and outcome sync, and gives the settlement engine a single uniform exit path.
@@ -1094,3 +1094,66 @@ A pulsing red **"LIVE"** badge (radar-ping dot + faint red row tint) marks in-pl
 ### Competition-agnostic
 
 All of the above (`OpponentPredictionsPage`, the `PoolStandingsTable` link-through, `PredictMatchRow`, and the `PoolDetailPage` feed ordering) runs through shared code with no tournament-specific branches. It applies to the Premier League and any cup automatically when those come back online — see the §15 carry-across note. Restoring PL is a marketing-only job.
+
+---
+
+## 19. Pick distribution — "How the table called it" (step 3a.19)
+
+A tap-to-expand panel rendered **inside each match card** on the Predict screen, showing how the whole table predicted a **locked** match. Permanent and competition-agnostic.
+
+### What it shows
+- A home / draw / away split bar (percentages of all picks for that match).
+- The top three most-predicted exact scorelines, with counts.
+- The viewer's own pick highlighted when it appears.
+- An **"x/y picks"** header (e.g. "21/23 picks") — predictions made over total pool entrants, so the entrants who didn't get a pick in are visible.
+
+### Anti-cheat (reuses §13 Rule #7)
+Distribution is computed **only for locked events** (`predictionLockAt <= now`). The server (`getPoolPredictionDistribution` in `server/lib/insight-data.ts` → `GET /api/pools/:id/distribution`) never returns an unlocked event, so the crowd's picks can't influence anyone whose own pick is still open. Same symmetry argument as §18: by the time you see the distribution, your own pick for that match has locked too.
+
+### Access & data
+Mirrors the table / §18 rule: public when the pool is `settled`; `session + entrant` while live (401/403). Pure read over `predictions` (scoped by `pools.stageId`), aggregated in JS. The denominator is the pool's `pool_entries` count. No schema change.
+
+### Placement
+Rendered inside the match card (not as a separate panel) via the `MatchDistribution` helper in `PredictMatchRow`, so on multi-match days (PL Saturdays) each distribution is unmistakably tied to its match. `PoolDetailPage` fetches the pool distribution once, refetches on focus while unsettled, and passes the per-event slice + entrant count down to each row.
+
+---
+
+## 20. Predict-screen match states, countdowns & ordering (step 3a.19)
+
+Refines §13 Rule #12. All in `PredictMatchRow` (state treatments) + `PoolDetailPage` (`predictTier`/`comparePredict`).
+
+### Per-row state treatments (the "heat ladder")
+- **Open / predictable** — neutral card; meta line shows a **"Locks in …"** countdown (day-aware: `1d 05:00` past 24h, then `5h 30m`, `42m`, `38s`). Turns **amber + slow pulse** under 6h.
+- **About to start** (locked, not yet kicked off) — **amber card, bright team names, pulsing "STARTS SOON" badge, amber pulsing "Kicks off in …" countdown**. Per-match, so several simultaneous imminent games each light up. A clear notch below LIVE.
+- **Live** (kicked off, no result) — dedicated rose card (`LivePredictionView`): the predicted scoreline in big boxes labelled **"Your pick"** + the pulsing red LIVE badge. **No live in-play score** (see §9 / parked livescores add-on) — this keeps the *pick* prominent through the match.
+- **Finished** — FT scoreline + "You: x-y" + points pill (unchanged from §8).
+
+Countdowns self-tick; on expiry they fire an `onLockElapsed` callback that refetches the entry, so a row flips state (open→locked, about-to-start→live) on its own without a manual refresh.
+
+### Feed ordering (tiers, top → bottom)
+1. **Live** (newest kick-off first)
+2. **About to start** — locked, imminent (soonest kick-off first)
+3. **Recently finished** — ended within the last hour (most recent first); lingers here an hour so you see your result before it drops to history
+4. **Still predictable** — open (soonest deadline first)
+5. **Played** — finished over an hour ago / terminal (newest first)
+6. **Awaiting teams** — unresolved knockout slots (bottom)
+
+The "happening now / next / just gone" cluster (1–3) sits above the upcoming still-to-predict games. Re-sorts on refetch (focus / countdown expiry), not a live ticking clock. Competition-agnostic.
+
+### Live in-play scores — still parked (cost)
+`football-data.org` free tier does **not** provide real-time scores (delayed); real-time needs the paid **livescores add-on (~€12/month)**. Points-on-pace (predicted line tracking a live match) is deferred until that's taken on. When built: the live score must stay **out of the settlement path** (`eventOutcomes` / `extractRegulationScore` stay FT-only; live score in a separate display-only store) and needs a faster (~30–60s) tick gated to pools with a live match. The §20 live card is the layout it drops onto.
+
+---
+
+## 21. Table chat — TEMPORARY WC feature (step 3a.19)
+
+Per-pool chat for the informal World Cup friends' run. **Built to be removed after the WC** — see `docs/wc-chat-teardown.md` (trigger: "Read the WC chat teardown doc and remove the chat"). Every shared-file edit is sentinel-fenced (`// ── WC CHAT (temporary) ── start/end`); the new files (`messages.ts`, `chat-data.ts`, `PoolChatPage.tsx`) delete outright.
+
+### Behaviour
+Reached from a "Table chat" button on Tables (entrants only, under the You/position card) → `/pools/:competitionSlug/:poolId/chat`. Entrant-gated read + post. Plain text + emoji only (no images, no link auto-linkify). `displayName` author (matches the league table). 500-char cap, 5-msg/10s rate limit, self-excluded users blocked from posting. Admins get a per-message **Hide** (soft-delete, audited as `admin.action`). **Polling, not websockets** (5s while open + focus refetch) — matches the app's polling philosophy; no Redis/queue. Data in one table, `pool_messages` (append-only; soft-delete columns; the message row is itself the record, so no per-message audit row).
+
+### Moderation — minimal now, scalable later
+Admin-hide is the only moderation at 11 mates. **Deferred to scale/licence:** report queue, automated content filtering (the free OpenAI moderation endpoint slots into the POST path), richer retention/anonymisation wiring. The schema carries the compliance bones (soft-delete, timestamps, attribution) from day one.
+
+### Regulatory note (the real cost of chat)
+Chat is the **only** Predictor10 feature that makes it a **"user-to-user service" under the Online Safety Act 2023, regulated by Ofcom** — a *second* regulator on top of the UKGC, applying regardless of size. It brings an illegal-harms risk assessment, a reporting/complaints route, message-log retention, and CSAM detection duties. Acceptable for the informal WC run (low practical risk; admin-hide + retention in place), but it is a **documented line item before chat ships in the licensed product** (see pre-launch §3). Every other engagement feature stays purely inside the UKGC frame.

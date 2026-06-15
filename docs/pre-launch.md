@@ -46,6 +46,7 @@ These must be decided before public registration opens. If undecided by mid-July
 |---|---|---|---|
 | 1.2.a | Push/email notification triggers, copy, frequency | Solo dev | arch §14 #7 |
 | 1.2.b | Multi-competition Home behaviour when user has live entries in PL + Champ | Solo dev | arch §14 #8 |
+| 1.2.c | Live in-play scores / points-on-pace — take the paid football-data livescores add-on (~€12/mo)? Free tier scores are delayed, so real-time juice is gated on this. Parked on cost; revisit at scale/with revenue | Solo dev | arch §20 |
 | 1.2.c | Live scores polling cadence (currently 60s server / 30s client) | Solo dev, after R1 ops | arch §14 #9 |
 
 ### 1.3 Q4 2026 / post-licence
@@ -84,6 +85,7 @@ Without these, the licence application has nothing to show. Closed test (Round 1
 - [ ] Audit log review tool — read-only admin dashboard
 - [ ] Policy documents drafted: T&Cs · Privacy · Responsible Gambling · AML
 - [ ] Schema-to-feature mapping documented for licence application
+- [ ] **Online Safety Act (Ofcom) readiness — ONLY if chat ships in the licensed product.** The per-pool table chat (step 3a.19) is a TEMPORARY WC feature and is scheduled for removal (`wc-chat-teardown.md`). If any user-to-user chat is carried into the licensed product, Predictor10 becomes a "user-to-user service" under the Online Safety Act 2023 — a **second regulator (Ofcom) on top of the UKGC**, applying regardless of size. Brings: illegal-harms risk assessment, an in-product reporting/complaints route, message-log retention, automated content moderation (free OpenAI moderation endpoint slots into the existing POST path), and CSAM detection duties. Confirm scope with compliance counsel before re-enabling chat post-WC. (No other engagement feature touches this — distribution, countdowns, live/standings all stay inside the UKGC frame.)
 
 ---
 
