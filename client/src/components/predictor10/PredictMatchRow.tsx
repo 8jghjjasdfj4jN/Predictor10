@@ -448,6 +448,22 @@ function LiveBadge() {
   );
 }
 
+/** Amber pulsing "starts soon" badge for an imminent, locked match — a notch
+    below the LIVE energy, but clearly more alive than a far-off fixture. */
+function KickoffSoonBadge() {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/40 bg-amber-400/15 px-2 py-0.5">
+      <span className="relative flex h-2 w-2">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-300 opacity-75" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-400" />
+      </span>
+      <span className="font-['Manrope'] text-[0.62rem] font-bold uppercase tracking-[0.18em] text-amber-200">
+        Starts soon
+      </span>
+    </span>
+  );
+}
+
 // ─── Live view (kicked off, no result yet) ───────────────────────────────
 
 /**
@@ -558,6 +574,8 @@ function EditableOrLockedView({
     match.status === "postponed" || match.status === "cancelled" || match.status === "void";
   // No outcome yet (FinishedView handles finished). Kicked off + playable = live.
   const isLive = kicked && !awaitingTeams && !terminalUnplayed;
+  // Locked but not yet kicked off → imminent, gets the amber "starts soon" juice.
+  const isAboutToStart = match.isLocked && !kicked && !awaitingTeams && !terminalUnplayed;
   const homeNum = parseScore(homeText);
   const awayNum = parseScore(awayText);
   const halfSaved =
@@ -590,6 +608,10 @@ function EditableOrLockedView({
     metaTag = { label: "Saved", tone: "emerald" };
   }
 
+  // About-to-start with a pick in shows the pulsing "STARTS SOON" badge instead
+  // of the muted "Locked" tag — the energy belongs on the imminent match.
+  if (isAboutToStart && hasSavedPrediction) metaTag = null;
+
   const inputDisabled = match.isLocked || awaitingTeams;
   const displayHome = (match.isLocked && !hasSavedPrediction) || awaitingTeams ? "" : homeText;
   const displayAway = (match.isLocked && !hasSavedPrediction) || awaitingTeams ? "" : awayText;
@@ -613,8 +635,8 @@ function EditableOrLockedView({
     <div
       className={cn(
         "rounded-2xl border px-3.5 py-3 transition",
-        isLive
-          ? "border-rose-400/30 bg-rose-500/[0.06]"
+        isAboutToStart
+          ? "border-amber-300/35 bg-amber-400/[0.06]"
           : match.isLocked
             ? "border-white/8 bg-white/[0.015]"
             : halfSaved
@@ -629,7 +651,7 @@ function EditableOrLockedView({
           <span
             className={cn(
               "line-clamp-2 break-words font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase leading-[1.15] tracking-[0.02em] text-right",
-              match.isLocked ? "text-white/55" : "text-white",
+              match.isLocked && !isAboutToStart ? "text-white/55" : "text-white",
             )}
           >
             {displayTeamName(match.homeTeam)}
@@ -656,7 +678,7 @@ function EditableOrLockedView({
           <span
             className={cn(
               "line-clamp-2 break-words font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase leading-[1.15] tracking-[0.02em]",
-              match.isLocked ? "text-white/55" : "text-white",
+              match.isLocked && !isAboutToStart ? "text-white/55" : "text-white",
             )}
           >
             {displayTeamName(match.awayTeam)}
@@ -680,7 +702,12 @@ function EditableOrLockedView({
         {showKickoffCountdown && (
           <>
             <span aria-hidden className="text-white/20">·</span>
-            <Countdown targetIso={match.kickoffAt} prefix="Kicks off in" onExpire={onLockElapsed} />
+            <Countdown
+              targetIso={match.kickoffAt}
+              prefix="Kicks off in"
+              highlightUnderMs={6 * 60 * 60 * 1000}
+              onExpire={onLockElapsed}
+            />
           </>
         )}
         {stageLabelFor(match) && (
@@ -699,6 +726,12 @@ function EditableOrLockedView({
           <>
             <span aria-hidden className="text-white/20">·</span>
             <LiveBadge />
+          </>
+        )}
+        {isAboutToStart && (
+          <>
+            <span aria-hidden className="text-white/20">·</span>
+            <KickoffSoonBadge />
           </>
         )}
         {metaTag && (
