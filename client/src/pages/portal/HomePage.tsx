@@ -35,15 +35,46 @@ tournament-style (WC), `'wait'` = league-style (PL/Champ).
 
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { ArrowRight, Check, Loader2 } from "lucide-react";
+import { ArrowRight, BookOpen, Check, Loader2, Trophy, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   fetchCompetitions,
+  fetchEliminatorOverview,
   fetchMyEntries,
   type Competition,
+  type EliminatorOverview,
   type Pool,
   type UserEntry,
 } from "@/lib/portal-api";
+import { EliminatorRulesSheet } from "@/components/predictor10/EliminatorRules";
+
+/** The WC Eliminator game slug (the only Eliminator game for now). */
+const ELIMINATOR_SLUG = "world-cup-2026-eliminator";
+
+const LOCK_FMT = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+function formatLock(iso: string): string {
+  return LOCK_FMT.format(new Date(iso));
+}
+
+function lockCountdown(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return "locked";
+  const totalMin = Math.floor(ms / 60000);
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor((totalMin % 1440) / 60);
+  const m = totalMin % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
 
 // ─── Formatters ──────────────────────────────────────────────────────────
 
@@ -407,6 +438,105 @@ function TournamentCard({ state }: { state: CompState }) {
   );
 }
 
+// ─── Eliminator10 card (last player standing) ────────────────────────────
+
+function EliminatorCard({ overview }: { overview: EliminatorOverview }) {
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const ov = overview;
+  const entered = ov.entry.state !== "none";
+  const settled = ov.status === "settled";
+  const href = `/eliminator/${ov.slug}`;
+
+  let ctaLabel: string;
+  let ctaPrimary = true;
+  if (settled) {
+    ctaLabel = ov.entry.state === "won" ? "You won — view" : "View result";
+    ctaPrimary = ov.entry.state === "won";
+  } else if (ov.entry.state === "none") {
+    ctaLabel = ov.canJoin ? (ov.isFree ? "Join — free" : "Join") : "View game";
+    ctaPrimary = ov.canJoin;
+  } else if (ov.entry.state === "eliminated") {
+    ctaLabel = "You're out — view";
+    ctaPrimary = false;
+  } else {
+    // alive
+    ctaLabel = ov.currentRound?.needsPick ? "Make your pick" : "Open game";
+  }
+
+  return (
+    <CardShell entered={entered}>
+      <CardHeader title={ov.name} badge={ov.isFree ? "Free" : null} />
+
+      <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
+        <span className="font-semibold text-white">Last player standing</span>
+        <span aria-hidden className="mx-1.5 text-white/30">·</span>
+        pick a winner each round
+      </p>
+
+      {ov.entrantCount > 0 && (
+        <p className="m-0 mt-1.5 inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] text-white/55">
+          <Users className="h-3.5 w-3.5 flex-shrink-0" aria-hidden />
+          <span className="font-semibold text-emerald-200">{ov.aliveCount}</span> still in
+          <span aria-hidden className="text-white/25">·</span>
+          {ov.entrantCount} joined
+        </p>
+      )}
+
+      {entered && ov.entry.state === "alive" && <YoureInLine>You're in</YoureInLine>}
+      {entered && ov.entry.state === "won" && (
+        <p className="m-0 mt-1.5 inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] font-semibold text-amber-200">
+          <Trophy className="h-3.5 w-3.5 flex-shrink-0" aria-hidden />
+          You won
+        </p>
+      )}
+
+      {/* The "when it starts" note — current round lock day/time + countdown. */}
+      {!settled && ov.currentRound && (
+        <div className="my-3 rounded-[10px] border border-white/[0.04] bg-black/25 px-3.5 py-3 font-['Manrope'] text-[0.78rem] leading-[1.5] text-white/55">
+          <span className="font-semibold uppercase tracking-[0.14em] text-emerald-300/70 text-[0.66rem]">
+            {ov.entrantCount === 0 ? "Starts" : `Round ${ov.currentRound.ordinal}`}
+          </span>
+          <br />
+          <span className="text-white">
+            Picks lock {formatLock(ov.currentRound.deadlineAt)}
+          </span>
+          {!ov.currentRound.isLocked && (
+            <span> · in {lockCountdown(ov.currentRound.deadlineAt)}</span>
+          )}
+        </div>
+      )}
+
+      <div className="mt-1 flex flex-col gap-2">
+        {ctaPrimary ? (
+          <PrimaryButton href={href}>
+            <span>{ctaLabel}</span>
+            <ArrowRight className="h-4 w-4" aria-hidden />
+          </PrimaryButton>
+        ) : (
+          <GhostButton href={href}>
+            <span>{ctaLabel}</span>
+          </GhostButton>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setRulesOpen(true)}
+          className={cn(
+            CTA_BASE,
+            "border border-white/10 bg-transparent text-white/60",
+            "hover:bg-white/[0.05] hover:text-white",
+          )}
+        >
+          <BookOpen className="h-4 w-4" aria-hidden />
+          <span>How it works</span>
+        </button>
+      </div>
+
+      <EliminatorRulesSheet open={rulesOpen} onClose={() => setRulesOpen(false)} />
+    </CardShell>
+  );
+}
+
 // ─── Empty states ────────────────────────────────────────────────────────
 
 function PrizeFundNote() {
@@ -454,6 +584,7 @@ function PageHeading() {
 type HomeData = {
   competitions: Competition[];
   entries: UserEntry[];
+  eliminator: EliminatorOverview | null;
 };
 
 export default function HomePage() {
@@ -462,10 +593,16 @@ export default function HomePage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchCompetitions(), fetchMyEntries()])
-      .then(([competitions, entries]) => {
+    Promise.all([
+      fetchCompetitions(),
+      fetchMyEntries(),
+      // Tolerate absence — if the Eliminator game isn't seeded yet, just omit
+      // the card rather than failing the whole Home screen.
+      fetchEliminatorOverview(ELIMINATOR_SLUG).catch(() => null),
+    ])
+      .then(([competitions, entries, eliminator]) => {
         if (cancelled) return;
-        setData({ competitions, entries });
+        setData({ competitions, entries, eliminator });
       })
       .catch((err) => {
         if (cancelled) return;
@@ -504,13 +641,15 @@ export default function HomePage() {
 
   // Empty state only when there are literally no actionable competitions
   // (server returned no comps, or returned comps but the user has nothing
-  // to act on — e.g. between rounds).
-  const showNothingOpen = cards.length === 0;
+  // to act on — e.g. between rounds) AND no Eliminator game to show.
+  const elim = data.eliminator;
+  const showElim = !!elim && elim.status !== "draft" && elim.status !== "void";
+  const showNothingOpen = cards.length === 0 && !showElim;
 
   return (
     <div className="pb-6">
       <PageHeading />
-      {cards.length > 0 && (
+      {(cards.length > 0 || showElim) && (
         <div className="flex flex-col gap-3 px-4 pb-6 pt-2">
           {cards.map((state) =>
             state.competition.postponedPolicy === "forfeit" ? (
@@ -519,6 +658,7 @@ export default function HomePage() {
               <LeagueCard key={state.competition.id} state={state} />
             ),
           )}
+          {showElim && elim && <EliminatorCard overview={elim} />}
         </div>
       )}
       {showNothingOpen && <EmptyNothingOpen />}

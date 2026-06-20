@@ -683,3 +683,130 @@ export async function hidePoolMessage(messageId: string, reason?: string): Promi
 }
 
 // ── WC CHAT (temporary) ── end
+
+// ─── Eliminator10 (last player standing) ─────────────────────────────────
+
+export type EliminatorEntryState = "none" | "alive" | "eliminated" | "won";
+export type EliminatorPickSide = "home" | "away";
+
+export type EliminatorOverview = {
+  slug: string;
+  name: string;
+  status: string;
+  isFree: boolean;
+  entryFee: string;
+  currency: string;
+  competitionName: string;
+  competitionSlug: string;
+  entrantCount: number;
+  aliveCount: number;
+  roundCount: number;
+  entryClosesAt: string;
+  entry: {
+    state: EliminatorEntryState;
+    eliminatedRoundOrdinal: number | null;
+    eliminatedReason: string | null;
+  };
+  canJoin: boolean;
+  currentRound: {
+    id: string;
+    ordinal: number;
+    name: string;
+    deadlineAt: string;
+    isLocked: boolean;
+    needsPick: boolean;
+  } | null;
+};
+
+export type EliminatorFixture = {
+  eventId: string;
+  homeTeam: string | null;
+  awayTeam: string | null;
+  homeTeamShort: string | null;
+  awayTeamShort: string | null;
+  kickoffAt: string;
+  status: string;
+  awaitingTeams: boolean;
+  homeUsed: boolean;
+  awayUsed: boolean;
+};
+
+export type EliminatorPickScreen = {
+  game: { slug: string; name: string; isFree: boolean };
+  entryState: EliminatorEntryState;
+  round: {
+    id: string;
+    ordinal: number;
+    name: string;
+    deadlineAt: string;
+    isLocked: boolean;
+  } | null;
+  yourPick: { eventId: string; side: EliminatorPickSide; team: string } | null;
+  fixtures: EliminatorFixture[];
+};
+
+export type EliminatorJoinResponse = { entryId: string; alreadyEntered: boolean };
+export type EliminatorPickResponse = { eventId: string; side: EliminatorPickSide; team: string };
+
+export async function fetchEliminatorOverview(slug: string): Promise<EliminatorOverview> {
+  return getJson<EliminatorOverview>(`/api/eliminator/${encodeURIComponent(slug)}`);
+}
+
+export async function joinEliminator(slug: string): Promise<EliminatorJoinResponse> {
+  const res = await fetch(`/api/eliminator/${encodeURIComponent(slug)}/enter`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+  notify401IfNeeded(res);
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = data.error;
+    } catch {
+      // non-JSON error body
+    }
+    throw new Error(message);
+  }
+  return (await res.json()) as EliminatorJoinResponse;
+}
+
+export async function fetchEliminatorPickScreen(slug: string): Promise<EliminatorPickScreen> {
+  return getJson<EliminatorPickScreen>(`/api/eliminator/${encodeURIComponent(slug)}/pick`);
+}
+
+/** Carries the HTTP status so the caller can revert the tapped pick on a
+    403 lock / 409 team-used rejection rather than leaving it highlighted. */
+export class SubmitEliminatorPickError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+    this.name = "SubmitEliminatorPickError";
+  }
+}
+
+export async function submitEliminatorPick(
+  slug: string,
+  pick: { roundId: string; eventId: string; side: EliminatorPickSide },
+): Promise<EliminatorPickResponse> {
+  const res = await fetch(`/api/eliminator/${encodeURIComponent(slug)}/pick`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(pick),
+  });
+  notify401IfNeeded(res);
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = data.error;
+    } catch {
+      // non-JSON error body
+    }
+    throw new SubmitEliminatorPickError(message, res.status);
+  }
+  return (await res.json()) as EliminatorPickResponse;
+}
