@@ -189,14 +189,25 @@ export default function EliminatorPlayPage() {
     <div className="pb-10">
       <div className="flex items-center justify-between px-5 pt-5">
         <BackLink />
-        <button
-          type="button"
-          onClick={() => setRulesOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 font-['Manrope'] text-[0.72rem] font-semibold text-white/70 transition hover:bg-white/[0.06] hover:text-white"
-        >
-          <BookOpen className="h-3.5 w-3.5" aria-hidden />
-          Rules
-        </button>
+        <div className="flex items-center gap-2">
+          {(entered || settled) && (
+            <Link
+              href={`/eliminator/${slug}/survivors`}
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 font-['Manrope'] text-[0.72rem] font-semibold text-white/70 transition hover:bg-white/[0.06] hover:text-white"
+            >
+              <Users className="h-3.5 w-3.5" aria-hidden />
+              Survivors
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={() => setRulesOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 font-['Manrope'] text-[0.72rem] font-semibold text-white/70 transition hover:bg-white/[0.06] hover:text-white"
+          >
+            <BookOpen className="h-3.5 w-3.5" aria-hidden />
+            Rules
+          </button>
+        </div>
       </div>
 
       <div className="px-5 pt-4">

@@ -810,3 +810,33 @@ export async function submitEliminatorPick(
   }
   return (await res.json()) as EliminatorPickResponse;
 }
+
+// ─── Eliminator10 survivors (still in / out) ─────────────────────────────
+
+export type EliminatorSurvivor = {
+  entryId: string;
+  displayName: string;
+  currentPickTeam: string | null;
+  isYou: boolean;
+};
+
+export type EliminatorOut = {
+  entryId: string;
+  displayName: string;
+  eliminatedRoundOrdinal: number | null;
+  eliminatedReason: string | null;
+  eliminatedPickTeam: string | null;
+  isYou: boolean;
+};
+
+export type EliminatorSurvivors = {
+  game: { slug: string; name: string; status: string; isFree: boolean; entrantCount: number };
+  picksHidden: boolean;
+  currentRound: { id: string; ordinal: number; name: string; deadlineAt: string; isLocked: boolean } | null;
+  stillIn: EliminatorSurvivor[];
+  out: EliminatorOut[];
+};
+
+export async function fetchEliminatorSurvivors(slug: string): Promise<EliminatorSurvivors> {
+  return getJson<EliminatorSurvivors>(`/api/eliminator/${encodeURIComponent(slug)}/survivors`);
+}

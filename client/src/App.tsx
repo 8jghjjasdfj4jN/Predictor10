@@ -38,6 +38,7 @@ import AccountHistoryPage from "./pages/portal/AccountHistoryPage";
 import AdminPage from "./pages/portal/AdminPage";
 import EnterPage from "./pages/portal/EnterPage";
 import EliminatorPlayPage from "./pages/portal/EliminatorPlayPage";
+import EliminatorSurvivorsPage from "./pages/portal/EliminatorSurvivorsPage";
 
 // Tiny declarative redirect helper. Wouter 3 ships `Redirect`, but we avoid
 // pulling it directly because the project applies a patch to wouter's ESM
@@ -99,6 +100,7 @@ function PortalRouter() {
 
         {/* Tournament entry confirm (arch §8.6.1, step 3a.7) */}
         <Route path="/enter/:competitionSlug" component={EnterPage} />
+        <Route path="/eliminator/:slug/survivors" component={EliminatorSurvivorsPage} />
         <Route path="/eliminator/:slug" component={EliminatorPlayPage} />
 
         {/* Legacy /pools URLs — kept alive temporarily for bookmark/history
