@@ -17,6 +17,9 @@ Idempotent. What it does:
      - Sets predictionLockAt = kickoff − 1 hour
   5. Pools for the **current** Round only (= lowest-ordinal Round still
      having future kickoffs). 4 pools per competition × 2 competitions = 8.
+  6. Eliminator10 game(s) — the free WC last-player-standing game and its
+     daily rounds (one round per future fixture day). Generated once;
+     idempotent re-runs leave the schedule alone. (Phase 6.)
 
 Past Rounds are populated as stages + events but get no pool rows — a brand-
 new user shouldn't see "settled pools they were never in" cluttering the
@@ -27,12 +30,15 @@ the 10 req/min free-tier ceiling.
 */
 
 import "dotenv/config";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { sports, competitions, stages, events } from "../db/schema/sports";
 import { leagues } from "../db/schema/leagues";
 import { pools } from "../db/schema/pools";
 import { users } from "../db/schema/users";
+import {
+  eliminatorGames, eliminatorRounds, eliminatorRoundEvents,
+} from "../db/schema/eliminator";
 import { ROUNDS_BY_CODE, roundForMatchday } from "../lib/rounds";
 import {
   fetchAllMatchesForSeason,
@@ -604,6 +610,183 @@ async function syncOpenPoolPrizeStructure(
   log(`  ${synced} pool(s) updated, ${skippedAlreadyMatching} already matching`);
 }
 
+// ─── Phase 6 — Eliminator10 games + daily rounds ──────────────────────────
+//
+// Eliminator10 (the last-player-standing game) runs on top of an existing
+// competition's fixtures. For the WC it's a single FREE game spanning the
+// tournament with one round per day of fixtures. Rounds are generated ONCE,
+// at game creation, from every *future* fixture day — deadline = that day's
+// first kick-off, so picks lock for the whole round at the first whistle (no
+// one can pick after seeing a result; same fairness rule as the pools' lock).
+// Past (already-kicked-off) days are excluded — you can't join a survivor game
+// and pick retroactively, so introducing the game mid-tournament simply starts
+// it at the next upcoming fixture day.
+//
+// Idempotent: re-running never renumbers or duplicates rounds — if the game
+// already has rounds, generation is skipped (and the game's config-owned
+// fields are re-synced). All 104 WC fixtures (including knockout slots with
+// TBD teams) already carry kickoff dates, so a one-time generation covers the
+// whole tournament; teams resolve into the later rounds as the bracket fills.
+//
+// PL-ready: add a config entry pointing at premier-league and group by
+// gameweek instead of by day (a later step). The tables don't change shape.
+
+const ELIMINATOR_GAMES = [
+  {
+    competitionCode: "WC",
+    slug: "world-cup-2026-eliminator",
+    name: "Eliminator10 · World Cup",
+    entryFee: "0", // free demo; the PL version sets a real fee + 75/25 pot
+    currency: "GBP",
+    prizeStructure: { model: "last_standing", houseFeePct: 0 },
+    reentryAllowed: false, // Rule 7 — re-entry off unless advertised
+  },
+] as const;
+
+function utcDateKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+async function seedEliminatorGames(competitionsByCode: Map<string, string>): Promise<void> {
+  log("Eliminator10 games + daily rounds…");
+  const now = new Date();
+
+  for (const def of ELIMINATOR_GAMES) {
+    const compId = competitionsByCode.get(def.competitionCode);
+    if (!compId) {
+      log(`  ${def.name}: competition ${def.competitionCode} not found — skipping`);
+      continue;
+    }
+
+    // Upsert the game row. Insert if new; otherwise re-sync the config-owned
+    // fields (name / fee / prize model / re-entry) and leave live state
+    // (status, timeline, rounds) untouched.
+    const insertedGame = await db
+      .insert(eliminatorGames)
+      .values({
+        competitionId: compId,
+        slug: def.slug,
+        name: def.name,
+        entryFee: def.entryFee,
+        currency: def.currency,
+        prizeStructure: def.prizeStructure,
+        reentryAllowed: def.reentryAllowed,
+        opensAt: now,        // provisional; refined once round 1 is known
+        entryClosesAt: now,  // provisional
+        status: "draft",
+      })
+      .onConflictDoNothing({ target: eliminatorGames.slug })
+      .returning({ id: eliminatorGames.id });
+
+    let gameId: string;
+    if (insertedGame.length > 0) {
+      gameId = insertedGame[0].id;
+      log(`  created game: ${def.name}`);
+    } else {
+      const existing = await db
+        .select({ id: eliminatorGames.id })
+        .from(eliminatorGames)
+        .where(eq(eliminatorGames.slug, def.slug));
+      gameId = existing[0].id;
+      await db
+        .update(eliminatorGames)
+        .set({
+          name: def.name,
+          entryFee: def.entryFee,
+          currency: def.currency,
+          prizeStructure: def.prizeStructure,
+          reentryAllowed: def.reentryAllowed,
+          updatedAt: now,
+        })
+        .where(eq(eliminatorGames.id, gameId));
+      log(`  ${def.name} already exists (re-synced config)`);
+    }
+
+    // Generate rounds only once — preserves a live schedule across re-seeds.
+    const existingRounds = await db
+      .select({ id: eliminatorRounds.id })
+      .from(eliminatorRounds)
+      .where(eq(eliminatorRounds.gameId, gameId))
+      .limit(1);
+    if (existingRounds.length > 0) {
+      log(`    rounds already generated — skipping`);
+      continue;
+    }
+
+    // Future fixtures for this competition, earliest first.
+    const futureEvents = await db
+      .select({ id: events.id, kickoffAt: events.kickoffAt })
+      .from(events)
+      .where(and(eq(events.competitionId, compId), gt(events.kickoffAt, now)))
+      .orderBy(events.kickoffAt);
+
+    if (futureEvents.length === 0) {
+      log(`    no future fixtures — game left with no rounds (open one later)`);
+      continue;
+    }
+
+    // One round per UTC day of fixtures. Track day order in an array so we
+    // don't iterate the Map directly (keeps tsc happy at the project target).
+    const dayKeys: string[] = [];
+    const byDay = new Map<string, { ids: string[]; firstKickoff: Date }>();
+    for (const ev of futureEvents) {
+      const key = utcDateKey(ev.kickoffAt);
+      const bucket = byDay.get(key);
+      if (bucket) {
+        bucket.ids.push(ev.id);
+      } else {
+        byDay.set(key, { ids: [ev.id], firstKickoff: ev.kickoffAt });
+        dayKeys.push(key);
+      }
+    }
+
+    let ordinal = 0;
+    let firstRoundDeadline: Date | null = null;
+    for (const key of dayKeys) {
+      const day = byDay.get(key)!;
+      ordinal++;
+      const isFirst = ordinal === 1;
+      if (isFirst) firstRoundDeadline = day.firstKickoff;
+
+      const roundRow = await db
+        .insert(eliminatorRounds)
+        .values({
+          gameId,
+          ordinal,
+          name: `Round ${ordinal}`,
+          deadlineAt: day.firstKickoff,
+          // The next round to play is open; the rest open as players progress.
+          status: isFirst ? "open" : "pending",
+        })
+        .returning({ id: eliminatorRounds.id });
+      const roundId = roundRow[0].id;
+
+      await db
+        .insert(eliminatorRoundEvents)
+        .values(day.ids.map((eventId: string) => ({ roundId, eventId })))
+        .onConflictDoNothing();
+    }
+
+    // Game opens now; entries close when round 1 locks — you must be in before
+    // the first round's first kick-off (standard survivor buy-in, so nobody
+    // banks a "survival" on a round they didn't actually play).
+    await db
+      .update(eliminatorGames)
+      .set({
+        status: "open",
+        opensAt: now,
+        entryClosesAt: firstRoundDeadline ?? now,
+        updatedAt: now,
+      })
+      .where(eq(eliminatorGames.id, gameId));
+
+    log(
+      `    ${ordinal} round(s) created (one per fixture day); ` +
+        `entries close ${firstRoundDeadline?.toISOString() ?? "n/a"}`,
+    );
+  }
+}
+
 // ─── Admin promotion ────────────────────────────────────────────────────
 //
 // Founding admin allowlist. Promotes any user whose email matches one of
@@ -662,6 +845,7 @@ async function main() {
   const stagesByCode = await syncFixtures(competitionsByCode);
   await seedPoolsForCurrentRound(competitionsByCode, stagesByCode, tiersBySlug);
   await syncOpenPoolPrizeStructure(tiersBySlug);
+  await seedEliminatorGames(competitionsByCode);
   await seedAdmins();
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
