@@ -494,7 +494,9 @@ function EliminatorCard({ overview }: { overview: EliminatorOverview }) {
       {!settled && ov.currentRound && (
         <div className="my-3 rounded-[10px] border border-white/[0.04] bg-black/25 px-3.5 py-3 font-['Manrope'] text-[0.78rem] leading-[1.5] text-white/55">
           <span className="font-semibold uppercase tracking-[0.14em] text-emerald-300/70 text-[0.66rem]">
-            {ov.entrantCount === 0 ? "Starts" : `Round ${ov.currentRound.ordinal}`}
+            {ov.currentRound.ordinal === 1 && !ov.currentRound.isLocked
+              ? "Starting soon"
+              : `Round ${ov.currentRound.ordinal}`}
           </span>
           <br />
           <span className="text-white">

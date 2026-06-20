@@ -640,6 +640,13 @@ const ELIMINATOR_GAMES = [
     currency: "GBP",
     prizeStructure: { model: "last_standing", houseFeePct: 0 },
     reentryAllowed: false, // Rule 7 — re-entry off unless advertised
+    // Launch cutoff: only fixtures kicking off at/after this form rounds, so we
+    // can seed ahead of the launch day and have Round 1 land on a chosen slate
+    // rather than the next fixtures on the clock. Set to 06:00 UTC Sun 21 Jun —
+    // past the small-hours Sunday games (which are tonight in UK terms), so
+    // Round 1 = Spain v Saudi + the rest of Sunday, locking at Spain's 17:00 UK
+    // kick-off. Remove (or move) it once this launch is done.
+    startFrom: "2026-06-21T06:00:00Z",
   },
 ] as const;
 
@@ -713,12 +720,21 @@ async function seedEliminatorGames(competitionsByCode: Map<string, string>): Pro
       continue;
     }
 
-    // Future fixtures for this competition, earliest first.
+    // Future fixtures for this competition, earliest first. An optional
+    // startFrom pushes the window forward so Round 1 begins on a chosen day
+    // (and the small-hours games before it drop off) — otherwise the game
+    // simply starts at the next upcoming fixture.
+    const startFrom = (def as { startFrom?: string }).startFrom;
+    const fromTs = startFrom && new Date(startFrom) > now ? new Date(startFrom) : now;
     const futureEvents = await db
       .select({ id: events.id, kickoffAt: events.kickoffAt })
       .from(events)
-      .where(and(eq(events.competitionId, compId), gt(events.kickoffAt, now)))
+      .where(and(eq(events.competitionId, compId), gt(events.kickoffAt, fromTs)))
       .orderBy(events.kickoffAt);
+
+    if (fromTs.getTime() !== now.getTime()) {
+      log(`    starting rounds from ${fromTs.toISOString()} (startFrom cutoff)`);
+    }
 
     if (futureEvents.length === 0) {
       log(`    no future fixtures — game left with no rounds (open one later)`);
