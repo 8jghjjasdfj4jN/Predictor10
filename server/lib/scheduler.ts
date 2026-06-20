@@ -53,6 +53,7 @@ Logging policy:
 import cron from "node-cron";
 import { syncOutcomes } from "./outcome-sync";
 import { settleAllReadyPools } from "./pool-settle";
+import { settleAllReadyEliminatorRounds } from "./eliminator-settle";
 
 // Cron expressions. node-cron uses 5-field POSIX cron (min hour dom mon dow).
 const SYNC_SCHEDULE = "*/5 * * * *"; // every 5 minutes
@@ -110,6 +111,7 @@ async function runSettle() {
   const startedAt = Date.now();
   try {
     const result = await settleAllReadyPools();
+    const elim = await settleAllReadyEliminatorRounds();
     const dur = Date.now() - startedAt;
     if (result.poolsSettled > 0 || result.errors.length > 0) {
       log(
@@ -122,6 +124,16 @@ async function runSettle() {
         console.error(
           `[scheduler] settle error for pool ${e.poolId}: ${e.message}`,
         );
+      }
+    }
+    if (elim.roundsSettled > 0 || elim.gamesSettled > 0 || elim.errors.length > 0) {
+      log(
+        `eliminator ${dur}ms — ${elim.roundsSettled} round(s) settled, ` +
+          `${elim.eliminated} eliminated, ${elim.gamesSettled} game(s) won ` +
+          `(${elim.errors.length} errors)`,
+      );
+      for (const e of elim.errors) {
+        console.error(`[scheduler] eliminator error for round ${e.roundId}: ${e.message}`);
       }
     }
   } catch (err) {
