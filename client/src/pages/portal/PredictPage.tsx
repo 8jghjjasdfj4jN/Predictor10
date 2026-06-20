@@ -251,36 +251,79 @@ function TournamentCard({ entry }: { entry: UserEntry }) {
 // floats to the top of Predict instead of being buried behind Home → lobby.
 // Each row deep-links to the play screen.
 
+// Sort key for the Eliminator section: pick-due first, then picked, then
+// locked/awaiting, then between-rounds.
+function elimRank(ov: EliminatorOverview): number {
+  const r = ov.currentRound;
+  if (r && !r.isLocked && r.needsPick) return 0;
+  if (r && !r.isLocked) return 1;
+  if (r && r.isLocked) return 2;
+  return 3;
+}
+
 function ElimRow({ ov, nowMs }: { ov: EliminatorOverview; nowMs: number }) {
   const round = ov.currentRound;
   const cd = round ? formatCountdown(round.deadlineAt, nowMs) : "";
   const lockLabel = cd === "Closing now" ? "locking now" : `locks in ${cd}`;
+  const pickDue = !!round && !round.isLocked && round.needsPick;
+
+  let sub: React.ReactNode;
+  let cta: string;
+  if (round && !round.isLocked && round.needsPick) {
+    sub = (
+      <>
+        {round.name}
+        <span aria-hidden className="mx-1.5 text-white/30">·</span>
+        <span className="font-semibold text-emerald-300">Pick due · {lockLabel}</span>
+      </>
+    );
+    cta = "Make your pick";
+  } else if (round && !round.isLocked) {
+    sub = (
+      <>
+        {round.name}
+        <span aria-hidden className="mx-1.5 text-white/30">·</span>
+        Pick in · {lockLabel}
+      </>
+    );
+    cta = "Change pick";
+  } else if (round && round.isLocked) {
+    sub = (
+      <>
+        {round.name}
+        <span aria-hidden className="mx-1.5 text-white/30">·</span>
+        Pick locked · awaiting results
+      </>
+    );
+    cta = "View game";
+  } else {
+    sub = (
+      <>
+        Still in · {ov.aliveCount} of {ov.entrantCount} left
+      </>
+    );
+    cta = "View game";
+  }
+
   return (
     <article className="relative overflow-hidden rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.06] px-4 pb-3.5 pt-3.5">
       <CornerGlow tone="emerald" />
       <h2 className="m-0 mb-1 font-['Barlow_Condensed'] text-[1.25rem] font-bold uppercase leading-[1.05] tracking-[0.02em] text-white">
         {ov.name}
       </h2>
-      <p className="m-0 font-['Manrope'] text-[0.78rem] text-white/55">
-        {round ? round.name : "Pick due"}
-        {round && (
-          <>
-            <span aria-hidden className="mx-1.5 text-white/30">·</span>
-            {lockLabel}
-          </>
-        )}
-      </p>
+      <p className="m-0 font-['Manrope'] text-[0.78rem] text-white/55">{sub}</p>
       <Link
         href={`/eliminator/${ov.slug}`}
         className={cn(
           "mt-3.5 flex w-full items-center justify-center gap-2 rounded-[10px] px-4 py-3",
-          "bg-emerald-500 font-['Manrope'] text-[0.84rem] font-bold text-[#0b1f14]",
-          "shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] transition",
-          "hover:bg-emerald-400 active:bg-emerald-600",
+          "font-['Manrope'] text-[0.84rem] font-bold transition",
           "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60",
+          pickDue
+            ? "bg-emerald-500 text-[#0b1f14] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] hover:bg-emerald-400 active:bg-emerald-600"
+            : "border border-emerald-400/40 bg-emerald-400/[0.06] text-emerald-200 hover:bg-emerald-400/[0.12] active:bg-emerald-400/[0.18]",
         )}
       >
-        <span>Make your pick</span>
+        <span>{cta}</span>
         <ArrowRight className="h-4 w-4" aria-hidden />
       </Link>
     </article>
@@ -371,16 +414,14 @@ export default function PredictPage() {
     );
   }
 
-  // Eliminator picks that are due right now (you're alive, round open, no pick in).
-  const elimDue = eliminators.filter(
-    (e) =>
-      e.entry.state === "alive" &&
-      e.currentRound !== null &&
-      !e.currentRound.isLocked &&
-      e.currentRound.needsPick,
-  );
+  // Every Eliminator game the player is still alive in shows here — whether or
+  // not a pick is due — so an entered game never disappears from Predict.
+  // Pick-due games sort to the top of the section.
+  const elimLive = eliminators
+    .filter((e) => e.entry.state === "alive")
+    .sort((a, b) => elimRank(a) - elimRank(b));
 
-  if (entries.length === 0 && elimDue.length === 0) {
+  if (entries.length === 0 && elimLive.length === 0) {
     return (
       <div className="px-4 pb-8">
         <PageHeading />
@@ -432,9 +473,9 @@ export default function PredictPage() {
     <div className="px-4 pb-8">
       <PageHeading />
 
-      {elimDue.length > 0 && (
-        <SectionGroup title="Elimination game">
-          {elimDue.map((ov) => (
+      {elimLive.length > 0 && (
+        <SectionGroup title={elimLive.length > 1 ? "Elimination games" : "Elimination game"}>
+          {elimLive.map((ov) => (
             <ElimRow key={ov.slug} ov={ov} nowMs={nowMs} />
           ))}
         </SectionGroup>
