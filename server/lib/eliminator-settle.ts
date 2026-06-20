@@ -214,7 +214,7 @@ async function settleOneRound(roundId: string): Promise<SettleOneRoundOutcome> {
     let gameSettled = false;
 
     if (aliveCount === 1) {
-      // Last one standing — crown them.
+      // Sole survivor — crown them.
       await tx
         .update(eliminatorEntries)
         .set({ status: "won", finalRank: 1, settledAt: now })

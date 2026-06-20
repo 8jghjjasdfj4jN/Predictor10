@@ -438,7 +438,7 @@ function TournamentCard({ state }: { state: CompState }) {
   );
 }
 
-// ─── Eliminator10 card (last player standing) ────────────────────────────
+// ─── Eliminator10 card (elimination game) ───────────────────────────────
 
 function EliminatorCard({ overview }: { overview: EliminatorOverview }) {
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -468,7 +468,7 @@ function EliminatorCard({ overview }: { overview: EliminatorOverview }) {
       <CardHeader title={ov.name} badge={ov.isFree ? "Free" : null} />
 
       <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
-        <span className="font-semibold text-white">Last player standing</span>
+        <span className="font-semibold text-white">Elimination game</span>
         <span aria-hidden className="mx-1.5 text-white/30">·</span>
         pick a winner each round
       </p>

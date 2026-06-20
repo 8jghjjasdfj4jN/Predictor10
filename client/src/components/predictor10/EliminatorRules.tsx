@@ -10,7 +10,7 @@ paid PL version swaps rule 11 for the entry fee + 75/25 pot when that ships.
 import { X } from "lucide-react";
 
 const RULES: { n: number; title: string; body: React.ReactNode }[] = [
-  { n: 1, title: "Last player standing wins", body: "Outlast everyone else and the competition is yours." },
+  { n: 1, title: "Outlast everyone to win", body: "Outlast everyone else and the competition is yours." },
   { n: 2, title: "Each round, pick one team to win", body: "Choose a single team from that round's fixtures." },
   { n: 3, title: "Picks lock at the first kick-off", body: "Get your pick in before the round's earliest game starts — after that it's locked, and you can't change it." },
   { n: 4, title: "Win and you go through", body: "Your team has to win in normal time (90 minutes — extra time and penalties don't count)." },
@@ -85,7 +85,7 @@ export function EliminatorRulesSheet({ open, onClose }: { open: boolean; onClose
           </div>
 
           <p className="mt-5 border-t border-white/10 pt-4 text-center font-['Barlow_Condensed'] text-[1.05rem] font-bold uppercase tracking-[0.04em] text-emerald-200">
-            Pick a winner. Survive the round. Be the last player standing.
+            Pick a winner. Survive the round. Outlast the field.
           </p>
         </div>
       </div>

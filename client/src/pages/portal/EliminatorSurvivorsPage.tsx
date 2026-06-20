@@ -2,7 +2,7 @@
 EliminatorSurvivorsPage (step e5b) — the still-in / out board at
 /eliminator/:slug/survivors.
 
-Two lists: who's still standing and who's out (newest knockouts first, with the
+Two lists: who's still in and who's out (newest knockouts first, with the
 round they fell and the team that did it). Current-round picks stay hidden until
 the round locks — the server only sends them once locked, and we show a note
 while they're hidden. Same access gate as the league table: public once the game
@@ -98,7 +98,7 @@ export default function EliminatorSurvivorsPage() {
 
       <div className="px-5">
         {/* Still in */}
-        <SectionLabel>{settled ? "Winners" : "Still standing"}</SectionLabel>
+        <SectionLabel>{settled ? "Winners" : "Still in"}</SectionLabel>
 
         {data.picksHidden && !settled && (
           <p className="mb-2 inline-flex items-center gap-1.5 font-['Manrope'] text-[0.72rem] text-white/40">
@@ -108,7 +108,7 @@ export default function EliminatorSurvivorsPage() {
         )}
 
         {data.stillIn.length === 0 ? (
-          <EmptyRow>Nobody left standing.</EmptyRow>
+          <EmptyRow>Nobody left in.</EmptyRow>
         ) : (
           <ul className="m-0 list-none space-y-1.5 p-0">
             {data.stillIn.map((s) => (

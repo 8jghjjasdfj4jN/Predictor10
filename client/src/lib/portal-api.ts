@@ -684,7 +684,7 @@ export async function hidePoolMessage(messageId: string, reason?: string): Promi
 
 // ── WC CHAT (temporary) ── end
 
-// ─── Eliminator10 (last player standing) ─────────────────────────────────
+// ─── Eliminator10 (elimination game) ─────────────────────────────────────
 
 export type EliminatorEntryState = "none" | "alive" | "eliminated" | "won";
 export type EliminatorPickSide = "home" | "away";

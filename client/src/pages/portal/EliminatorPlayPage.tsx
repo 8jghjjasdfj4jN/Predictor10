@@ -193,7 +193,7 @@ export default function EliminatorPlayPage() {
           {(entered || settled) && (
             <Link
               href={`/eliminator/${slug}/survivors`}
-              className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 font-['Manrope'] text-[0.72rem] font-semibold text-white/70 transition hover:bg-white/[0.06] hover:text-white"
+              className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500 px-3 py-1.5 font-['Manrope'] text-[0.72rem] font-bold text-[#0b1f14] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] transition hover:bg-emerald-400 active:bg-emerald-600"
             >
               <Users className="h-3.5 w-3.5" aria-hidden />
               Survivors
@@ -202,7 +202,7 @@ export default function EliminatorPlayPage() {
           <button
             type="button"
             onClick={() => setRulesOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 font-['Manrope'] text-[0.72rem] font-semibold text-white/70 transition hover:bg-white/[0.06] hover:text-white"
+            className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500 px-3 py-1.5 font-['Manrope'] text-[0.72rem] font-bold text-[#0b1f14] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] transition hover:bg-emerald-400 active:bg-emerald-600"
           >
             <BookOpen className="h-3.5 w-3.5" aria-hidden />
             Rules
@@ -212,7 +212,7 @@ export default function EliminatorPlayPage() {
 
       <div className="px-5 pt-4">
         <p className="m-0 mb-1.5 font-['Manrope'] text-[0.6875rem] font-bold uppercase tracking-[0.32em] text-emerald-300/70">
-          {ov.isFree ? "Free · last player standing" : "Last player standing"}
+          {ov.isFree ? "Free · elimination game" : "Elimination game"}
         </p>
         <h1 className="m-0 font-['Barlow_Condensed'] text-[2rem] font-extrabold uppercase leading-[0.95] tracking-[0.01em] text-white">
           {ov.name}
@@ -303,7 +303,7 @@ function JoinView({
         <span className="font-semibold text-emerald-200">
           {overview.isFree ? "Free to play" : `£${parseFloat(overview.entryFee).toFixed(2)} to enter`}
         </span>{" "}
-        — last one standing wins.
+        — outlast everyone to win.
       </p>
 
       {currentRound && <StartsNote round={currentRound} leadLabel="First round starts" />}
@@ -351,7 +351,7 @@ function EliminatedView({ overview }: { overview: EliminatorOverview }) {
         {reason ? ` — ${reason}.` : "."}
       </p>
       <p className="m-0 mt-3 font-['Manrope'] text-[0.8rem] text-white/45">
-        <span className="font-semibold text-emerald-200">{overview.aliveCount}</span> still standing.
+        <span className="font-semibold text-emerald-200">{overview.aliveCount}</span> still in.
       </p>
     </div>
   );
@@ -373,7 +373,7 @@ function SettledView({ overview }: { overview: EliminatorOverview }) {
             You won
           </p>
           <p className="m-0 mt-1.5 font-['Manrope'] text-[0.85rem] text-white/65">
-            Last one standing. Nice.
+            You outlasted the field. Nice.
           </p>
         </>
       ) : (

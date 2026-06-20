@@ -1,7 +1,7 @@
 /*
 Eliminator10 — play data layer (step e3).
 
-The last-player-standing game's server side. Mirrors the pools' conventions:
+The elimination game's server side. Mirrors the pools' conventions:
 discriminated { ok } results mapped to HTTP at the route layer, the 23505
 unique-violation backstop on entry creation, deadline-as-the-authoritative-lock
 (arch §13 Rule #7), and the settled-public / live-entrant access gate used by
