@@ -25,7 +25,12 @@ import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { AlarmClock, ArrowRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { fetchMyEntries, type UserEntry } from "@/lib/portal-api";
+import {
+  fetchEliminatorOverviews,
+  fetchMyEntries,
+  type EliminatorOverview,
+  type UserEntry,
+} from "@/lib/portal-api";
 
 // ─── Formatters ──────────────────────────────────────────────────────────
 
@@ -239,6 +244,49 @@ function TournamentCard({ entry }: { entry: UserEntry }) {
   );
 }
 
+// ─── Eliminator strip (a pick that's due) ─────────────────────────
+//
+// The act-now home for the Eliminator mode. Surfaces only games the user is
+// in where the current round is open and no pick is in yet — so a due pick
+// floats to the top of Predict instead of being buried behind Home → lobby.
+// Each row deep-links to the play screen.
+
+function ElimRow({ ov, nowMs }: { ov: EliminatorOverview; nowMs: number }) {
+  const round = ov.currentRound;
+  const cd = round ? formatCountdown(round.deadlineAt, nowMs) : "";
+  const lockLabel = cd === "Closing now" ? "locking now" : `locks in ${cd}`;
+  return (
+    <article className="relative overflow-hidden rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.06] px-4 pb-3.5 pt-3.5">
+      <CornerGlow tone="emerald" />
+      <h2 className="m-0 mb-1 font-['Barlow_Condensed'] text-[1.25rem] font-bold uppercase leading-[1.05] tracking-[0.02em] text-white">
+        {ov.name}
+      </h2>
+      <p className="m-0 font-['Manrope'] text-[0.78rem] text-white/55">
+        {round ? round.name : "Pick due"}
+        {round && (
+          <>
+            <span aria-hidden className="mx-1.5 text-white/30">·</span>
+            {lockLabel}
+          </>
+        )}
+      </p>
+      <Link
+        href={`/eliminator/${ov.slug}`}
+        className={cn(
+          "mt-3.5 flex w-full items-center justify-center gap-2 rounded-[10px] px-4 py-3",
+          "bg-emerald-500 font-['Manrope'] text-[0.84rem] font-bold text-[#0b1f14]",
+          "shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] transition",
+          "hover:bg-emerald-400 active:bg-emerald-600",
+          "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60",
+        )}
+      >
+        <span>Make your pick</span>
+        <ArrowRight className="h-4 w-4" aria-hidden />
+      </Link>
+    </article>
+  );
+}
+
 // ─── Section group ───────────────────────────────────────────────────────
 
 function SectionGroup({
@@ -274,15 +322,21 @@ const CLOSING_SOON_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 export default function PredictPage() {
   const [entries, setEntries] = useState<UserEntry[] | null>(null);
+  const [eliminators, setEliminators] = useState<EliminatorOverview[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     let cancelled = false;
-    fetchMyEntries()
-      .then((list) => {
+    Promise.all([
+      fetchMyEntries(),
+      // Tolerate absence — a missing Eliminator feed must not break Predict.
+      fetchEliminatorOverviews().catch(() => [] as EliminatorOverview[]),
+    ])
+      .then(([list, elims]) => {
         if (cancelled) return;
         setEntries(list);
+        setEliminators(elims);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -317,7 +371,16 @@ export default function PredictPage() {
     );
   }
 
-  if (entries.length === 0) {
+  // Eliminator picks that are due right now (you're alive, round open, no pick in).
+  const elimDue = eliminators.filter(
+    (e) =>
+      e.entry.state === "alive" &&
+      e.currentRound !== null &&
+      !e.currentRound.isLocked &&
+      e.currentRound.needsPick,
+  );
+
+  if (entries.length === 0 && elimDue.length === 0) {
     return (
       <div className="px-4 pb-8">
         <PageHeading />
@@ -368,6 +431,14 @@ export default function PredictPage() {
   return (
     <div className="px-4 pb-8">
       <PageHeading />
+
+      {elimDue.length > 0 && (
+        <SectionGroup title="Elimination game">
+          {elimDue.map((ov) => (
+            <ElimRow key={ov.slug} ov={ov} nowMs={nowMs} />
+          ))}
+        </SectionGroup>
+      )}
 
       {closingSoon.length > 0 && (
         <SectionGroup title="Closing soon" urgent>

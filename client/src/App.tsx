@@ -37,6 +37,7 @@ import AccountPage from "./pages/portal/AccountPage";
 import AccountHistoryPage from "./pages/portal/AccountHistoryPage";
 import AdminPage from "./pages/portal/AdminPage";
 import EnterPage from "./pages/portal/EnterPage";
+import EliminatorLobbyPage from "./pages/portal/EliminatorLobbyPage";
 import EliminatorPlayPage from "./pages/portal/EliminatorPlayPage";
 import EliminatorSurvivorsPage from "./pages/portal/EliminatorSurvivorsPage";
 
@@ -100,6 +101,7 @@ function PortalRouter() {
 
         {/* Tournament entry confirm (arch §8.6.1, step 3a.7) */}
         <Route path="/enter/:competitionSlug" component={EnterPage} />
+        <Route path="/eliminator" component={EliminatorLobbyPage} />
         <Route path="/eliminator/:slug/survivors" component={EliminatorSurvivorsPage} />
         <Route path="/eliminator/:slug" component={EliminatorPlayPage} />
 

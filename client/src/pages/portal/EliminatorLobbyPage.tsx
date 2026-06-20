@@ -1,0 +1,499 @@
+/*
+EliminatorLobbyPage (step 3b.1) — the Eliminator10 game-mode hub at
+`/eliminator`.
+
+Home no longer lists one card per Eliminator game. Instead Home shows a
+single "Eliminator10" mode tile (More ways to play) that routes here. This
+lobby lists the real games, bucketed into four tabs, and a prominent
+"starting next" banner so the most urgent thing — a pick that's due, or the
+soonest game to join — grabs attention the moment the lobby opens. This is
+the model that stays clean once weekly PL eliminators run in parallel.
+
+Tabs (arch §22):
+  Your games   — games you hold an entry in that are still live (alive or
+                 eliminated-but-running). Settled ones move to Finished.
+  Open to join — games you're not in that are still joinable.
+  In progress  — games running that you're not in (watch the survivors board).
+  Finished     — settled games (your result shown if you played).
+
+Banner priority:
+  1. A pick that's due (alive · current round open · not yet picked) — soonest
+     deadline first. CTA → the play screen.
+  2. Else the soonest game open to join. CTA → the play screen (which handles
+     the join).
+  3. Else no banner.
+
+Data: GET /api/eliminator (fetchEliminatorOverviews) — viewer-aware. No new
+backend; this lobby buckets client-side. Rows deep-link to the existing play
+screen (/eliminator/:slug) and survivors board (/eliminator/:slug/survivors).
+
+All games are free for the WC demo; the mode is built PL-ready (free now →
+real fee + 75/25 pot later) — no real money surfaces here pre-licence.
+*/
+
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "wouter";
+import { ArrowLeft, ArrowRight, Clock, Eye, Loader2, Lock, Trophy, Users } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  fetchEliminatorOverviews,
+  type EliminatorOverview,
+} from "@/lib/portal-api";
+
+// ─── Formatters ──────────────────────────────────────────────────────────
+
+const LOCK_FMT = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+function formatLock(iso: string): string {
+  return LOCK_FMT.format(new Date(iso));
+}
+
+function lockCountdown(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return "locked";
+  const totalMin = Math.floor(ms / 60000);
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor((totalMin % 1440) / 60);
+  const m = totalMin % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+// ─── Bucketing ───────────────────────────────────────────────────────────
+
+type Tab = "your" | "open" | "live" | "done";
+
+const TAB_ORDER: Tab[] = ["your", "open", "live", "done"];
+const TAB_LABEL: Record<Tab, string> = {
+  your: "Your games",
+  open: "Open to join",
+  live: "In progress",
+  done: "Finished",
+};
+
+/** Mutually-exclusive bucket for a game (first match wins). */
+function bucketOf(ov: EliminatorOverview): Tab {
+  if (ov.status === "settled") return "done";
+  if (ov.entry.state !== "none") return "your";
+  if (ov.canJoin) return "open";
+  return "live";
+}
+
+function sortYour(a: EliminatorOverview, b: EliminatorOverview): number {
+  // Alive before eliminated; within that, soonest deadline first.
+  const aAlive = a.entry.state === "alive" ? 0 : 1;
+  const bAlive = b.entry.state === "alive" ? 0 : 1;
+  if (aAlive !== bAlive) return aAlive - bAlive;
+  const ad = a.currentRound ? new Date(a.currentRound.deadlineAt).getTime() : Infinity;
+  const bd = b.currentRound ? new Date(b.currentRound.deadlineAt).getTime() : Infinity;
+  return ad - bd;
+}
+
+function sortByClose(a: EliminatorOverview, b: EliminatorOverview): number {
+  return new Date(a.entryClosesAt).getTime() - new Date(b.entryClosesAt).getTime();
+}
+
+// ─── Starting-next banner ────────────────────────────────────────────────
+
+type Banner =
+  | { kind: "pick"; ov: EliminatorOverview }
+  | { kind: "join"; ov: EliminatorOverview }
+  | null;
+
+function chooseBanner(list: EliminatorOverview[]): Banner {
+  const pickDue = list
+    .filter(
+      (o) =>
+        o.entry.state === "alive" &&
+        o.currentRound &&
+        !o.currentRound.isLocked &&
+        o.currentRound.needsPick,
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.currentRound!.deadlineAt).getTime() -
+        new Date(b.currentRound!.deadlineAt).getTime(),
+    );
+  if (pickDue.length > 0) return { kind: "pick", ov: pickDue[0] };
+
+  const joinable = list.filter((o) => o.canJoin && o.entry.state === "none").sort(sortByClose);
+  if (joinable.length > 0) return { kind: "join", ov: joinable[0] };
+
+  return null;
+}
+
+// ─── Visual building blocks ──────────────────────────────────────────────
+
+function CornerGlow({ strong }: { strong: boolean }) {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute -right-10 -top-10 h-[120px] w-[120px]"
+      style={{
+        background: strong
+          ? "radial-gradient(circle at center, rgba(52, 211, 153, 0.18), transparent 70%)"
+          : "radial-gradient(circle at center, rgba(52, 211, 153, 0.10), transparent 70%)",
+      }}
+    />
+  );
+}
+
+function StartingNextBanner({ banner }: { banner: Banner }) {
+  if (!banner) return null;
+  const ov = banner.ov;
+  const href = `/eliminator/${ov.slug}`;
+
+  const eyebrow =
+    banner.kind === "pick"
+      ? ov.currentRound && ov.currentRound.ordinal === 1
+        ? "Starting next"
+        : "Pick due"
+      : "Open to join";
+
+  const title =
+    banner.kind === "pick" && ov.currentRound
+      ? `${ov.name} · ${ov.currentRound.name}`
+      : ov.name;
+
+  const whenIso =
+    banner.kind === "pick" && ov.currentRound ? ov.currentRound.deadlineAt : ov.entryClosesAt;
+  const whenLabel = banner.kind === "pick" ? "Picks lock" : "Entries close";
+
+  const cta =
+    banner.kind === "pick" ? "Make your pick" : ov.isFree ? "Join — free" : "Join";
+
+  return (
+    <article className="relative overflow-hidden rounded-2xl border border-emerald-400/55 bg-emerald-400/[0.12] px-[18px] pb-4 pt-[18px] ring-1 ring-inset ring-emerald-400/15">
+      <CornerGlow strong />
+      <p className="m-0 font-['Manrope'] text-[0.66rem] font-bold uppercase tracking-[0.18em] text-emerald-300/80">
+        {eyebrow}
+      </p>
+      <h2 className="m-0 mt-1 font-['Barlow_Condensed'] text-[1.5rem] font-extrabold uppercase leading-[1.04] tracking-[0.02em] text-white">
+        {title}
+      </h2>
+      <p className="m-0 mt-1.5 flex items-center gap-1.5 font-['Manrope'] text-[0.8rem] text-emerald-100/80">
+        <Clock className="h-3.5 w-3.5 flex-shrink-0" aria-hidden />
+        <span>
+          {whenLabel} {formatLock(whenIso)}
+          <span> · in {lockCountdown(whenIso)}</span>
+        </span>
+      </p>
+      <Link
+        href={href}
+        className={cn(
+          "mt-3.5 flex w-full items-center justify-center gap-2 rounded-[10px] px-4 py-3.5",
+          "bg-emerald-500 font-['Manrope'] text-sm font-bold text-[#0b1f14]",
+          "shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] transition",
+          "hover:bg-emerald-400 active:bg-emerald-600",
+          "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60",
+        )}
+      >
+        <span>{cta}</span>
+        <ArrowRight className="h-4 w-4" aria-hidden />
+      </Link>
+    </article>
+  );
+}
+
+// ─── Game row ────────────────────────────────────────────────────────────
+
+function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
+  const watch = tab === "live" || tab === "done";
+  const href = watch ? `/eliminator/${ov.slug}/survivors` : `/eliminator/${ov.slug}`;
+  const won = ov.entry.state === "won";
+
+  // Sub line per bucket.
+  let sub: React.ReactNode;
+  if (tab === "your") {
+    if (ov.entry.state === "alive") {
+      sub = (
+        <>
+          <span className="inline-flex items-center gap-1.5 text-emerald-200">
+            <Users className="h-3.5 w-3.5" aria-hidden />
+            Still in · {ov.aliveCount} of {ov.entrantCount} left
+          </span>
+          {ov.currentRound && !ov.currentRound.isLocked && (
+            <>
+              <span aria-hidden className="mx-1.5 text-white/25">·</span>
+              <span className={cn(ov.currentRound.needsPick ? "font-semibold text-emerald-300" : "text-white/55")}>
+                {ov.currentRound.needsPick ? "Pick due" : "Pick in"} · {lockCountdown(ov.currentRound.deadlineAt)}
+              </span>
+            </>
+          )}
+          {ov.currentRound && ov.currentRound.isLocked && (
+            <>
+              <span aria-hidden className="mx-1.5 text-white/25">·</span>
+              <span className="inline-flex items-center gap-1 text-white/55">
+                <Lock className="h-3 w-3" aria-hidden /> locked
+              </span>
+            </>
+          )}
+        </>
+      );
+    } else {
+      sub = <span className="text-white/55">You're out</span>;
+    }
+  } else if (tab === "open") {
+    sub = (
+      <span className="text-white/55">
+        {ov.isFree ? "Free" : "Paid"}
+        <span aria-hidden className="mx-1.5 text-white/25">·</span>
+        Entries close {formatLock(ov.entryClosesAt)}
+      </span>
+    );
+  } else if (tab === "live") {
+    sub = (
+      <span className="inline-flex items-center gap-1.5 text-white/55">
+        <Eye className="h-3.5 w-3.5" aria-hidden />
+        {ov.currentRound ? `${ov.currentRound.name} · ` : ""}
+        {ov.aliveCount} still in
+      </span>
+    );
+  } else {
+    // done
+    sub = won ? (
+      <span className="inline-flex items-center gap-1.5 font-semibold text-amber-200">
+        <Trophy className="h-3.5 w-3.5" aria-hidden />
+        You outlasted the field
+      </span>
+    ) : (
+      <span className="text-white/55">
+        Finished
+        <span aria-hidden className="mx-1.5 text-white/25">·</span>
+        {ov.entrantCount} played
+      </span>
+    );
+  }
+
+  const entered = ov.entry.state === "alive" || won;
+
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "group relative flex items-center gap-3 overflow-hidden rounded-xl border px-4 py-3.5 transition",
+        entered
+          ? "border-emerald-400/40 bg-emerald-400/[0.08] hover:bg-emerald-400/[0.12]"
+          : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]",
+        "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/40",
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="m-0 truncate font-['Barlow_Condensed'] text-[1.1rem] font-bold uppercase leading-tight tracking-[0.01em] text-white">
+          {ov.name}
+        </p>
+        <p className="m-0 mt-1 font-['Manrope'] text-[0.76rem] leading-[1.3] text-white/55">{sub}</p>
+      </div>
+      {tab === "open" ? (
+        <span className="flex-shrink-0 rounded-lg bg-emerald-500 px-3 py-2 font-['Manrope'] text-[0.76rem] font-bold text-[#0b1f14]">
+          {ov.isFree ? "Join" : "View"}
+        </span>
+      ) : watch ? (
+        <span className="flex-shrink-0 rounded-md border border-white/15 px-2.5 py-1.5 font-['Manrope'] text-[0.66rem] font-bold uppercase tracking-[0.1em] text-white/60">
+          {tab === "live" ? "Watch" : "Result"}
+        </span>
+      ) : (
+        <ArrowRight
+          className="h-4 w-4 flex-shrink-0 text-white/40 transition group-hover:translate-x-0.5 group-hover:text-white/70"
+          aria-hidden
+        />
+      )}
+    </Link>
+  );
+}
+
+// ─── Tab strip ───────────────────────────────────────────────────────────
+
+function TabStrip({
+  active,
+  counts,
+  onSelect,
+}: {
+  active: Tab;
+  counts: Record<Tab, number>;
+  onSelect: (t: Tab) => void;
+}) {
+  return (
+    <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {TAB_ORDER.map((t) => {
+        const isActive = t === active;
+        const count = counts[t];
+        return (
+          <button
+            key={t}
+            type="button"
+            onClick={() => onSelect(t)}
+            className={cn(
+              "flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 py-2",
+              "font-['Manrope'] text-[0.8rem] font-bold transition",
+              "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/50",
+              isActive
+                ? "border-emerald-400/60 bg-emerald-400/15 text-emerald-100"
+                : "border-white/10 bg-white/[0.03] text-white/55 hover:bg-white/[0.06]",
+            )}
+          >
+            <span>{TAB_LABEL[t]}</span>
+            {count > 0 && (
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-px text-[0.66rem] tabular-nums",
+                  isActive ? "bg-emerald-400/25 text-emerald-100" : "bg-white/10 text-white/50",
+                )}
+              >
+                {count}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function EmptyTab({ tab }: { tab: Tab }) {
+  const copy: Record<Tab, { title: string; body: string }> = {
+    your: { title: "You haven't joined a game yet.", body: "Check the Open to join tab to get started." },
+    open: { title: "Nothing open to join right now.", body: "New games appear here as they open." },
+    live: { title: "No games in progress.", body: "Running games you're watching show up here." },
+    done: { title: "No finished games yet.", body: "Completed games and results land here." },
+  };
+  const c = copy[tab];
+  return (
+    <div className="rounded-2xl border border-dashed border-white/10 px-5 py-9 text-center">
+      <p className="m-0 mb-1.5 font-['Manrope'] text-sm font-semibold text-white">{c.title}</p>
+      <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">{c.body}</p>
+    </div>
+  );
+}
+
+// ─── Heading ─────────────────────────────────────────────────────────────
+
+function LobbyHeading() {
+  return (
+    <div className="px-1 pt-5">
+      <Link
+        href="/"
+        className="mb-3 inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] font-semibold text-white/55 transition hover:text-white"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+        Home
+      </Link>
+      <p className="m-0 mb-1.5 font-['Manrope'] text-[0.6875rem] font-bold uppercase tracking-[0.32em] text-emerald-300/70">
+        Outlast the field
+      </p>
+      <h1 className="m-0 font-['Barlow_Condensed'] text-[2rem] font-extrabold uppercase leading-[0.95] tracking-[0.01em] text-white">
+        Eliminator10
+      </h1>
+    </div>
+  );
+}
+
+// ─── Page ────────────────────────────────────────────────────────────────
+
+export default function EliminatorLobbyPage() {
+  const [games, setGames] = useState<EliminatorOverview[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [active, setActive] = useState<Tab | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchEliminatorOverviews()
+      .then((list) => {
+        if (cancelled) return;
+        setGames(list.filter((g) => g.status !== "draft" && g.status !== "void"));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Couldn't load games.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const buckets = useMemo(() => {
+    const out: Record<Tab, EliminatorOverview[]> = { your: [], open: [], live: [], done: [] };
+    for (const g of games ?? []) out[bucketOf(g)].push(g);
+    out.your.sort(sortYour);
+    out.open.sort(sortByClose);
+    out.live.sort((a, b) => a.name.localeCompare(b.name));
+    out.done.sort((a, b) => a.name.localeCompare(b.name));
+    return out;
+  }, [games]);
+
+  const counts: Record<Tab, number> = {
+    your: buckets.your.length,
+    open: buckets.open.length,
+    live: buckets.live.length,
+    done: buckets.done.length,
+  };
+
+  // Default to the first non-empty tab (Your games wins when present).
+  const resolvedActive: Tab = active ?? TAB_ORDER.find((t) => counts[t] > 0) ?? "your";
+
+  const banner = useMemo(() => chooseBanner(games ?? []), [games]);
+
+  if (error) {
+    return (
+      <div className="px-4 py-8">
+        <LobbyHeading />
+        <p className="mt-4 font-['Manrope'] text-sm text-rose-200">{error}</p>
+      </div>
+    );
+  }
+
+  if (!games) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 px-4 py-12 text-white/50">
+        <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+        <p className="font-['Manrope'] text-xs">Loading…</p>
+      </div>
+    );
+  }
+
+  if (games.length === 0) {
+    return (
+      <div className="px-4 pb-8">
+        <LobbyHeading />
+        <div className="mx-1 mt-6 rounded-2xl border border-dashed border-white/10 px-6 py-9 text-center">
+          <p className="m-0 mb-2 font-['Manrope'] text-[0.95rem] font-semibold text-white">
+            No elimination games right now.
+          </p>
+          <p className="m-0 font-['Manrope'] text-[0.82rem] text-white/55">
+            Check back when the next game opens.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const rows = buckets[resolvedActive];
+
+  return (
+    <div className="px-4 pb-8">
+      <LobbyHeading />
+
+      <div className="mt-4 flex flex-col gap-4">
+        <StartingNextBanner banner={banner} />
+
+        <TabStrip active={resolvedActive} counts={counts} onSelect={setActive} />
+
+        <div className="flex flex-col gap-2.5">
+          {rows.length > 0 ? (
+            rows.map((ov) => <GameRow key={ov.slug} ov={ov} tab={resolvedActive} />)
+          ) : (
+            <EmptyTab tab={resolvedActive} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

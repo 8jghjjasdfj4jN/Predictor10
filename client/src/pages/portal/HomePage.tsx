@@ -436,88 +436,104 @@ function TournamentCard({ state }: { state: CompState }) {
   );
 }
 
-// ─── Eliminator10 card (elimination game) ───────────────────────────────
+// ─── Eliminator10 mode tile (More ways to play) ─────────────────
+//
+// Home shows ONE tile for the whole Eliminator mode (not a card per game).
+// It summarises across every active game and routes to the lobby
+// (/eliminator), where games are bucketed into tabs. This keeps Home tidy
+// once weekly PL eliminators run in parallel, and gives future game modes a
+// natural home below the competitions.
 
-function EliminatorCard({ overview }: { overview: EliminatorOverview }) {
-  const [rulesOpen, setRulesOpen] = useState(false);
-  const ov = overview;
-  const entered = ov.entry.state !== "none";
-  const settled = ov.status === "settled";
-  const href = `/eliminator/${ov.slug}`;
-
-  let ctaLabel: string;
-  let ctaPrimary = true;
-  if (settled) {
-    ctaLabel = ov.entry.state === "won" ? "You won — view" : "View result";
-    ctaPrimary = ov.entry.state === "won";
-  } else if (ov.entry.state === "none") {
-    ctaLabel = ov.canJoin ? (ov.isFree ? "Join — free" : "Join") : "View game";
-    ctaPrimary = ov.canJoin;
-  } else if (ov.entry.state === "eliminated") {
-    ctaLabel = "You're out — view";
-    ctaPrimary = false;
-  } else {
-    // alive
-    ctaLabel = ov.currentRound?.needsPick ? "Make your pick" : "Open game";
+function startingNextNote(games: EliminatorOverview[]): {
+  eyebrow: string;
+  iso: string;
+  label: string;
+} | null {
+  const pickDue = games
+    .filter(
+      (g) =>
+        g.entry.state === "alive" &&
+        g.currentRound &&
+        !g.currentRound.isLocked &&
+        g.currentRound.needsPick,
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.currentRound!.deadlineAt).getTime() -
+        new Date(b.currentRound!.deadlineAt).getTime(),
+    );
+  if (pickDue[0] && pickDue[0].currentRound) {
+    const r = pickDue[0].currentRound;
+    return {
+      eyebrow: r.ordinal === 1 ? "Starting soon" : "Pick due",
+      iso: r.deadlineAt,
+      label: "Picks lock",
+    };
   }
+  const joinable = games
+    .filter((g) => g.canJoin && g.entry.state === "none")
+    .sort((a, b) => new Date(a.entryClosesAt).getTime() - new Date(b.entryClosesAt).getTime());
+  if (joinable[0]) {
+    return { eyebrow: "Open to join", iso: joinable[0].entryClosesAt, label: "Entries close" };
+  }
+  return null;
+}
+
+function EliminatorModeTile({ overviews }: { overviews: EliminatorOverview[] }) {
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const games = overviews;
+  const aliveCount = games.filter((g) => g.entry.state === "alive").length;
+  const wonCount = games.filter((g) => g.entry.state === "won").length;
+  const joinCount = games.filter((g) => g.canJoin && g.entry.state === "none").length;
+  const allFree = games.length > 0 && games.every((g) => g.isFree);
+  const entered = aliveCount > 0 || wonCount > 0;
+  const note = startingNextNote(games);
 
   return (
     <CardShell entered={entered}>
-      <CardHeader title={ov.name} badge={ov.isFree ? "Free" : null} />
+      <CardHeader title="Eliminator10" badge={allFree ? "Free" : null} />
 
       <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
         <span className="font-semibold text-white">Elimination game</span>
         <span aria-hidden className="mx-1.5 text-white/30">·</span>
-        pick a winner each round
+        outlast the field
       </p>
 
-      {ov.entrantCount > 0 && (
-        <p className="m-0 mt-1.5 inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] text-white/55">
-          <Users className="h-3.5 w-3.5 flex-shrink-0" aria-hidden />
-          <span className="font-semibold text-emerald-200">{ov.aliveCount}</span> still in
-          <span aria-hidden className="text-white/25">·</span>
-          {ov.entrantCount} joined
-        </p>
-      )}
-
-      {entered && ov.entry.state === "alive" && <YoureInLine>You're in</YoureInLine>}
-      {entered && ov.entry.state === "won" && (
+      {aliveCount > 0 ? (
+        <YoureInLine>
+          You're still in {aliveCount} {aliveCount === 1 ? "game" : "games"}
+        </YoureInLine>
+      ) : wonCount > 0 ? (
         <p className="m-0 mt-1.5 inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] font-semibold text-amber-200">
           <Trophy className="h-3.5 w-3.5 flex-shrink-0" aria-hidden />
-          You won
+          You outlasted the field
         </p>
-      )}
+      ) : joinCount > 0 ? (
+        <p className="m-0 mt-1.5 inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] text-white/55">
+          <Users className="h-3.5 w-3.5 flex-shrink-0" aria-hidden />
+          <span className="font-semibold text-emerald-200">{joinCount}</span>
+          {joinCount === 1 ? " game" : " games"} open to join
+        </p>
+      ) : null}
 
-      {/* The "when it starts" note — current round lock day/time + countdown. */}
-      {!settled && ov.currentRound && (
+      {note && (
         <div className="my-3 rounded-[10px] border border-white/[0.04] bg-black/25 px-3.5 py-3 font-['Manrope'] text-[0.78rem] leading-[1.5] text-white/55">
-          <span className="font-semibold uppercase tracking-[0.14em] text-emerald-300/70 text-[0.66rem]">
-            {ov.currentRound.ordinal === 1 && !ov.currentRound.isLocked
-              ? "Starting soon"
-              : `Round ${ov.currentRound.ordinal}`}
+          <span className="text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-emerald-300/70">
+            {note.eyebrow}
           </span>
           <br />
           <span className="text-white">
-            Picks lock {formatLock(ov.currentRound.deadlineAt)}
+            {note.label} {formatLock(note.iso)}
           </span>
-          {!ov.currentRound.isLocked && (
-            <span> · in {lockCountdown(ov.currentRound.deadlineAt)}</span>
-          )}
+          <span> · in {lockCountdown(note.iso)}</span>
         </div>
       )}
 
-      <div className="mt-1 flex flex-col gap-2">
-        {ctaPrimary ? (
-          <PrimaryButton href={href}>
-            <span>{ctaLabel}</span>
-            <ArrowRight className="h-4 w-4" aria-hidden />
-          </PrimaryButton>
-        ) : (
-          <GhostButton href={href}>
-            <span>{ctaLabel}</span>
-          </GhostButton>
-        )}
-
+      <div className={cn(note ? "mt-1" : "mt-4", "flex flex-col gap-2")}>
+        <PrimaryButton href="/eliminator">
+          <span>View games</span>
+          <ArrowRight className="h-4 w-4" aria-hidden />
+        </PrimaryButton>
         <button
           type="button"
           onClick={() => setRulesOpen(true)}
@@ -534,6 +550,16 @@ function EliminatorCard({ overview }: { overview: EliminatorOverview }) {
 
       <EliminatorRulesSheet open={rulesOpen} onClose={() => setRulesOpen(false)} />
     </CardShell>
+  );
+}
+
+function MoreWaysHeading() {
+  return (
+    <div className="px-5 pb-1 pt-7">
+      <h2 className="m-0 font-['Barlow_Condensed'] text-[1.5rem] font-extrabold uppercase leading-[1] tracking-[0.01em] text-white">
+        More ways to play
+      </h2>
+    </div>
   );
 }
 
@@ -650,8 +676,8 @@ export default function HomePage() {
   return (
     <div className="pb-6">
       <PageHeading />
-      {(cards.length > 0 || showElim) && (
-        <div className="flex flex-col gap-3 px-4 pb-6 pt-2">
+      {cards.length > 0 && (
+        <div className="flex flex-col gap-3 px-4 pt-2">
           {cards.map((state) =>
             state.competition.postponedPolicy === "forfeit" ? (
               <TournamentCard key={state.competition.id} state={state} />
@@ -659,10 +685,15 @@ export default function HomePage() {
               <LeagueCard key={state.competition.id} state={state} />
             ),
           )}
-          {elims.map((ov) => (
-            <EliminatorCard key={ov.slug} overview={ov} />
-          ))}
         </div>
+      )}
+      {showElim && (
+        <>
+          <MoreWaysHeading />
+          <div className="flex flex-col gap-3 px-4 pt-2">
+            <EliminatorModeTile overviews={elims} />
+          </div>
+        </>
       )}
       {showNothingOpen && <EmptyNothingOpen />}
       <PrizeFundNote />
