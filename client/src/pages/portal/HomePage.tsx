@@ -563,20 +563,28 @@ function MoreWaysHeading() {
   );
 }
 
-// ─── Upcoming competition card (display-only, step 3b.3) ────────────
+// ─── Upcoming competition cards (display-only, step 3b.3) ───────────
 //
-// The new Premier League season fixtures are announced but entry isn't open
-// yet. This is a teaser only — no CTA, not tappable — so players see it's
-// coming. When PL is seeded active with open Round 1 pools it renders through
-// the normal LeagueCard instead, and this card is suppressed (hasActivePL).
-// Tiers locked at £10 / £25 / £50 per round (architecture §3).
+// New-season competitions whose fixtures are announced but entry isn't open
+// yet. Teaser only — no CTA, not tappable. Sits at the bottom of Home, below
+// the game modes. Each is suppressed once a real active competition with open
+// Round 1 pools is in the data (then it renders through the normal LeagueCard).
+// League tiers locked at £10 / £25 / £50 per round (architecture §3).
 
-function UpcomingPremierLeagueCard() {
+function UpcomingCompetitionCard({
+  name,
+  detail,
+  footer,
+}: {
+  name: string;
+  detail: string;
+  footer: string;
+}) {
   return (
     <article className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] px-[18px] pb-4 pt-[18px]">
       <header className="mb-1 flex items-start justify-between gap-3">
         <h2 className="m-0 font-['Barlow_Condensed'] text-[1.375rem] font-extrabold uppercase leading-[1.05] tracking-[0.02em] text-white/85">
-          Premier League
+          {name}
         </h2>
         <span className="whitespace-nowrap rounded-md border border-white/15 bg-white/[0.04] px-2 py-1 font-['Manrope'] text-[0.625rem] font-bold uppercase tracking-[0.14em] text-white/60">
           Upcoming
@@ -586,7 +594,7 @@ function UpcomingPremierLeagueCard() {
       <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">
         <span className="font-semibold text-white/80">New season</span>
         <span aria-hidden className="mx-1.5 text-white/25">·</span>
-        fixtures announced
+        {detail}
       </p>
 
       <div className="my-3 rounded-[10px] border border-white/[0.04] bg-black/25 px-3.5 py-3 font-['Manrope'] text-[0.78rem] leading-[1.55] text-white/55">
@@ -596,9 +604,19 @@ function UpcomingPremierLeagueCard() {
 
       <p className="m-0 inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] font-semibold text-white/45">
         <Clock className="h-3.5 w-3.5 flex-shrink-0" aria-hidden />
-        Entry opens before Gameweek 1
+        {footer}
       </p>
     </article>
+  );
+}
+
+function UpcomingHeading() {
+  return (
+    <div className="px-5 pb-1 pt-7">
+      <h2 className="m-0 font-['Barlow_Condensed'] text-[1.5rem] font-extrabold uppercase leading-[1] tracking-[0.01em] text-white">
+        Upcoming
+      </h2>
+    </div>
   );
 }
 
@@ -719,25 +737,53 @@ export default function HomePage() {
       s.competition.slug.toLowerCase().includes("premier") ||
       /premier league/i.test(s.competition.name),
   );
+  const hasActiveChamp = cards.some(
+    (s) =>
+      s.competition.slug.toLowerCase().includes("championship") ||
+      /championship/i.test(s.competition.name),
+  );
+  const showUpcoming = !hasActivePL || !hasActiveChamp;
 
   return (
     <div className="pb-6">
       <PageHeading />
-      <div className="flex flex-col gap-3 px-4 pt-2">
-        {cards.map((state) =>
-          state.competition.postponedPolicy === "forfeit" ? (
-            <TournamentCard key={state.competition.id} state={state} />
-          ) : (
-            <LeagueCard key={state.competition.id} state={state} />
-          ),
-        )}
-        {!hasActivePL && <UpcomingPremierLeagueCard />}
-      </div>
+      {cards.length > 0 && (
+        <div className="flex flex-col gap-3 px-4 pt-2">
+          {cards.map((state) =>
+            state.competition.postponedPolicy === "forfeit" ? (
+              <TournamentCard key={state.competition.id} state={state} />
+            ) : (
+              <LeagueCard key={state.competition.id} state={state} />
+            ),
+          )}
+        </div>
+      )}
       {showElim && (
         <>
           <MoreWaysHeading />
           <div className="flex flex-col gap-3 px-4 pt-2">
             <EliminatorModeTile overviews={elims} />
+          </div>
+        </>
+      )}
+      {showUpcoming && (
+        <>
+          <UpcomingHeading />
+          <div className="flex flex-col gap-3 px-4 pt-2">
+            {!hasActivePL && (
+              <UpcomingCompetitionCard
+                name="Premier League"
+                detail="fixtures announced"
+                footer="Entry opens before Gameweek 1"
+              />
+            )}
+            {!hasActiveChamp && (
+              <UpcomingCompetitionCard
+                name="Championship"
+                detail="coming soon"
+                footer="Entry opens for the new season"
+              />
+            )}
           </div>
         </>
       )}

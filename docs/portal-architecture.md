@@ -94,7 +94,7 @@ From step 3b.3 onwards there are **3 tiers per competition per Round** for leagu
 
 **The Fiver (£5) was retired in step 3b.3.** Same fee-margin reasoning as The Pound — small stakes don't clear Stripe/merchant fees against the 75% player pool. League-style competitions (PL, Champ) now run **three tiers — Tenner (£10), Pony (£25), Big One (£50)**. The `leagues.slug='fiver'` row stays in the DB marked `is_active=false` (applied when PL Round 1 is seeded; no live Fiver pool exists today).
 
-**Premier League on Home (step 3b.3).** The new-season fixtures are announced but entry isn't open yet, so PL shows on Home as an **Upcoming, display-only card** — no CTA, not tappable — listing the three tiers (£10 / £25 / £50 per round). It is a static teaser (`UpcomingPremierLeagueCard` in `HomePage.tsx`), suppressed automatically once a real active PL competition with open Round 1 pools is in the data (then it renders through the normal `LeagueCard`).
+**Upcoming competitions on Home (step 3b.3).** New-season competitions whose fixtures are announced but whose entry isn't open yet show on Home as **Upcoming, display-only cards** — no CTA, not tappable — grouped under an *Upcoming* heading at the **bottom** of Home, below the game-modes band. Premier League and Championship both appear there (PL first, Championship below), each listing the three tiers (£10 / £25 / £50 per round). They are static teasers (`UpcomingCompetitionCard` in `HomePage.tsx`), each suppressed automatically once a real active competition with open Round 1 pools is in the data (then it renders through the normal `LeagueCard`).
 
 Tier visibility: all three PL/Champ tiers are visible to every user from day one. No progressive unlock. Tier choice is the user's.
 
