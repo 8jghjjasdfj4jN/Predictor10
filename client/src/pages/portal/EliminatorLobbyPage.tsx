@@ -2,25 +2,30 @@
 EliminatorLobbyPage (step 3b.1) — the Eliminator10 game-mode hub at
 `/eliminator`.
 
-Home no longer lists one card per Eliminator game. Instead Home shows a
-single "Eliminator10" mode tile (More ways to play) that routes here. This
-lobby lists the real games, bucketed into four tabs, and a prominent
-"starting next" banner so the most urgent thing — a pick that's due, or the
-soonest game to join — grabs attention the moment the lobby opens. This is
-the model that stays clean once weekly PL eliminators run in parallel.
+Home shows a single "Eliminator10" mode tile (More ways to play) that routes
+here. This lobby lists the real games, bucketed into three tabs, with a
+prominent "starting next" banner so the most urgent thing — a pick that's
+due, or the soonest game to join — grabs attention the moment the lobby
+opens. This is the model that stays clean once weekly PL eliminators run in
+parallel.
 
-Tabs (arch §22):
+Tabs (step 3b.2 — trimmed from four to three):
   Your games   — games you hold an entry in that are still live (alive or
                  eliminated-but-running). Settled ones move to Finished.
-  Open to join — games you're not in that are still joinable.
-  In progress  — games running that you're not in (watch the survivors board).
+  Open to join — games you're not in that are still joinable. Entry stays
+                 open right up to the first kick-off, so this is also the
+                 "what's coming" list; each card shows the join deadline.
   Finished     — settled games (your result shown if you played).
+
+A running game you're NOT in (entry closed, can't join) isn't shown — there's
+no action to take on it — until it settles and appears under Finished. (The
+old "In progress" spectator tab was dropped: watching a game with no stake
+added little, and your own running games already sit under Your games.)
 
 Banner priority:
   1. A pick that's due (alive · current round open · not yet picked) — soonest
      deadline first. CTA → the play screen.
-  2. Else the soonest game open to join. CTA → the play screen (which handles
-     the join).
+  2. Else the soonest game open to join. CTA → the play screen (handles join).
   3. Else no banner.
 
 Data: GET /api/eliminator (fetchEliminatorOverviews) — viewer-aware. No new
@@ -33,7 +38,7 @@ real fee + 75/25 pot later) — no real money surfaces here pre-licence.
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, ArrowRight, ArrowUp, Clock, Eye, Loader2, Lock, Trophy, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUp, Clock, Loader2, Lock, Trophy, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   fetchEliminatorOverviews,
@@ -69,22 +74,25 @@ function lockCountdown(iso: string): string {
 
 // ─── Bucketing ───────────────────────────────────────────────────────────
 
-type Tab = "your" | "open" | "live" | "done";
+type Tab = "your" | "open" | "done";
 
-const TAB_ORDER: Tab[] = ["your", "open", "live", "done"];
+const TAB_ORDER: Tab[] = ["your", "open", "done"];
 const TAB_LABEL: Record<Tab, string> = {
   your: "Your games",
   open: "Open to join",
-  live: "In progress",
   done: "Finished",
 };
 
-/** Mutually-exclusive bucket for a game (first match wins). */
-function bucketOf(ov: EliminatorOverview): Tab {
+/**
+ * Mutually-exclusive bucket for a game (first match wins). Returns null for a
+ * game that's running, you're not in, and can no longer join — there's no
+ * action, so it isn't shown until it settles into Finished.
+ */
+function bucketOf(ov: EliminatorOverview): Tab | null {
   if (ov.status === "settled") return "done";
   if (ov.entry.state !== "none") return "your";
   if (ov.canJoin) return "open";
-  return "live";
+  return null;
 }
 
 function sortYour(a: EliminatorOverview, b: EliminatorOverview): number {
@@ -165,7 +173,7 @@ function StartingNextBanner({ banner }: { banner: Banner }) {
 
   const whenIso =
     banner.kind === "pick" && ov.currentRound ? ov.currentRound.deadlineAt : ov.entryClosesAt;
-  const whenLabel = banner.kind === "pick" ? "Picks lock" : "Entries close";
+  const whenLabel = banner.kind === "pick" ? "Picks lock" : "Joins close";
 
   const cta =
     banner.kind === "pick" ? "Make your pick" : ov.isFree ? "Join — free" : "Join";
@@ -206,11 +214,10 @@ function StartingNextBanner({ banner }: { banner: Banner }) {
 // ─── Game row ────────────────────────────────────────────────────────────
 
 function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
-  const watch = tab === "live" || tab === "done";
+  const watch = tab === "done";
   const href = watch ? `/eliminator/${ov.slug}/survivors` : `/eliminator/${ov.slug}`;
   const won = ov.entry.state === "won";
 
-  // Sub line per bucket.
   let sub: React.ReactNode;
   if (tab === "your") {
     if (ov.entry.state === "alive") {
@@ -246,15 +253,7 @@ function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
       <span className="text-white/55">
         {ov.isFree ? "Free" : "Paid"}
         <span aria-hidden className="mx-1.5 text-white/25">·</span>
-        Entries close {formatLock(ov.entryClosesAt)}
-      </span>
-    );
-  } else if (tab === "live") {
-    sub = (
-      <span className="inline-flex items-center gap-1.5 text-white/55">
-        <Eye className="h-3.5 w-3.5" aria-hidden />
-        {ov.currentRound ? `${ov.currentRound.name} · ` : ""}
-        {ov.aliveCount} still in
+        Joins close {formatLock(ov.entryClosesAt)}
       </span>
     );
   } else {
@@ -298,7 +297,7 @@ function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
         </span>
       ) : watch ? (
         <span className="flex-shrink-0 rounded-md border border-white/15 px-2.5 py-1.5 font-['Manrope'] text-[0.66rem] font-bold uppercase tracking-[0.1em] text-white/60">
-          {tab === "live" ? "Watch" : "Result"}
+          Result
         </span>
       ) : (
         <ArrowRight
@@ -322,7 +321,7 @@ function TabStrip({
   onSelect: (t: Tab) => void;
 }) {
   return (
-    <div className="grid grid-cols-4 gap-1.5">
+    <div className="grid grid-cols-3 gap-1.5">
       {TAB_ORDER.map((t) => {
         const isActive = t === active;
         const count = counts[t];
@@ -332,8 +331,8 @@ function TabStrip({
             type="button"
             onClick={() => onSelect(t)}
             className={cn(
-              "flex min-h-[44px] flex-wrap items-center justify-center gap-1 rounded-xl border px-1.5 py-2 text-center",
-              "font-['Manrope'] text-[0.72rem] font-bold leading-[1.15] transition",
+              "flex min-h-[44px] flex-wrap items-center justify-center gap-1 rounded-xl border px-2 py-2 text-center",
+              "font-['Manrope'] text-[0.8rem] font-bold leading-[1.15] transition",
               "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/50",
               isActive
                 ? "border-emerald-400/60 bg-emerald-400/15 text-emerald-100"
@@ -362,7 +361,6 @@ function EmptyTab({ tab }: { tab: Tab }) {
   const copy: Record<Tab, { title: string; body: string }> = {
     your: { title: "You haven't joined a game yet.", body: "Check the Open to join tab to get started." },
     open: { title: "Nothing open to join right now.", body: "New games appear here as they open." },
-    live: { title: "No games in progress.", body: "Running games you're watching show up here." },
     done: { title: "No finished games yet.", body: "Completed games and results land here." },
   };
   const c = copy[tab];
@@ -433,11 +431,13 @@ export default function EliminatorLobbyPage() {
   }, []);
 
   const buckets = useMemo(() => {
-    const out: Record<Tab, EliminatorOverview[]> = { your: [], open: [], live: [], done: [] };
-    for (const g of games ?? []) out[bucketOf(g)].push(g);
+    const out: Record<Tab, EliminatorOverview[]> = { your: [], open: [], done: [] };
+    for (const g of games ?? []) {
+      const b = bucketOf(g);
+      if (b) out[b].push(g);
+    }
     out.your.sort(sortYour);
     out.open.sort(sortByClose);
-    out.live.sort((a, b) => a.name.localeCompare(b.name));
     out.done.sort((a, b) => a.name.localeCompare(b.name));
     return out;
   }, [games]);
@@ -449,7 +449,6 @@ export default function EliminatorLobbyPage() {
   const counts: Record<Tab, number> = {
     your: buckets.your.length,
     open: buckets.open.length,
-    live: buckets.live.length,
     done: buckets.done.length,
   };
 
