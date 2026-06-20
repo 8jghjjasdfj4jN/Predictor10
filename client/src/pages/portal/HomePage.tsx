@@ -39,7 +39,7 @@ import { ArrowRight, BookOpen, Check, Loader2, Trophy, Users } from "lucide-reac
 import { cn } from "@/lib/utils";
 import {
   fetchCompetitions,
-  fetchEliminatorOverview,
+  fetchEliminatorOverviews,
   fetchMyEntries,
   type Competition,
   type EliminatorOverview,
@@ -48,8 +48,6 @@ import {
 } from "@/lib/portal-api";
 import { EliminatorRulesSheet } from "@/components/predictor10/EliminatorRules";
 
-/** The WC Eliminator game slug (the only Eliminator game for now). */
-const ELIMINATOR_SLUG = "world-cup-2026-eliminator";
 
 const LOCK_FMT = new Intl.DateTimeFormat("en-GB", {
   weekday: "short",
@@ -586,7 +584,7 @@ function PageHeading() {
 type HomeData = {
   competitions: Competition[];
   entries: UserEntry[];
-  eliminator: EliminatorOverview | null;
+  eliminators: EliminatorOverview[];
 };
 
 export default function HomePage() {
@@ -598,13 +596,13 @@ export default function HomePage() {
     Promise.all([
       fetchCompetitions(),
       fetchMyEntries(),
-      // Tolerate absence — if the Eliminator game isn't seeded yet, just omit
-      // the card rather than failing the whole Home screen.
-      fetchEliminatorOverview(ELIMINATOR_SLUG).catch(() => null),
+      // Tolerate absence — if no Eliminator games are seeded yet, just omit
+      // the cards rather than failing the whole Home screen.
+      fetchEliminatorOverviews().catch(() => [] as EliminatorOverview[]),
     ])
-      .then(([competitions, entries, eliminator]) => {
+      .then(([competitions, entries, eliminators]) => {
         if (cancelled) return;
-        setData({ competitions, entries, eliminator });
+        setData({ competitions, entries, eliminators });
       })
       .catch((err) => {
         if (cancelled) return;
@@ -641,11 +639,12 @@ export default function HomePage() {
       (state) => state.userEntries.length > 0 || state.enterablePools.length > 0,
     );
 
-  // Empty state only when there are literally no actionable competitions
-  // (server returned no comps, or returned comps but the user has nothing
-  // to act on — e.g. between rounds) AND no Eliminator game to show.
-  const elim = data.eliminator;
-  const showElim = !!elim && elim.status !== "draft" && elim.status !== "void";
+  // One card per Eliminator game (draft/void already filtered server-side;
+  // belt-and-braces filter here too). Multiple games can run in parallel.
+  const elims = data.eliminators.filter(
+    (e) => e.status !== "draft" && e.status !== "void",
+  );
+  const showElim = elims.length > 0;
   const showNothingOpen = cards.length === 0 && !showElim;
 
   return (
@@ -660,7 +659,9 @@ export default function HomePage() {
               <LeagueCard key={state.competition.id} state={state} />
             ),
           )}
-          {showElim && elim && <EliminatorCard overview={elim} />}
+          {elims.map((ov) => (
+            <EliminatorCard key={ov.slug} overview={ov} />
+          ))}
         </div>
       )}
       {showNothingOpen && <EmptyNothingOpen />}

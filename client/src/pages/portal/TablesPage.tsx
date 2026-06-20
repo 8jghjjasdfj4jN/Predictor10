@@ -292,7 +292,7 @@ function TierHeader({
               {myEntry.points} pts
             </span>
           </div>
-        ) : (
+        ) : pool.status === "open" ? (
           <button
             type="button"
             onClick={onEnterClick}
@@ -313,6 +313,15 @@ function TierHeader({
               <ArrowRight className="h-4 w-4" aria-hidden />
             )}
           </button>
+        ) : (
+          <span
+            className={cn(
+              "inline-flex items-center rounded-full border border-white/12 bg-white/[0.04] px-3.5 py-2",
+              "font-['Manrope'] text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-white/55",
+            )}
+          >
+            Final
+          </span>
         )}
       </div>
     </div>
@@ -597,6 +606,12 @@ export default function TablesPage() {
 
   const viewerIsEntered = !!(selectedPool && enteredPoolIds.has(selectedPool.id));
 
+  // Standings are visible to the viewer when they're entered, OR when the pool
+  // has settled — settled standings are public (arch §8.6 / §18). This is what
+  // lets a non-entrant still read a finished tournament's final table after the
+  // pool leaves 'open' (arch §15 settled-pool visibility).
+  const canSeeStandings = viewerIsEntered || selectedPool?.status === "settled";
+
   return (
     <div className="space-y-5 px-4 py-7 pb-10">
       <h1 className="font-['Barlow_Condensed'] text-[1.85rem] font-bold uppercase leading-[1.05] tracking-[0.04em] text-white">
@@ -659,7 +674,7 @@ export default function TablesPage() {
           )}
           {/* ── WC CHAT (temporary) ── end */}
 
-          {!viewerIsEntered ? (
+          {!canSeeStandings ? (
             <PreEntryStandingsTeaser />
           ) : standingsState === undefined || standingsState.state === "loading" ? (
             <div className="flex flex-col items-center justify-center gap-2 px-4 py-8 text-white/50">

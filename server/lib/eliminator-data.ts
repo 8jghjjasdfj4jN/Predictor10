@@ -130,7 +130,51 @@ export async function getEliminatorOverview(
 ): Promise<EliminatorOverviewDto | null> {
   const game = await loadGameBySlug(slug);
   if (!game || !game.isActive) return null;
+  return buildOverview(game, viewerUserId);
+}
 
+/**
+ * Every Eliminator game to surface on the Home discovery list — active games
+ * that aren't drafts or voided. Multiple games can run in parallel (e.g. a
+ * fresh weekly Premier League elimination game launched alongside one already
+ * in progress), so Home renders one card per game rather than a single hard-
+ * coded slug. Settled games stay in the list (their card shows the result)
+ * until the operator flips the game's isActive=false — mirroring the pools'
+ * settled-visibility (arch §15).
+ *
+ * Ordering: active/joinable games first, finished ones last; within a group
+ * the soonest current-round deadline leads, then name for a stable sort.
+ */
+export async function listEliminatorOverviews(
+  viewerUserId: string | null,
+): Promise<EliminatorOverviewDto[]> {
+  const games = await db
+    .select()
+    .from(eliminatorGames)
+    .where(
+      and(
+        eq(eliminatorGames.isActive, true),
+        inArray(eliminatorGames.status, ["open", "running", "settled"]),
+      ),
+    );
+  const overviews = await Promise.all(
+    games.map((g) => buildOverview(g, viewerUserId)),
+  );
+  return overviews.sort((a, b) => {
+    const aSettled = a.status === "settled" ? 1 : 0;
+    const bSettled = b.status === "settled" ? 1 : 0;
+    if (aSettled !== bSettled) return aSettled - bSettled;
+    const aDl = a.currentRound ? Date.parse(a.currentRound.deadlineAt) : Infinity;
+    const bDl = b.currentRound ? Date.parse(b.currentRound.deadlineAt) : Infinity;
+    if (aDl !== bDl) return aDl - bDl;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+async function buildOverview(
+  game: GameRow,
+  viewerUserId: string | null,
+): Promise<EliminatorOverviewDto> {
   const [comp] = await db
     .select({ name: competitions.name, slug: competitions.slug })
     .from(competitions)

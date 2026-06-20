@@ -9,7 +9,7 @@ History as those screens get built. Keep the queries here, not inline in
 route handlers.
 */
 
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { competitions, stages, events, eventOutcomes } from "../db/schema/sports";
 import { leagues } from "../db/schema/leagues";
@@ -204,19 +204,38 @@ export type EnterPoolOutcome =
 // ─── Queries ──────────────────────────────────────────────────────────────
 
 /**
- * Competitions that currently have at least one open pool, with their current
- * Round details and active tier pools embedded (4 from step 2m onwards;
- * was 5 — the Pound is retired and excluded via leagues.is_active=false).
+ * Competitions to surface on the active browse/landing surfaces, with their
+ * current Round details and active tier pools embedded (4 from step 2m
+ * onwards; was 5 — the Pound is retired and excluded via leagues.is_active).
  * Used by /api/competitions, the Home page, and the Tables tab.
  *
- * Returns [] if no competition has an open Round (entire site is between
- * seasons). UI shows an empty state in that case.
+ * A pool is included when its competition AND tier are both active AND it is
+ * either:
+ *   - status = 'open'  (enterable — every comp), or
+ *   - status = 'settled' AND the competition is tournament-style
+ *     (postponedPolicy = 'forfeit', i.e. WC / future Euros etc.).
+ *
+ * The settled branch is what keeps a finished tournament (the World Cup)
+ * visible on Home/Tables after the Final settles, instead of auto-vanishing
+ * the instant settlement flips status off 'open' (arch §15). Removal then
+ * only happens at the operator-triggered retirement step — adding the tier
+ * slug to RETIRED_TIER_SLUGS flips leagues.is_active=false (the canonical
+ * vehicle), which drops it from this query; optionally flipping the comp's
+ * is_active=false drops it too. Nothing is ever deleted.
+ *
+ * Settled visibility is deliberately scoped to tournament-style comps.
+ * League-style comps (PL/Champ) keep the open-only behaviour so old settled
+ * Rounds don't resurrect onto the active surfaces and the Tables tier
+ * sub-tabs never show two pools for the same tier. PL's end-of-season
+ * lingering is a separate, league-aware job for when PL returns.
+ *
+ * Returns [] when nothing qualifies (entire site between seasons). UI shows
+ * an empty state in that case.
  *
  * Important: retired tiers' existing pools/entries are NOT hidden by this
  * query in /api/pools/:id or /api/entries/me — those endpoints still return
- * the user's live Pound entry from Round 9 so it can play out and settle.
- * The is_active filter only suppresses retired tiers from the browse /
- * landing surface.
+ * the user's live entry so it can play out and settle. The is_active filter
+ * only suppresses retired tiers from the browse / landing surface.
  */
 export async function getCompetitionsWithOpenPools(): Promise<CompetitionDto[]> {
   const rows = await db
@@ -247,7 +266,19 @@ export async function getCompetitionsWithOpenPools(): Promise<CompetitionDto[]> 
     .innerJoin(competitions, eq(pools.competitionId, competitions.id))
     .innerJoin(stages, eq(pools.stageId, stages.id))
     .innerJoin(leagues, eq(pools.leagueId, leagues.id))
-    .where(and(eq(pools.status, "open"), eq(leagues.isActive, true)))
+    .where(
+      and(
+        eq(competitions.isActive, true),
+        eq(leagues.isActive, true),
+        or(
+          eq(pools.status, "open"),
+          and(
+            eq(pools.status, "settled"),
+            eq(competitions.postponedPolicy, "forfeit"),
+          ),
+        ),
+      ),
+    )
     .orderBy(asc(competitions.name), asc(leagues.ordinal));
 
   if (rows.length === 0) return [];

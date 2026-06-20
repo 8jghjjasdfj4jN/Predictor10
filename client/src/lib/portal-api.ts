@@ -753,6 +753,11 @@ export async function fetchEliminatorOverview(slug: string): Promise<EliminatorO
   return getJson<EliminatorOverview>(`/api/eliminator/${encodeURIComponent(slug)}`);
 }
 
+/** All active Eliminator games for the Home discovery list (one card each). */
+export async function fetchEliminatorOverviews(): Promise<EliminatorOverview[]> {
+  return getJson<EliminatorOverview[]>(`/api/eliminator`);
+}
+
 export async function joinEliminator(slug: string): Promise<EliminatorJoinResponse> {
   const res = await fetch(`/api/eliminator/${encodeURIComponent(slug)}/enter`, {
     method: "POST",

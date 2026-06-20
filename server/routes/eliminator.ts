@@ -1,7 +1,8 @@
 /*
 Eliminator10 — routes (step e3). Mounted at /api/eliminator.
 
-  GET  /api/eliminator/:slug            — overview for the Home card (viewer optional)
+  GET  /api/eliminator                  — list all active games for the Home cards (viewer optional)
+  GET  /api/eliminator/:slug            — overview for one game's Home card (viewer optional)
   POST /api/eliminator/:slug/enter      — join the game (requireAuth)
   GET  /api/eliminator/:slug/pick       — current round + fixtures + your pick (requireAuth, entrant)
   POST /api/eliminator/:slug/pick       — submit a pick for the current round (requireAuth, alive entrant)
@@ -18,6 +19,7 @@ import { requireAuth } from "../lib/auth-middleware";
 import { writeAudit } from "../lib/audit";
 import {
   getEliminatorOverview,
+  listEliminatorOverviews,
   joinEliminator,
   getEliminatorPickScreen,
   submitEliminatorPick,
@@ -29,6 +31,16 @@ import {
 } from "../lib/eliminator-data";
 
 const router = Router();
+
+router.get("/", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const overviews = await listEliminatorOverviews(req.user?.id ?? null);
+    res.json(overviews);
+  } catch (err) {
+    console.error("[eliminator] GET / failed:", err);
+    res.status(500).json({ error: "Failed to load games." });
+  }
+});
 
 router.get("/:slug", async (req: Request, res: Response): Promise<void> => {
   try {
