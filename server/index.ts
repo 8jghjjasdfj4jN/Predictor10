@@ -9,6 +9,7 @@ import accountRouter from "./routes/account";
 import portalRouter from "./routes/portal";
 import adminRouter from "./routes/admin";
 import adminPortalRouter from "./routes/admin-portal";
+import eliminatorRouter from "./routes/eliminator";
 import { startScheduler } from "./lib/scheduler";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -36,6 +37,7 @@ async function startServer() {
   app.use("/api/account", accountRouter);
   app.use("/api/admin", adminRouter);
   app.use("/api/admin-portal", adminPortalRouter);
+  app.use("/api/eliminator", eliminatorRouter);
   app.use("/api", portalRouter);
 
   // Static frontend

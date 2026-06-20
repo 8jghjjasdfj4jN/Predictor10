@@ -24,6 +24,8 @@ export const auditActionEnum = pgEnum("audit_action", [
   "rg.self_exclusion_started",
   "rg.self_exclusion_lifted",
   "admin.action",
+  "eliminator.entry_created",
+  "eliminator.pick_submitted",
 ]);
 
 export const auditLog = pgTable(
