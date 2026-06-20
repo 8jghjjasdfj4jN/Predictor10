@@ -434,6 +434,7 @@ function AliveView({
             Locked — awaiting results.
           </p>
         </div>
+        <UsedTeams teams={pickScreen.yourUsedTeams} />
       </div>
     );
   }
@@ -460,6 +461,33 @@ function AliveView({
       <p className="mt-4 inline-flex items-center gap-1.5 font-['Manrope'] text-[0.72rem] text-white/40">
         <Lock className="h-3 w-3" aria-hidden />
         Everyone's picks stay hidden until the round locks.
+      </p>
+
+      <UsedTeams teams={pickScreen.yourUsedTeams} />
+    </div>
+  );
+}
+
+/** The viewer's own locked-in teams — private to them, helps tactical play. */
+function UsedTeams({ teams }: { teams: string[] }) {
+  if (teams.length === 0) return null;
+  return (
+    <div className="mt-5 rounded-[10px] border border-white/8 bg-white/[0.02] px-4 py-3">
+      <p className="m-0 font-['Manrope'] text-[0.7rem] font-bold uppercase tracking-[0.16em] text-white/40">
+        Teams you've used
+      </p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {teams.map((t) => (
+          <span
+            key={t}
+            className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 font-['Barlow_Condensed'] text-[0.8rem] font-bold uppercase tracking-[0.02em] text-white/55"
+          >
+            {displayTeamName(t)}
+          </span>
+        ))}
+      </div>
+      <p className="m-0 mt-2 font-['Manrope'] text-[0.68rem] text-white/35">
+        You can't pick these again — only you can see this list.
       </p>
     </div>
   );

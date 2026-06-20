@@ -742,6 +742,7 @@ export type EliminatorPickScreen = {
     isLocked: boolean;
   } | null;
   yourPick: { eventId: string; side: EliminatorPickSide; team: string } | null;
+  yourUsedTeams: string[];
   fixtures: EliminatorFixture[];
 };
 

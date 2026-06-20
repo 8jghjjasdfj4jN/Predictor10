@@ -15,7 +15,7 @@ const RULES: { n: number; title: string; body: React.ReactNode }[] = [
   { n: 3, title: "Picks lock at the first kick-off", body: "Get your pick in before the round's earliest game starts — after that it's locked, and you can't change it." },
   { n: 4, title: "Win and you go through", body: "Your team has to win in normal time (90 minutes — extra time and penalties don't count)." },
   { n: 5, title: "You're out if…", body: "your team loses, your team draws, or you don't get a pick in before the deadline." },
-  { n: 6, title: "One team, once", body: "Once you've picked a team, you can't pick them again for the rest of the competition." },
+  { n: 6, title: "One team, once", body: "Once you've picked a team, you can't pick them again for the rest of the competition — so think ahead before you spend a strong side." },
   { n: 7, title: "A new round every day", body: "The World Cup runs as one competition across the whole tournament, with a round on each day of fixtures, all the way to the Final." },
   { n: 8, title: "Postponed or abandoned match?", body: "Your pick rolls forward to the rescheduled game — you're not knocked out for something that didn't get played." },
   { n: 9, title: "No second chances", body: "Once you're out, you're out — unless re-entry was announced before the competition started." },
@@ -71,6 +71,18 @@ export function EliminatorRulesSheet({ open, onClose }: { open: boolean; onClose
               </li>
             ))}
           </ol>
+
+          <div className="mt-5 rounded-[10px] border border-amber-300/25 bg-amber-400/[0.06] px-4 py-3">
+            <p className="m-0 font-['Manrope'] text-[0.7rem] font-bold uppercase tracking-[0.16em] text-amber-200/80">
+              Play it tactically
+            </p>
+            <p className="m-0 mt-1 font-['Manrope'] text-[0.82rem] leading-[1.5] text-white/75">
+              You can't reuse a team, and the deeper knockout rounds may only have
+              one or two games. Spend all your strong sides early and you could
+              reach a round with no team left to pick — which puts you out. Keep
+              some firepower in reserve.
+            </p>
+          </div>
 
           <p className="mt-5 border-t border-white/10 pt-4 text-center font-['Barlow_Condensed'] text-[1.05rem] font-bold uppercase tracking-[0.04em] text-emerald-200">
             Pick a winner. Survive the round. Be the last player standing.

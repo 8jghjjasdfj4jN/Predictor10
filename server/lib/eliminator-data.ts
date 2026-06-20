@@ -309,6 +309,9 @@ export type EliminatorPickScreenDto = {
     isLocked: boolean;
   } | null;
   yourPick: { eventId: string; side: PickSide; team: string } | null;
+  // Teams this entry has locked in from prior rounds — can't be picked again
+  // (Rule 6). Private to the viewer (their own pick screen).
+  yourUsedTeams: string[];
   fixtures: EliminatorFixtureDto[];
 };
 
@@ -402,6 +405,7 @@ export async function getEliminatorPickScreen(
           }
         : null,
       yourPick,
+      yourUsedTeams: Array.from(usedTeams).sort((a, b) => a.localeCompare(b)),
       fixtures,
     },
   };

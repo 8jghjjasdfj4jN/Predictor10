@@ -650,8 +650,14 @@ const ELIMINATOR_GAMES = [
   },
 ] as const;
 
-function utcDateKey(d: Date): string {
-  return d.toISOString().slice(0, 10);
+// UK "matchday" key with a 06:00 cut-off: a day runs 06:00 → 06:00 next day, so
+// late-night games (US evening = UK small hours) group with the previous
+// evening's round instead of starting a new one that locks at e.g. 2am while
+// the UK's asleep. WC 2026 runs entirely in BST (UTC+1), so the cut-off is a
+// net −5h shift (−6h cut-off, +1h to UK local) — this matches the verified
+// `(kickoff AT TIME ZONE 'Europe/London') - interval '6 hours'` grouping.
+function matchdayKey(d: Date): string {
+  return new Date(d.getTime() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 async function seedEliminatorGames(competitionsByCode: Map<string, string>): Promise<void> {
@@ -741,12 +747,13 @@ async function seedEliminatorGames(competitionsByCode: Map<string, string>): Pro
       continue;
     }
 
-    // One round per UTC day of fixtures. Track day order in an array so we
-    // don't iterate the Map directly (keeps tsc happy at the project target).
+    // One round per UK matchday of fixtures (see matchdayKey). Track day order
+    // in an array so we don't iterate the Map directly (keeps tsc happy at the
+    // project target).
     const dayKeys: string[] = [];
     const byDay = new Map<string, { ids: string[]; firstKickoff: Date }>();
     for (const ev of futureEvents) {
-      const key = utcDateKey(ev.kickoffAt);
+      const key = matchdayKey(ev.kickoffAt);
       const bucket = byDay.get(key);
       if (bucket) {
         bucket.ids.push(ev.id);
