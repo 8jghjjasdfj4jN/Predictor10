@@ -21,7 +21,7 @@ This doc describes the post-login user portal: navigation, pages, data, and the 
 | What | Schema | UI label | Examples |
 |---|---|---|---|
 | Football competition | `competitions` | **Competition** | Premier League, Championship |
-| Price/skill band | `leagues` | **Tier** | The Fiver (£5), Tenner (£10), Big One (£50). The Pound (£1) retired in step 2m — see §3. |
+| Price/skill band | `leagues` | **Tier** | Tenner (£10), Pony (£25), Big One (£50). The Pound (£1) and The Fiver (£5) retired — see §3. |
 | Stage of a competition | `stages` | **Round** | A 4-5 gameweek block (PL R1 = GW1-4) |
 | A weekend of fixtures within a round | (no table — derived from `events.kickoffAt`) | **Gameweek** (PL) / **Matchday** (Champ) | GW1, GW2, MD3 |
 | Specific buy-in instance | `pools` | **Pool** | "Premier League · Tenner · Round 12" |
@@ -29,7 +29,7 @@ This doc describes the post-login user portal: navigation, pages, data, and the 
 | User's score guess for one match | `predictions` | **Prediction** | Liverpool 2-1 Arsenal |
 | Match | `events` | **Match** or **Fixture** | Liverpool vs Arsenal |
 
-**Refactor required:** today's frontend uses "League" for both Competition and Tier. Rename in UI copy. Schema unchanged. (Step 2m note: `LeaguesPage.tsx` originally became `PoolsPage.tsx` in step 2c then deleted entirely in step 2m when the Pools-as-browse flow was killed — Home + Tables cover it now.) The brand names ("The Fiver", "The Tenner") are tier labels, not league names.
+**Refactor required:** today's frontend uses "League" for both Competition and Tier. Rename in UI copy. Schema unchanged. (Step 2m note: `LeaguesPage.tsx` originally became `PoolsPage.tsx` in step 2c then deleted entirely in step 2m when the Pools-as-browse flow was killed — Home + Tables cover it now.) The brand names ("The Tenner", "The Big One") are tier labels, not league names.
 
 ---
 
@@ -80,20 +80,23 @@ A user enters a Round once (one stake) and predicts every match across all GWs /
 
 ### Tiers (entry prices)
 
-From step 2m onwards there are **4 tiers per competition per Round** for league-style competitions (PL, Champ):
+From step 3b.3 onwards there are **3 tiers per competition per Round** for league-style competitions (PL, Champ):
 
 | Tier | Entry |
 |---|---|
-| The Fiver | £5 |
 | The Tenner | £10 |
 | The Pony | £25 |
 | The Big One | £50 |
 
-**Tournament competitions (WC 2026) carry a single dedicated tier** (`world-cup-2026`, £30) — one Enter button, no tier choice. Reasoning: a tournament-length pool is itself the commitment, and splitting 100 expected entrants across 4 tier-pools dilutes pots to the point where most settle near zero. One pool keeps the WC pot meaningful. The WC tier is retired via `RETIRED_TIER_SLUGS` after the Final settles (~22 July 2026).
+**Tournament competitions (WC 2026) carry a single dedicated tier** (`world-cup-2026`, £30) — one Enter button, no tier choice. Reasoning: a tournament-length pool is itself the commitment, and splitting 100 expected entrants across 3 tier-pools dilutes pots to the point where most settle near zero. One pool keeps the WC pot meaningful. The WC tier is retired via `RETIRED_TIER_SLUGS` after the Final settles (~22 July 2026).
 
 **The Pound (£1) was retired in step 2m.** Reasoning: Stripe + merchant processing fees against the player-pool payout (now 75% of gross after step 2n's 25% commission) leave negative margin. Wez's existing Round 9 Pound entry plays out and settles normally on Sun 24 May 2026 under the original (pre-step 2n) 70/20/10 split with no commission; from Round 10 onwards no Pound pools are created. The `leagues.slug='pound'` row stays in the DB for historical reference, marked `is_active=false`.
 
-Tier visibility: all four PL/Champ tiers are visible to every user from day one. No progressive unlock. Tier choice is the user's.
+**The Fiver (£5) was retired in step 3b.3.** Same fee-margin reasoning as The Pound — small stakes don't clear Stripe/merchant fees against the 75% player pool. League-style competitions (PL, Champ) now run **three tiers — Tenner (£10), Pony (£25), Big One (£50)**. The `leagues.slug='fiver'` row stays in the DB marked `is_active=false` (applied when PL Round 1 is seeded; no live Fiver pool exists today).
+
+**Premier League on Home (step 3b.3).** The new-season fixtures are announced but entry isn't open yet, so PL shows on Home as an **Upcoming, display-only card** — no CTA, not tappable — listing the three tiers (£10 / £25 / £50 per round). It is a static teaser (`UpcomingPremierLeagueCard` in `HomePage.tsx`), suppressed automatically once a real active PL competition with open Round 1 pools is in the data (then it renders through the normal `LeagueCard`).
+
+Tier visibility: all three PL/Champ tiers are visible to every user from day one. No progressive unlock. Tier choice is the user's.
 
 **Prize structure (step 2n, locked).** Every active tier carries a flat **25% operator commission** on the gross pot. The remaining 75% (the player pot) pays out top 3 at **60% / 25% / 15%**. So on a gross £100 pot, £25 goes to the operator and £75 splits as £45 / £18.75 / £11.25. WC inherits the same 60/25/15 + 25% pattern. Settlement applies the commission first then distributes the player pot per the splits — see §13 Decided Rules #9 / #14 for the exact rounding and Decided Rule #14 for residual-penny handling.
 
@@ -236,7 +239,7 @@ The **pre-entry flow** (browsing a tier, late-entry modal, "Enter — £X" CTA, 
 │ │ PREMIER LEAGUE              │ │
 │ │ 2026/27 · Round 1           │ │
 │ │ GWs 1-4 · Closes Sat 29 Aug │ │
-│ │ 4 tiers from £5             │ │
+│ │ 3 tiers from £10             │ │
 │ │ [ Choose your tier → ]      │ │
 │ └─────────────────────────────┘ │
 │                                 │
@@ -254,17 +257,17 @@ Each card represents one open competition the user can enter. Cards display:
 
 - **Competition name** (Barlow Condensed, uppercase, accent).
 - **Period / scope** (current Round for league-style, tournament dates for WC).
-- **Entry summary**: "4 tiers from £5" for PL/Champ, "One bracket, one £30 entry" for WC.
+- **Entry summary**: "3 tiers from £10" for PL/Champ, "One bracket, one £30 entry" for WC.
 - **Late-entry deadline** when the window is open or closing soon.
 - **CTA**: "Choose your tier →" routes to the tier picker (Tables tab with the competition pre-selected). "Enter World Cup →" routes to the single-tier confirm screen (§8.6.1).
 
 Card behaviour by competition type:
 
-- **League-style (PL / Champ)** — taps the card → tier picker. Same 4 tiers / pool-card layout as today's Tables tab, scoped to the chosen competition's current Round. Each tier card shows live entry count and per-rank prize breakdown computed from the current pot.
+- **League-style (PL / Champ)** — taps the card → tier picker. Same 3 tiers / pool-card layout as today's Tables tab, scoped to the chosen competition's current Round. Each tier card shows live entry count and per-rank prize breakdown computed from the current pot.
 - **Tournament-style (WC)** — taps the card → single-screen confirm (§8.6.1) with the explainer copy (FT scores only, postponement rule, bracket fills progressively, late-entry deadline). One [ Enter — £30 ] button, mock-money entry, user is in the pool.
 
 Hiding rules:
-- A competition disappears from Home once the user has entered every active pool in it (e.g. user entered PL Fiver+Tenner+Pony+Big One, no more PL tiers to choose → PL card hides). They access their live entries via the Predict tab.
+- A competition disappears from Home once the user has entered every active pool in it (e.g. user entered PL Tenner+Pony+Big One, no more PL tiers to choose → PL card hides). They access their live entries via the Predict tab.
 - WC card disappears once entered (only one pool to be in) or once the late-entry window closes without entry.
 - Competition with `is_active=false` (e.g. retired tournament) never shows.
 
@@ -433,7 +436,7 @@ Layout (top to bottom):
 ├─────────────────────────────────┤
 │ [Premier League] [Championship] │ ← competition pills
 ├─────────────────────────────────┤
-│ ●Fiver  ●Tenner  Pony  Big One  │ ← tier sub-tabs; dot = you're entered
+│ ●Tenner  Pony  Big One          │ ← tier sub-tabs; dot = you're entered
 ├─────────────────────────────────┤
 │ ROUND 9                         │
 │ The Tenner            ┌───────┐ │
@@ -471,12 +474,12 @@ Not-entered state (same tier sub-tab tapped, viewer is not in this tier):
 
 Rules:
 - **Competition pills**: one per active competition. Selected pill is solid emerald (#34d399 fill, dark text). Others are faded ghost style. Pills are tappable to switch.
-- **Tier sub-tabs**: one per tier in the current Round for the selected competition. From step 2m onwards that's four tiers (Fiver / Tenner / Pony / Big One). Selected sub-tab has an emerald underline. A small emerald dot prefixes the label when the viewer is entered in that tier for the current Round; absent otherwise.
+- **Tier sub-tabs**: one per tier in the current Round for the selected competition. From step 2m onwards that's three tiers (Tenner / Pony / Big One). Selected sub-tab has an emerald underline. A small emerald dot prefixes the label when the viewer is entered in that tier for the current Round; absent otherwise.
 - **Header**: Round label (small eyebrow) + tier name (h2) + meta line (`£NN · N players`) + per-rank prize breakdown line (`1st £X · 2nd £Y · 3rd £Z`, step 2n — amounts net of 25% commission). Header right-side widget:
   - Entered: small two-line block — uppercase eyebrow "YOU" + emerald "Nth · X pts".
   - Not entered: solid emerald button "Enter · £NN →". Tap walks through the entry flow (window check → late-entry modal if needed → POST `/api/pools/:id/enter` → navigate to `/predict/:entryId`).
 - **Standings table**: same component used in step 2k's PoolTablePage. Five columns (# / Player / Exact / Result / Pts). Gold rank numbers for 1-3 (amber-300). Emerald-tinted row for the viewer when entered. `↓ N more ↓` footer when truncated; tap expands inline (or the page scrolls, depending on what fits — implementation choice). Tie-break footer copy mirrors Decided Rule #10 verbatim per step 2k.
-- **Default landing tier** when arriving at `/tables`: leftmost sub-tab where the viewer is entered. If entered in none, fall back to the first tier (Fiver). Persists across navigations within the same session.
+- **Default landing tier** when arriving at `/tables`: leftmost sub-tab where the viewer is entered. If entered in none, fall back to the first tier (Tenner). Persists across navigations within the same session.
 - **Default landing competition** when arriving at `/tables`: leftmost pill where the viewer has at least one entry. If none, Premier League.
 - **Empty state** (competition has no pools for the current Round, e.g. Championship between seasons): single-line "No active pools yet — opens August" message in place of the table.
 - **Refresh policy**: page-load fetch + window-focus refetch. No polling.
@@ -569,7 +572,7 @@ When a Round settles, its pools disappear from Home and Tables (active surfaces)
 │ │ [Results →]  [Table →]      │ │
 │ └─────────────────────────────┘ │
 │ ┌─────────────────────────────┐ │
-│ │ Champ · The Fiver · No prize│ │
+│ │ Champ · The Tenner · No prize│
 │ │ 64 pts · 5 of 30            │ │
 │ │ [Results →]  [Table →]      │ │
 │ └─────────────────────────────┘ │
@@ -645,9 +648,8 @@ competitions  : ['premier-league', 'championship', 'world-cup-2026']
                       premier-league   : 'wait'    (arch §13 Rule #13)
                       championship     : 'wait'    (arch §13 Rule #13)
                       world-cup-2026   : 'forfeit' (arch §13 Rule #16)
-leagues       : 5 active tier rows + 1 retired
-                  Active (league-style — PL/Champ pools use these 4):
-                  - The Fiver  £5   splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
+leagues       : league tiers Tenner/Pony/Big One active; Pound + Fiver retired (is_active=false)
+                  Active (league-style — PL/Champ pools use these 3):
                   - The Tenner £10  splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
                   - The Pony   £25  splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
                   - The Big One £50 splits=[0.60, 0.25, 0.15]  houseFeePct=0.25
@@ -791,8 +793,8 @@ Each step ships independently and is testable in isolation.
 These resolve previously-open questions. They flow into build:
 
 1. **Settlement timing.** A pool settles automatically when **all** its matches have full-time scores from football-data.org. Implementation: settlement cron polls every 5 minutes, finds pools where every match status is `FINISHED` and `event_outcomes` rows exist, computes ranks, writes mock payouts, marks pool `settled`. Idempotent — re-running must not double-pay.
-2. **Multi-entry rule.** A user may hold concurrent entries across multiple Tiers and multiple Competitions. **Cap: one entry per Pool per user.** Since Pool = Competition × Tier × Round, this means a user can simultaneously hold (PL · Fiver · R1) + (PL · Tenner · R1) + (Champ · Tenner · R1) — three pools, three entries — but never two entries in the same pool. **DB-enforced since step 3a.16** via the `pool_entries_pool_user_idx` unique index on `(pool_id, user_id)`; `enterPool` catches the resulting Postgres `23505` and resolves a lost concurrent race to "already entered" (transaction rolls back, no orphan payment). The app-layer pre-flight check remains as a fast path.
-3. **Tier visibility.** All 4 tiers (Fiver, Tenner, Pony, Big One) are visible to every user from day one. No progressive unlock. £5 is the natural starter tier; choice is the user's. The Pound (£1) was retired in step 2m.
+2. **Multi-entry rule.** A user may hold concurrent entries across multiple Tiers and multiple Competitions. **Cap: one entry per Pool per user.** Since Pool = Competition × Tier × Round, this means a user can simultaneously hold (PL · Tenner · R1) + (PL · Pony · R1) + (Champ · Tenner · R1) — three pools, three entries — but never two entries in the same pool. **DB-enforced since step 3a.16** via the `pool_entries_pool_user_idx` unique index on `(pool_id, user_id)`; `enterPool` catches the resulting Postgres `23505` and resolves a lost concurrent race to "already entered" (transaction rolls back, no orphan payment). The app-layer pre-flight check remains as a fast path.
+3. **Tier visibility.** All 3 tiers (Tenner, Pony, Big One) are visible to every user from day one. No progressive unlock. £10 is the natural starter tier; choice is the user's. The Pound (£1) and The Fiver (£5) were retired (steps 2m and 3b.3).
 4. **Competitions in MVP.** Premier League, EFL Championship, and World Cup 2026. **WC added in step 3a** as a tournament-style competition (single Round = whole tournament, single dedicated `world-cup-2026` £30 tier, retired post-Final). League One deferred (no provider coverage on free tier). Future tournaments (Euros 2028, etc.) will follow the same single-tier + retire-after pattern.
 5. **Launch plan.** No hard launch date — public launch happens when the build is ready and the operator is ready. Earliest-possible target: Round 1 of PL 2026/27 (Sat 22 Aug → ~Sat 19 Sep 2026) as a closed test for invited users; public launch (mock-money) at the start of Round 2 (~Sat 26 Sep 2026). Both dates slide if not ready. See `roadmap.md` for the build phases that gate readiness.
 6. **Round structure.** A Round is a multi-gameweek tournament block. PL: 9 Rounds (4-4-4-4-4-4-4-5-5 GWs). Champ: 9 Rounds (5-5-5-5-5-5-5-5-6 MDs). See Section 3 for the full schedule. **Entry fee covers the whole Round** — one stake, all matches in the Round.
