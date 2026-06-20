@@ -1,44 +1,39 @@
 /*
-EliminatorLobbyPage (step 3b.1) — the Eliminator10 game-mode hub at
+EliminatorLobbyPage (step 3b.5) — the Eliminator10 game-mode hub at
 `/eliminator`.
 
-Home shows a single "Eliminator10" mode tile (More ways to play) that routes
-here. This lobby lists the real games, bucketed into three tabs, with a
-prominent "starting next" banner so the most urgent thing — a pick that's
-due, or the soonest game to join — grabs attention the moment the lobby
-opens. This is the model that stays clean once weekly PL eliminators run in
-parallel.
+Home shows a single "Eliminator10" mode tile that routes here. The lobby lists
+the real games in three tabs, with a slim "do this next" action prompt up top.
 
-Tabs (step 3b.2 — trimmed from four to three):
+Tabs:
   Your games   — games you hold an entry in that are still live (alive or
                  eliminated-but-running). Settled ones move to Finished.
-  Open to join — games you're not in that are still joinable. Entry stays
-                 open right up to the first kick-off, so this is also the
-                 "what's coming" list; each card shows the join deadline.
+  Open to join — games you're not in that are still joinable. Entry stays open
+                 to the first kick-off, so this is also the "what's coming"
+                 list; each card shows the join deadline.
   Finished     — settled games (your result shown if you played).
 
-A running game you're NOT in (entry closed, can't join) isn't shown — there's
-no action to take on it — until it settles and appears under Finished. (The
-old "In progress" spectator tab was dropped: watching a game with no stake
-added little, and your own running games already sit under Your games.)
+Action prompt (step 3b.5 — replaces the old "Starting next" hero):
+  A slim, accurate nudge to the single most urgent thing, chosen by the
+  SOONEST lock/close time across {a pick that's due} ∪ {a game open to join}.
+  Honest label ("Pick due" / "New game") with the real lock time — no
+  "starting next" on something a week out. The prompt is a shortcut only; the
+  game ALSO appears as a normal row in its tab, so the tab count always matches
+  the rows on screen (no de-dupe, no count/row mismatch).
 
-Banner priority:
-  1. A pick that's due (alive · current round open · not yet picked) — soonest
-     deadline first. CTA → the play screen.
-  2. Else the soonest game open to join. CTA → the play screen (handles join).
-  3. Else no banner.
+A running game you're NOT in (entry closed, can't join) isn't shown — no action
+to take — until it settles into Finished.
 
-Data: GET /api/eliminator (fetchEliminatorOverviews) — viewer-aware. No new
-backend; this lobby buckets client-side. Rows deep-link to the existing play
-screen (/eliminator/:slug) and survivors board (/eliminator/:slug/survivors).
+Data: GET /api/eliminator (fetchEliminatorOverviews) — viewer-aware. No backend;
+buckets client-side. Rows deep-link to the play screen (/eliminator/:slug) and
+survivors board (/eliminator/:slug/survivors).
 
-All games are free for the WC demo; the mode is built PL-ready (free now →
-real fee + 75/25 pot later) — no real money surfaces here pre-licence.
+Free for the WC demo; PL-ready (free now → real fee + 75/25 pot later).
 */
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, ArrowRight, ArrowUp, Clock, Loader2, Lock, Trophy, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Clock, Lock, Trophy, Users, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   fetchEliminatorOverviews,
@@ -83,11 +78,7 @@ const TAB_LABEL: Record<Tab, string> = {
   done: "Finished",
 };
 
-/**
- * Mutually-exclusive bucket for a game (first match wins). Returns null for a
- * game that's running, you're not in, and can no longer join — there's no
- * action, so it isn't shown until it settles into Finished.
- */
+/** Mutually-exclusive bucket. null = running, not in it, can't join (hidden). */
 function bucketOf(ov: EliminatorOverview): Tab | null {
   if (ov.status === "settled") return "done";
   if (ov.entry.state !== "none") return "your";
@@ -96,7 +87,6 @@ function bucketOf(ov: EliminatorOverview): Tab | null {
 }
 
 function sortYour(a: EliminatorOverview, b: EliminatorOverview): number {
-  // Alive before eliminated; within that, soonest deadline first.
   const aAlive = a.entry.state === "alive" ? 0 : 1;
   const bAlive = b.entry.state === "alive" ? 0 : 1;
   if (aAlive !== bAlive) return aAlive - bAlive;
@@ -109,105 +99,60 @@ function sortByClose(a: EliminatorOverview, b: EliminatorOverview): number {
   return new Date(a.entryClosesAt).getTime() - new Date(b.entryClosesAt).getTime();
 }
 
-// ─── Starting-next banner ────────────────────────────────────────────────
+// ─── Action prompt ───────────────────────────────────────────────────────
+// The single most urgent thing, by soonest lock/close. A pick that's due, or
+// the soonest game open to join. Null when there's nothing to act on.
 
-type Banner =
-  | { kind: "pick"; ov: EliminatorOverview }
-  | { kind: "join"; ov: EliminatorOverview }
-  | null;
+type Action = { kind: "pick" | "join"; ov: EliminatorOverview } | null;
 
-function chooseBanner(list: EliminatorOverview[]): Banner {
-  const pickDue = list
-    .filter(
-      (o) =>
-        o.entry.state === "alive" &&
-        o.currentRound &&
-        !o.currentRound.isLocked &&
-        o.currentRound.needsPick,
-    )
-    .sort(
-      (a, b) =>
-        new Date(a.currentRound!.deadlineAt).getTime() -
-        new Date(b.currentRound!.deadlineAt).getTime(),
-    );
-  if (pickDue.length > 0) return { kind: "pick", ov: pickDue[0] };
-
-  const joinable = list.filter((o) => o.canJoin && o.entry.state === "none").sort(sortByClose);
-  if (joinable.length > 0) return { kind: "join", ov: joinable[0] };
-
-  return null;
+function chooseAction(list: EliminatorOverview[]): Action {
+  const cands: { kind: "pick" | "join"; ov: EliminatorOverview; deadline: number }[] = [];
+  for (const o of list) {
+    if (o.entry.state === "alive" && o.currentRound && !o.currentRound.isLocked && o.currentRound.needsPick) {
+      cands.push({ kind: "pick", ov: o, deadline: Date.parse(o.currentRound.deadlineAt) });
+    } else if (o.entry.state === "none" && o.canJoin) {
+      cands.push({ kind: "join", ov: o, deadline: Date.parse(o.entryClosesAt) });
+    }
+  }
+  if (cands.length === 0) return null;
+  cands.sort((a, b) => a.deadline - b.deadline);
+  return { kind: cands[0].kind, ov: cands[0].ov };
 }
 
-// ─── Visual building blocks ──────────────────────────────────────────────
-
-function CornerGlow({ strong }: { strong: boolean }) {
-  return (
-    <div
-      aria-hidden
-      className="pointer-events-none absolute -right-10 -top-10 h-[120px] w-[120px]"
-      style={{
-        background: strong
-          ? "radial-gradient(circle at center, rgba(52, 211, 153, 0.18), transparent 70%)"
-          : "radial-gradient(circle at center, rgba(52, 211, 153, 0.10), transparent 70%)",
-      }}
-    />
-  );
-}
-
-function StartingNextBanner({ banner }: { banner: Banner }) {
-  if (!banner) return null;
-  const ov = banner.ov;
+function ActionPrompt({ action }: { action: Action }) {
+  if (!action) return null;
+  const ov = action.ov;
   const href = `/eliminator/${ov.slug}`;
-
-  const eyebrow =
-    banner.kind === "pick"
-      ? ov.currentRound && ov.currentRound.ordinal === 1
-        ? "Starting next"
-        : "Pick due"
-      : "Open to join";
-
-  const title =
-    banner.kind === "pick" && ov.currentRound
-      ? `${ov.name} · ${ov.currentRound.name}`
-      : ov.name;
-
-  const whenIso =
-    banner.kind === "pick" && ov.currentRound ? ov.currentRound.deadlineAt : ov.entryClosesAt;
-  const whenLabel = banner.kind === "pick" ? "Picks lock" : "Joins close";
-
-  const cta =
-    banner.kind === "pick" ? "Make your pick" : ov.isFree ? "Join — free" : "Join";
+  const isPick = action.kind === "pick";
+  const whenIso = isPick && ov.currentRound ? ov.currentRound.deadlineAt : ov.entryClosesAt;
+  const eyebrow = isPick ? "Pick due" : "New game";
+  const where = isPick && ov.currentRound ? `${ov.name} · ${ov.currentRound.name}` : ov.name;
+  const cta = isPick ? "Make pick" : ov.isFree ? "Join — free" : "Join";
 
   return (
-    <article className="relative overflow-hidden rounded-2xl border border-emerald-400/55 bg-emerald-400/[0.12] px-[18px] pb-4 pt-[18px] ring-1 ring-inset ring-emerald-400/15">
-      <CornerGlow strong />
-      <p className="m-0 font-['Manrope'] text-[0.66rem] font-bold uppercase tracking-[0.18em] text-emerald-300/80">
-        {eyebrow}
-      </p>
-      <h2 className="m-0 mt-1 font-['Barlow_Condensed'] text-[1.5rem] font-extrabold uppercase leading-[1.04] tracking-[0.02em] text-white">
-        {title}
-      </h2>
-      <p className="m-0 mt-1.5 flex items-center gap-1.5 font-['Manrope'] text-[0.8rem] text-emerald-100/80">
-        <Clock className="h-3.5 w-3.5 flex-shrink-0" aria-hidden />
-        <span>
-          {whenLabel} {formatLock(whenIso)}
-          <span> · in {lockCountdown(whenIso)}</span>
-        </span>
-      </p>
-      <Link
-        href={href}
-        className={cn(
-          "mt-3.5 flex w-full items-center justify-center gap-2 rounded-[10px] px-4 py-3.5",
-          "bg-emerald-500 font-['Manrope'] text-sm font-bold text-[#0b1f14]",
-          "shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] transition",
-          "hover:bg-emerald-400 active:bg-emerald-600",
-          "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60",
-        )}
-      >
-        <span>{cta}</span>
-        <ArrowRight className="h-4 w-4" aria-hidden />
-      </Link>
-    </article>
+    <Link
+      href={href}
+      className={cn(
+        "flex items-center gap-3 rounded-xl border border-emerald-400/45 bg-emerald-400/[0.10] px-4 py-3",
+        "transition hover:bg-emerald-400/[0.16]",
+        "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/50",
+      )}
+    >
+      <Zap className="h-4 w-4 flex-shrink-0 text-emerald-300" aria-hidden />
+      <div className="min-w-0 flex-1">
+        <p className="m-0 font-['Manrope'] text-[0.7rem] font-bold uppercase tracking-[0.14em] text-emerald-300/80">
+          {eyebrow}
+        </p>
+        <p className="m-0 truncate font-['Manrope'] text-[0.82rem] font-semibold text-white">{where}</p>
+        <p className="m-0 font-['Manrope'] text-[0.72rem] text-emerald-100/70">
+          {isPick ? "Picks lock" : "Joins close"} {formatLock(whenIso)} · in {lockCountdown(whenIso)}
+        </p>
+      </div>
+      <span className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-emerald-500 px-3 py-2 font-['Manrope'] text-[0.76rem] font-bold text-[#0b1f14]">
+        {cta}
+        <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+      </span>
+    </Link>
   );
 }
 
@@ -231,7 +176,7 @@ function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
             <>
               <span aria-hidden className="mx-1.5 text-white/25">·</span>
               <span className={cn(ov.currentRound.needsPick ? "font-semibold text-emerald-300" : "text-white/55")}>
-                {ov.currentRound.needsPick ? "Pick due" : "Pick in"} · {lockCountdown(ov.currentRound.deadlineAt)}
+                {ov.currentRound.needsPick ? "Pick due" : "Picked"} · locks in {lockCountdown(ov.currentRound.deadlineAt)}
               </span>
             </>
           )}
@@ -239,7 +184,7 @@ function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
             <>
               <span aria-hidden className="mx-1.5 text-white/25">·</span>
               <span className="inline-flex items-center gap-1 text-white/55">
-                <Lock className="h-3 w-3" aria-hidden /> locked
+                <Lock className="h-3 w-3" aria-hidden /> awaiting result
               </span>
             </>
           )}
@@ -257,7 +202,6 @@ function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
       </span>
     );
   } else {
-    // done
     sub = won ? (
       <span className="inline-flex items-center gap-1.5 font-semibold text-amber-200">
         <Trophy className="h-3.5 w-3.5" aria-hidden />
@@ -372,19 +316,6 @@ function EmptyTab({ tab }: { tab: Tab }) {
   );
 }
 
-function BannerPointer({ kind }: { kind: "pick" | "join" }) {
-  return (
-    <div className="flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.04] px-4 py-3.5">
-      <ArrowUp className="h-4 w-4 flex-shrink-0 text-emerald-300/80" aria-hidden />
-      <p className="m-0 font-['Manrope'] text-[0.8rem] text-white/60">
-        {kind === "pick"
-          ? "Your next pick is in the banner above."
-          : "That game's up top — tap to join."}
-      </p>
-    </div>
-  );
-}
-
 // ─── Heading ─────────────────────────────────────────────────────────────
 
 function LobbyHeading() {
@@ -442,9 +373,8 @@ export default function EliminatorLobbyPage() {
     return out;
   }, [games]);
 
-  const banner = useMemo(() => chooseBanner(games ?? []), [games]);
-  const bannerSlug = banner ? banner.ov.slug : null;
-  const bannerBucket: Tab | null = banner ? (banner.kind === "pick" ? "your" : "open") : null;
+  const action = useMemo(() => chooseAction(games ?? []), [games]);
+  const actionBucket: Tab | null = action ? (action.kind === "pick" ? "your" : "open") : null;
 
   const counts: Record<Tab, number> = {
     your: buckets.your.length,
@@ -452,10 +382,9 @@ export default function EliminatorLobbyPage() {
     done: buckets.done.length,
   };
 
-  // Open on the tab that holds the banner game (so its pointer reads in
-  // context); otherwise the first non-empty tab.
+  // Open on the tab that holds the action's game; otherwise first non-empty.
   const resolvedActive: Tab =
-    active ?? bannerBucket ?? TAB_ORDER.find((t) => counts[t] > 0) ?? "your";
+    active ?? actionBucket ?? TAB_ORDER.find((t) => counts[t] > 0) ?? "your";
 
   if (error) {
     return (
@@ -469,7 +398,7 @@ export default function EliminatorLobbyPage() {
   if (!games) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 px-4 py-12 text-white/50">
-        <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+        <Clock className="h-5 w-5 animate-pulse" aria-hidden />
         <p className="font-['Manrope'] text-xs">Loading…</p>
       </div>
     );
@@ -491,27 +420,22 @@ export default function EliminatorLobbyPage() {
     );
   }
 
-  // The banner already shows one game in full; don't draw it again as a row
-  // in its own tab (kills the "shown twice" confusion). The tab count still
-  // reflects the true total — a slim pointer stands in for the row.
-  const rows = buckets[resolvedActive].filter((ov) => ov.slug !== bannerSlug);
-  const pointToBanner =
-    banner !== null && resolvedActive === bannerBucket && rows.length === 0;
+  // Every game lists as a row in its tab — the action prompt is a shortcut, not
+  // a replacement — so the tab count always matches what's on screen.
+  const rows = buckets[resolvedActive];
 
   return (
     <div className="px-4 pb-8">
       <LobbyHeading />
 
       <div className="mt-4 flex flex-col gap-4">
-        <StartingNextBanner banner={banner} />
+        <ActionPrompt action={action} />
 
         <TabStrip active={resolvedActive} counts={counts} onSelect={setActive} />
 
         <div className="flex flex-col gap-2.5">
           {rows.length > 0 ? (
             rows.map((ov) => <GameRow key={ov.slug} ov={ov} tab={resolvedActive} />)
-          ) : pointToBanner && banner ? (
-            <BannerPointer kind={banner.kind} />
           ) : (
             <EmptyTab tab={resolvedActive} />
           )}

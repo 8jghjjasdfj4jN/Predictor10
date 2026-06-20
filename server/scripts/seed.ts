@@ -676,6 +676,29 @@ function matchdayKey(d: Date): string {
   return new Date(d.getTime() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+// Human round name from a fixture's football-data stage. Null for group-stage /
+// league fixtures, which fall back to a plain "Round N". Used so a knockout
+// game's rounds read "Round of 32", "Last 16", etc. instead of colliding with
+// another game's generic "Round 1".
+function knockoutStageName(stage: string | null): string | null {
+  switch (stage) {
+    case "LAST_32":
+      return "Round of 32";
+    case "LAST_16":
+      return "Last 16";
+    case "QUARTER_FINALS":
+      return "Quarter-finals";
+    case "SEMI_FINALS":
+      return "Semi-finals";
+    case "THIRD_PLACE":
+      return "Third-place play-off";
+    case "FINAL":
+      return "Final";
+    default:
+      return null;
+  }
+}
+
 async function seedEliminatorGames(competitionsByCode: Map<string, string>): Promise<void> {
   log("Eliminator10 games + daily rounds…");
   const now = new Date();
@@ -754,7 +777,7 @@ async function seedEliminatorGames(competitionsByCode: Map<string, string>): Pro
     // stage entirely — rounds begin at the first knockout fixture (LAST_32).
     if (knockoutOnly) conds.push(ne(events.fdStage, "GROUP_STAGE"));
     const futureEvents = await db
-      .select({ id: events.id, kickoffAt: events.kickoffAt })
+      .select({ id: events.id, kickoffAt: events.kickoffAt, fdStage: events.fdStage })
       .from(events)
       .where(and(...conds))
       .orderBy(events.kickoffAt);
@@ -775,17 +798,27 @@ async function seedEliminatorGames(competitionsByCode: Map<string, string>): Pro
     // in an array so we don't iterate the Map directly (keeps tsc happy at the
     // project target).
     const dayKeys: string[] = [];
-    const byDay = new Map<string, { ids: string[]; firstKickoff: Date }>();
+    const byDay = new Map<string, { ids: string[]; firstKickoff: Date; stage: string | null }>();
     for (const ev of futureEvents) {
       const key = matchdayKey(ev.kickoffAt);
       const bucket = byDay.get(key);
       if (bucket) {
         bucket.ids.push(ev.id);
       } else {
-        byDay.set(key, { ids: [ev.id], firstKickoff: ev.kickoffAt });
+        byDay.set(key, { ids: [ev.id], firstKickoff: ev.kickoffAt, stage: ev.fdStage ?? null });
         dayKeys.push(key);
       }
     }
+
+    // Pre-count knockout matchdays per stage so a stage spanning multiple days
+    // gets a numbered suffix ("Round of 32 (1)", "(2)"), while single-day
+    // stages (Final, Semi-finals) read clean.
+    const stageDayTotal = new Map<string, number>();
+    for (const k of dayKeys) {
+      const nm = knockoutStageName(byDay.get(k)!.stage);
+      if (nm) stageDayTotal.set(nm, (stageDayTotal.get(nm) ?? 0) + 1);
+    }
+    const stageDaySeen = new Map<string, number>();
 
     let ordinal = 0;
     let firstRoundDeadline: Date | null = null;
@@ -795,12 +828,26 @@ async function seedEliminatorGames(competitionsByCode: Map<string, string>): Pro
       const isFirst = ordinal === 1;
       if (isFirst) firstRoundDeadline = day.firstKickoff;
 
+      const stageName = knockoutStageName(day.stage);
+      let roundName: string;
+      if (stageName) {
+        if ((stageDayTotal.get(stageName) ?? 0) > 1) {
+          const idx = (stageDaySeen.get(stageName) ?? 0) + 1;
+          stageDaySeen.set(stageName, idx);
+          roundName = `${stageName} (${idx})`;
+        } else {
+          roundName = stageName;
+        }
+      } else {
+        roundName = `Round ${ordinal}`;
+      }
+
       const roundRow = await db
         .insert(eliminatorRounds)
         .values({
           gameId,
           ordinal,
-          name: `Round ${ordinal}`,
+          name: roundName,
           deadlineAt: day.firstKickoff,
           // The next round to play is open; the rest open as players progress.
           status: isFirst ? "open" : "pending",

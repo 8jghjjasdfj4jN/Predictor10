@@ -283,7 +283,7 @@ function ElimRow({ ov, nowMs }: { ov: EliminatorOverview; nowMs: number }) {
       <>
         {round.name}
         <span aria-hidden className="mx-1.5 text-white/30">·</span>
-        Pick in · {lockLabel}
+        Picked · {lockLabel}
       </>
     );
     cta = "Change pick";
