@@ -30,7 +30,7 @@ the 10 req/min free-tier ceiling.
 */
 
 import "dotenv/config";
-import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, ne, sql } from "drizzle-orm";
 import { db } from "../db";
 import { sports, competitions, stages, events } from "../db/schema/sports";
 import { leagues } from "../db/schema/leagues";
@@ -648,6 +648,22 @@ const ELIMINATOR_GAMES = [
     // kick-off. Remove (or move) it once this launch is done.
     startFrom: "2026-06-21T06:00:00Z",
   },
+  {
+    // A second, separate WC elimination game that starts fresh at the Round of
+    // 32 — a clean slate (all teams available again) for the knockouts, and a
+    // way in for anyone who missed Round 1 of the tournament-long game. Gated
+    // by stage (knockoutOnly) rather than a date, so it always begins at the
+    // first knockout fixture (fdStage LAST_32) and runs to the Final. Free,
+    // PL-ready like the main game.
+    competitionCode: "WC",
+    slug: "world-cup-2026-knockout-eliminator",
+    name: "Eliminator10 · WC Knockout",
+    entryFee: "0",
+    currency: "GBP",
+    prizeStructure: { model: "last_standing", houseFeePct: 0 },
+    reentryAllowed: false,
+    knockoutOnly: true,
+  },
 ] as const;
 
 // UK "matchday" key with a 06:00 cut-off: a day runs 06:00 → 06:00 next day, so
@@ -731,15 +747,23 @@ async function seedEliminatorGames(competitionsByCode: Map<string, string>): Pro
     // (and the small-hours games before it drop off) — otherwise the game
     // simply starts at the next upcoming fixture.
     const startFrom = (def as { startFrom?: string }).startFrom;
+    const knockoutOnly = (def as { knockoutOnly?: boolean }).knockoutOnly === true;
     const fromTs = startFrom && new Date(startFrom) > now ? new Date(startFrom) : now;
+    const conds = [eq(events.competitionId, compId), gt(events.kickoffAt, fromTs)];
+    // Knockout-only games (e.g. the WC Knockout Eliminator) skip the group
+    // stage entirely — rounds begin at the first knockout fixture (LAST_32).
+    if (knockoutOnly) conds.push(ne(events.fdStage, "GROUP_STAGE"));
     const futureEvents = await db
       .select({ id: events.id, kickoffAt: events.kickoffAt })
       .from(events)
-      .where(and(eq(events.competitionId, compId), gt(events.kickoffAt, fromTs)))
+      .where(and(...conds))
       .orderBy(events.kickoffAt);
 
     if (fromTs.getTime() !== now.getTime()) {
       log(`    starting rounds from ${fromTs.toISOString()} (startFrom cutoff)`);
+    }
+    if (knockoutOnly) {
+      log(`    knockout-only: rounds begin at the first knockout fixture`);
     }
 
     if (futureEvents.length === 0) {
