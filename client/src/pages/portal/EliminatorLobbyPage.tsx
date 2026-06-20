@@ -33,7 +33,7 @@ real fee + 75/25 pot later) — no real money surfaces here pre-licence.
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, ArrowRight, Clock, Eye, Loader2, Lock, Trophy, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUp, Clock, Eye, Loader2, Lock, Trophy, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   fetchEliminatorOverviews,
@@ -322,7 +322,7 @@ function TabStrip({
   onSelect: (t: Tab) => void;
 }) {
   return (
-    <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div className="grid grid-cols-4 gap-1.5">
       {TAB_ORDER.map((t) => {
         const isActive = t === active;
         const count = counts[t];
@@ -332,8 +332,8 @@ function TabStrip({
             type="button"
             onClick={() => onSelect(t)}
             className={cn(
-              "flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 py-2",
-              "font-['Manrope'] text-[0.8rem] font-bold transition",
+              "flex min-h-[44px] flex-wrap items-center justify-center gap-1 rounded-xl border px-1.5 py-2 text-center",
+              "font-['Manrope'] text-[0.72rem] font-bold leading-[1.15] transition",
               "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/50",
               isActive
                 ? "border-emerald-400/60 bg-emerald-400/15 text-emerald-100"
@@ -344,7 +344,7 @@ function TabStrip({
             {count > 0 && (
               <span
                 className={cn(
-                  "rounded-full px-1.5 py-px text-[0.66rem] tabular-nums",
+                  "rounded-full px-1.5 text-[0.62rem] leading-[1.4] tabular-nums",
                   isActive ? "bg-emerald-400/25 text-emerald-100" : "bg-white/10 text-white/50",
                 )}
               >
@@ -370,6 +370,19 @@ function EmptyTab({ tab }: { tab: Tab }) {
     <div className="rounded-2xl border border-dashed border-white/10 px-5 py-9 text-center">
       <p className="m-0 mb-1.5 font-['Manrope'] text-sm font-semibold text-white">{c.title}</p>
       <p className="m-0 font-['Manrope'] text-[0.8125rem] text-white/55">{c.body}</p>
+    </div>
+  );
+}
+
+function BannerPointer({ kind }: { kind: "pick" | "join" }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.04] px-4 py-3.5">
+      <ArrowUp className="h-4 w-4 flex-shrink-0 text-emerald-300/80" aria-hidden />
+      <p className="m-0 font-['Manrope'] text-[0.8rem] text-white/60">
+        {kind === "pick"
+          ? "Your next pick is in the banner above."
+          : "That game's up top — tap to join."}
+      </p>
     </div>
   );
 }
@@ -429,6 +442,10 @@ export default function EliminatorLobbyPage() {
     return out;
   }, [games]);
 
+  const banner = useMemo(() => chooseBanner(games ?? []), [games]);
+  const bannerSlug = banner ? banner.ov.slug : null;
+  const bannerBucket: Tab | null = banner ? (banner.kind === "pick" ? "your" : "open") : null;
+
   const counts: Record<Tab, number> = {
     your: buckets.your.length,
     open: buckets.open.length,
@@ -436,10 +453,10 @@ export default function EliminatorLobbyPage() {
     done: buckets.done.length,
   };
 
-  // Default to the first non-empty tab (Your games wins when present).
-  const resolvedActive: Tab = active ?? TAB_ORDER.find((t) => counts[t] > 0) ?? "your";
-
-  const banner = useMemo(() => chooseBanner(games ?? []), [games]);
+  // Open on the tab that holds the banner game (so its pointer reads in
+  // context); otherwise the first non-empty tab.
+  const resolvedActive: Tab =
+    active ?? bannerBucket ?? TAB_ORDER.find((t) => counts[t] > 0) ?? "your";
 
   if (error) {
     return (
@@ -475,7 +492,12 @@ export default function EliminatorLobbyPage() {
     );
   }
 
-  const rows = buckets[resolvedActive];
+  // The banner already shows one game in full; don't draw it again as a row
+  // in its own tab (kills the "shown twice" confusion). The tab count still
+  // reflects the true total — a slim pointer stands in for the row.
+  const rows = buckets[resolvedActive].filter((ov) => ov.slug !== bannerSlug);
+  const pointToBanner =
+    banner !== null && resolvedActive === bannerBucket && rows.length === 0;
 
   return (
     <div className="px-4 pb-8">
@@ -489,6 +511,8 @@ export default function EliminatorLobbyPage() {
         <div className="flex flex-col gap-2.5">
           {rows.length > 0 ? (
             rows.map((ov) => <GameRow key={ov.slug} ov={ov} tab={resolvedActive} />)
+          ) : pointToBanner && banner ? (
+            <BannerPointer kind={banner.kind} />
           ) : (
             <EmptyTab tab={resolvedActive} />
           )}

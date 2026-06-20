@@ -12,6 +12,7 @@ the tab highlights for /tables/... but no longer for /pools/... (legacy
 redirects route those URLs elsewhere anyway).
 */
 
+import { useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { House, ListChecks, Shield, Trophy, User2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -212,6 +213,17 @@ function BottomNav() {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
+  const mainRef = useRef<HTMLElement>(null);
+
+  // Every page should open pinned at the top. The scroll lives on <main>
+  // (flex-1 + overflow-y-auto), so reset that element on navigation; also
+  // nudge the window for any browser that scrolls the document instead.
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0, left: 0 });
+    window.scrollTo(0, 0);
+  }, [location]);
+
   return (
     // Outer page background: literal #070f09 per Decided Rules / Dashboard parity.
     <div className="min-h-screen bg-[#070f09] font-['Manrope'] text-white">
@@ -231,7 +243,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <TopBar />
 
         {/* Main scroll area. Sticky bottom nav sits inside the column flex flow. */}
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        <main ref={mainRef} className="flex-1 overflow-y-auto">{children}</main>
 
         <BottomNav />
       </div>
