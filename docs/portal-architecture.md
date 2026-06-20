@@ -1157,3 +1157,47 @@ Admin-hide is the only moderation at 11 mates. **Deferred to scale/licence:** re
 
 ### Regulatory note (the real cost of chat)
 Chat is the **only** Predictor10 feature that makes it a **"user-to-user service" under the Online Safety Act 2023, regulated by Ofcom** — a *second* regulator on top of the UKGC, applying regardless of size. It brings an illegal-harms risk assessment, a reporting/complaints route, message-log retention, and CSAM detection duties. Acceptable for the informal WC run (low practical risk; admin-hide + retention in place), but it is a **documented line item before chat ships in the licensed product** (see pre-launch §3). Every other engagement feature stays purely inside the UKGC frame.
+
+---
+
+## 22. Eliminator10 — last-survivor game mode (step 3b)
+
+A second game mode alongside the score-prediction pools: a survivor / **elimination** game. Pick one team to win each round; survive and go through; lose, draw or miss the deadline and you're out; the last entrant left wins. It has its **own** Home card, pick screen and survivors board — it is **not** folded into the Predictor10 prediction grid. It reuses login, payments, fixtures and compliance. **Free** for the WC friends' demo; built **PL-ready** (free now → real fee + 75/25 pot later, mirroring the pools' mock→live flip).
+
+**Wording (trademark caution):** never "last man / player standing" (too close to a registered mark). The product reads **"elimination game"**, **"outlast the field"**, **"still in"**, **"you outlasted the field"**. The internal prize-model id `last_standing` is retained — it is a stored code constant, never shown to players, and is not the mark.
+
+### Player rules (the 12 + tactics)
+Last entrant in wins · pick one team to win each round · picks lock at the round's first kick-off · the team must **win in normal time** (90 min — ET/pens don't count) · you're out on a loss, a draw, or no pick by the deadline · **one team, once** for the whole competition · a round per fixture day to the Final · postponed/abandoned picks **roll forward** (not eliminated) · no re-entry unless advertised · multiple survivors at the end share/continue · free for the WC · decisions final. Plus a **tactical warning**: one-team-once means a late survivor can run out of usable teams in the thin knockout rounds (1–2 games/day) and be forced out — so don't burn strong sides early.
+
+### Schema (`server/db/schema/eliminator.ts`) — 5 tables
+- `eliminatorGames` — competitionId, slug, name, entryFee (default `'0'`), currency, prizeStructure jsonb (`{model:"last_standing", houseFeePct}`), reentryAllowed, opensAt, entryClosesAt, status (draft/open/running/settled/void), isActive.
+- `eliminatorRounds` — gameId, ordinal, name, deadlineAt (= round's first kick-off), status (pending/open/locked/settled), settledAt. Unique (gameId, ordinal).
+- `eliminatorRoundEvents` — roundId ↔ eventId. Unique (roundId, eventId).
+- `eliminatorEntries` — gameId, userId, paymentId (nullable), status (alive/eliminated/won), eliminatedRoundId, eliminatedReason, finalRank, payoutId, enteredAt, settledAt. Unique (gameId, userId) — one entry per game.
+- `eliminatorPicks` — entryId, gameId, roundId, userId, eventId, pickedSide, pickedTeam (snapshot), survived (nullable), ip/ua, scoredAt. Unique (entryId, roundId) [one pick/round] **and** unique (entryId, pickedTeam) [one-team-once].
+- Enums: `eliminator_game_status`, `eliminator_round_status`, `eliminator_entry_status`, `eliminator_pick_side`. Audit actions appended to `auditActionEnum`: `eliminator.entry_created`, `eliminator.pick_submitted`.
+
+### Rounds = UK matchday (the lock-time fix)
+One round per **UK matchday**, where a matchday runs **06:00 → 06:00 the next day** (NOT the UTC calendar day). Late-night US games (UK small hours) therefore bundle into the **previous** evening's round instead of starting a new round that would lock at ~2am while the UK's asleep. The round's `deadlineAt` = its earliest kick-off, and the **whole round locks at that first whistle** (same fairness lock as the pools, §13 #12 / §18). Implemented in the seed via `matchdayKey()` — a net −5h shift (+1h BST, −6h cut-off), which matches the verified SQL `(kickoff AT TIME ZONE 'Europe/London') − interval '6 hours'`. Verified across the whole WC: **every** round locks 17:00–22:00 UK, group stage and knockouts. (The earlier UTC-day grouping locked several rounds at 1–3am UK — abandoned for this reason.)
+
+### `startFrom` launch cutoff
+The WC game config carries an optional `startFrom` ISO datetime; round generation only includes fixtures at/after it (otherwise from "now"). Set to `2026-06-21T06:00:00Z` so Round 1 opens on the **Spain v Saudi** matchday (locks Sun 21 Jun 17:00) and the small-hours Sunday games drop off. **Self-expiring** — once now > startFrom it behaves as a normal "from now" seed, so no cleanup is needed. Rounds are generated **once** (skipped if any exist); to re-time, **delete the game** (cascades) and reseed.
+
+### Picks
+One pick per round (a team to win). **One team once** across the whole game (unique constraint + server check). **Hidden from other players until the round locks** (symmetric lock, same anti-cheat as §18/§19) — surfaced on the pick screen as a note. A player's **own used-teams list is shown privately** on the pick screen (aids tactics; never exposed to others). Optimistic submit on the client; a 403 lock / 409 team-used rejection reverts the tap and toasts. Postponed/abandoned picks **roll forward** (survive) rather than eliminate (Rule 8).
+
+### Survival engine (`server/lib/eliminator-settle.ts`)
+Runs on the existing 15-min settle tick, after pool settle. `findReadyRoundIds()` gates a round ready when: game active/not-settled, round not settled, **previous round settled** (sequential), and **every fixture resolved** (finished-with-outcome OR cancelled/void OR forfeit-postponed-past-kickoff — same gate as pool settle). `settleOneRound()` (tx + FOR UPDATE, idempotent): scores each alive entry's pick — **win in normal time** (FT regulation read from `eventOutcomes.home/awayScore`; ET/pens never count, so a knockout decided on penalties is a **DRAW = out**) survives; draw/loss/no-pick eliminates (reason `lost`/`draw`/`no_pick`); cancelled/void/postponed survives (rolls forward). Progression: 1 alive → **crown** (status `won`, finalRank 1, game settled); 0 alive → **co-winners** = those eliminated this round (split, Rule 11); survivors but no next round → split; else open the next round + game `running`.
+
+### Server + client files
+- **Server:** `db/schema/eliminator.ts`; `lib/eliminator-data.ts` (overview / pick-screen / survivors DTOs, join, submit-pick — discriminated `{ok}` results, `yourUsedTeams` on the pick screen); `routes/eliminator.ts` (`GET /api/eliminator/:slug`, `POST /:slug/enter`, `GET /:slug/pick`, `POST /:slug/pick`, `GET /:slug/survivors`); `lib/eliminator-settle.ts`; seed Phase 6 `seedEliminatorGames` (`matchdayKey`, `startFrom`).
+- **Client:** `lib/portal-api.ts` Eliminator section (types + fetchers + `SubmitEliminatorPickError`); `pages/portal/EliminatorPlayPage.tsx` (`/eliminator/:slug` — join, current round, pick grid with used-greying + your-pick highlight + lock countdown, private used-teams list, eliminated/won states, **green** Survivors/Rules header pills); `pages/portal/EliminatorSurvivorsPage.tsx` (`/eliminator/:slug/survivors` — still-in/out, picks hidden until lock); `components/predictor10/EliminatorRules.tsx` (rules sheet + tactics callout); Home card in `pages/portal/HomePage.tsx` (FREE badge, "still in" count, **"Starting soon"** note + lock time, How-it-works + state-aware CTA). Routes in `App.tsx` (survivors before play).
+
+### Join / payments
+Free game: no payment row, entry created directly. Paid (PL later): mock payment row, `referenceType "eliminator_entry"`, mirroring the pools' mock→live endpoint flip; 75/25 pot via `prizeStructure.houseFeePct`.
+
+### Regulatory posture (paid version)
+Eliminator-for-money **is pool betting** (entry fee + prizes + forecasting → Pool Betting Duty + a UKGC pool betting operating licence; football-pools record-keeping under LCCP 13.1.2). Fair-and-open: picks **hidden until lock** (built). Others' picks revealed **by nickname after lock** (data protection via nicknames, §16). Used-teams list **private** to the player. For the paid flip the rules must publish (LCCP 4.2.9): commission %, dividend rounding, the **no-winner / carry-over** procedure (maps to the co-winner / split outcomes), and the claim window. The free WC demo is not betting. Confirm specifics at licence application.
+
+### Launch state (20 June 2026)
+Seeded live: game `world-cup-2026-eliminator`, **24 rounds**, Round 1 = Spain matchday (Spain v Saudi, Belgium v Iran, Uruguay v Cape Verde, New Zealand v Egypt), locks **Sun 21 Jun 17:00**, entries close then. Free, open public registration. e5 deployed and phone-tested. tsc baseline unchanged at **15**.

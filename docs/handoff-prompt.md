@@ -455,6 +455,19 @@ A run of engagement features during the group stage. One schema change (chat), t
 - **Automated scheduler running in-process** (step 2o). Score sync every 5 min, pool settle every 15 min, both inside the Express server.
 - **iPhone refresh stability**: step 3a.11's analytics-script removal eliminated the boot-derailment vector. Wez confirmed reload works reliably.
 
+### Step 3a.20 — Predict-screen FinishedView redesign (20 June 2026)
+The Predict-screen "finished match" card was confusing: the big score boxes meant "your prediction" in every other state but silently flipped to "the FT result" once finished, with the actual pick buried in tiny "You: 3-0" text, and the card was emerald-tinted (looked celebratory even on 0 pts). Rewrote `FinishedView` + `FtScoreBox` in `PredictMatchRow.tsx`: muted settled card, centred **"FULL TIME"** eyebrow, neutral result boxes (not emerald), and a dedicated labelled **"Your pick X – Y"** chip with the points pill. No history tab (timeline ordering + `/account/history` already cover it). Single file: `PredictMatchRow.tsx`.
+
+### Step 3b — Eliminator10, a second game mode (20 June 2026)
+New last-survivor / **elimination** game (full canon in arch **§22**). Pick one team to win each round; win in normal time survives; loss/draw/no-pick out; one-team-once; last entrant wins. Its own Home card + pick screen + survivors board; reuses login / payments / fixtures / compliance. **Free** WC demo, built **PL-ready**. Built in sub-steps:
+- **e1 schema** — `db/schema/eliminator.ts` (5 tables + 4 enums); `db:push` applied.
+- **e2 seed** — Phase 6 `seedEliminatorGames`; `pnpm seed`.
+- **e3 play server** — `lib/eliminator-data.ts` + `routes/eliminator.ts` (overview / join / pick / survivors); audit actions added (`db:push`).
+- **e4 survival engine** — `lib/eliminator-settle.ts`, hooked into the 15-min settle tick.
+- **e5 client** — `portal-api.ts` Eliminator section, `EliminatorPlayPage`, `EliminatorSurvivorsPage`, `EliminatorRules`, Home card, `App.tsx` routes.
+
+Then, before launch: **UK-matchday round grouping** (`matchdayKey`, 06:00 cut-off) which fixed the 2am-UK lock problem — every round now locks 17:00–22:00 UK, verified across the whole WC; a self-expiring **`startFrom`** launch cutoff so Round 1 opens on the **Spain matchday** (locks Sun 21 Jun 17:00); a **"Starting soon"** Home-card note; a **private used-teams** list on the pick screen; a **tactics** rule callout (one-team-once can strand you in the thin knockout rounds); the trademark **wording change** (no "last man / player standing" → **"elimination game" / "outlast the field"**; internal `last_standing` id kept as it's never shown); and **green** Survivors/Rules header pills. Launched live: `world-cup-2026-eliminator`, **24 rounds**, free, open registration, e5 deployed and phone-tested. tsc baseline stayed **15**.
+
 ## Decisions made in earlier chats — DO NOT relitigate
 
 From arch doc Decided Rules §13 + decisions made in build chats:
@@ -630,6 +643,8 @@ Routes as of step 3a.15:
 | `/pools/:slug/:poolId/table` | Standalone league table with tournament-aware status pill. Rows are tappable → opponent predictions |
 | `/pools/:slug/:poolId/table/:entryId` | Read-only view of another player's picks for the pool, lock-gated (step 3a.18) |
 | `/pools/:slug/:poolId/chat` | Per-pool table chat (step 3a.19, **temporary WC feature** — see `wc-chat-teardown.md`). Entrant-gated |
+| `/eliminator/:slug` | Eliminator10 play screen (step 3b) — join, current round, one-team pick, used-teams, eliminated/won states |
+| `/eliminator/:slug/survivors` | Eliminator10 survivors board (step 3b) — still-in / out; picks hidden until the round locks |
 | `/pools/:slug/:poolId` | Legacy — redirects to `/predict/:entryId` |
 | `/pools`, `/pools/:slug` | Legacy — redirect to `/tables` |
 | `/login`, `/register` | unchanged — `/register` now collects first/last/nickname instead of display name |
@@ -649,10 +664,16 @@ Server admin endpoints:
 | `GET /api/pools/:id/messages` | Session + entrant | Table chat read (step 3a.19, temporary). Hidden messages excluded |
 | `POST /api/pools/:id/messages` | Session + entrant | Post a chat message (step 3a.19, temporary). Rate-limited, self-exclusion-gated, 500-char cap |
 | `POST /api/admin-portal/messages/:id/hide` | Session + `is_admin=true` | Soft-delete (hide) a chat message (step 3a.19, temporary; audit-logged) |
+| `GET /api/eliminator/:slug` | Public (viewer-aware if signed in) | Eliminator10 overview (step 3b) — Home-card DTO: counts, entry state, current round, canJoin |
+| `POST /api/eliminator/:slug/enter` | Session | Join the game (step 3b). Free = no payment; paid = mock payment row. Audit `eliminator.entry_created` |
+| `GET /api/eliminator/:slug/pick` | Session + entrant | Pick screen (step 3b) — current round fixtures, used-team flags, your pick, your used-teams |
+| `POST /api/eliminator/:slug/pick` | Session + entrant | Submit/change the round pick (step 3b). Lock + team-used + one-per-round guarded. Audit `eliminator.pick_submitted` |
+| `GET /api/eliminator/:slug/survivors` | Public when settled; session + entrant while live | Survivors board (step 3b) — still-in / out; current picks hidden until the round locks |
 
 ## What to do first
 
-1. Read all three docs in `/docs/` (architecture first, then this handoff, then roadmap). Arch sections to note: §15 WC retirement playbook (operator-triggered-removal + carry-across notes), §16 Users / nicknames / KYC names, §17 Admin portal, §18 Player-predictions view + live status, **§19 Pick distribution, §20 Predict-screen match states & ordering, §21 Table chat (temporary)**. Also read `wc-chat-teardown.md`. Most recent state is **step 3a.19**.
-2. Skim recent file edits from step 3a.19 — chat: `server/db/schema/messages.ts` (new), `server/lib/chat-data.ts` (new), `client/src/pages/portal/PoolChatPage.tsx` (new), `+ portal.ts / admin-portal.ts / portal-api.ts / App.tsx / TablesPage.tsx / schema/index.ts`; distribution: `server/lib/insight-data.ts` (new), `client/src/components/predictor10/PickDistribution.tsx` (new), `+ portal.ts / portal-api.ts`; live/timing: `client/src/components/predictor10/PredictMatchRow.tsx` + `client/src/pages/portal/PoolDetailPage.tsx`. (Step 3a.18 edits: `OpponentPredictionsPage.tsx`, `portal-data.ts` `getEntryPredictionsForViewer`, footer trio.)
-3. Ask Wez what's next. Current priority order: (a) the pre-Final settled-pool-visibility change (operational, agreed, awaiting go — see arch §15 / operational section above); (b) UKGC application narrative prep; (c) WC retirement after the Final (~19–22 July, trigger phrase "Read arch §15 and prepare the WC retirement files"); (d) Resend + email verification (last pre-licence-grant code blocker). Propose file plans in tabular form with folder paths; verify `pnpm install --frozen-lockfile` + `pnpm build` exit 0 with zero new tsc errors (**baseline is now 15**, not 18) before delivering.
-4. Wait for "go" before bulk-changing files.
+1. Read all docs in `/docs/` (architecture first, then this handoff, then roadmap, then pre-launch). Arch sections to note: §15 WC retirement playbook, §16 Users/nicknames/KYC, §17 Admin portal, §18 Player-predictions view + live status, §19 Pick distribution, §20 Predict-screen states & ordering, §21 Table chat (temporary), **§22 Eliminator10 (the second game mode — full canon)**. Also read `wc-chat-teardown.md`. **Most recent state is step 3b (Eliminator10), launched 20 June 2026.**
+2. Skim the step 3b files (see arch §22 "Server + client files"): `db/schema/eliminator.ts`, `lib/eliminator-data.ts`, `lib/eliminator-settle.ts`, `routes/eliminator.ts`, seed Phase 6, and client `EliminatorPlayPage.tsx` / `EliminatorSurvivorsPage.tsx` / `EliminatorRules.tsx` / Home card / `portal-api.ts`. Step 3a.20 was a one-file Predict-card tweak (`PredictMatchRow.tsx`).
+3. Ask Wez what's next. Likely candidates: **(a)** Eliminator10 follow-ups (paid-PL flip = real fee + 75/25 pot + the LCCP 4.2.9 rules-display copy: commission %, no-winner/carry-over, claim window — see arch §22 regulatory posture; engagement extras); **(b)** the pre-Final settled-pool-visibility change (operational, agreed, awaiting go — arch §15); **(c)** WC retirement after the Final (~19–22 July, trigger "Read arch §15 and prepare the WC retirement files" — note this is the pools' WC; the Eliminator game is separate and retires on its own); **(d)** Resend + email verification (last pre-licence-grant code blocker); **(e)** UKGC application narrative.
+4. Eliminator launch state: `world-cup-2026-eliminator` is seeded live (24 rounds, Round 1 = Spain matchday, locks Sun 21 Jun 17:00). To re-time, **delete the game** (`DELETE FROM eliminator_games WHERE slug='world-cup-2026-eliminator';` — cascades) and `pnpm seed`; the `startFrom` cutoff is self-expiring.
+5. Working rules: propose file plans as **File | Folder | Action** tables with complete replacement files; verify `pnpm install --frozen-lockfile` + `pnpm build` exit 0 with **zero new tsc errors (baseline 15)**; ship `pnpm-lock.yaml` with any `package.json` change; flag `db:push` / `pnpm seed` needs; never touch `vite.config.ts` / `client/index.html` without flagging the step-2v crossorigin fix. Wait for "go" before bulk-changing files.

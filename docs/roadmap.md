@@ -147,6 +147,16 @@ Once the WC pool flips to `settled` (~22 Jul 2026), follow `docs/portal-architec
 
 ---
 
+## Step 3b — Eliminator10 (June 2026) — BUILT + LAUNCHED
+
+A second game mode alongside the score-prediction pools: a last-survivor / **elimination** game (full canon in architecture **§22**). Pick one team to win each round; win in normal time survives; loss/draw/no-pick out; one team only once; last entrant standing wins. Own Home card, pick screen and survivors board; reuses login / payments / fixtures / compliance. **Free** for the WC friends' demo; built **PL-ready** (free now → real fee + 75/25 pot later via the same mock→live flip as the pools).
+
+**Status:** built end-to-end (schema → seed → play server → survival engine → client) and **launched live** for the WC — `world-cup-2026-eliminator`, 24 rounds, Round 1 = the Spain matchday (locks Sun 21 Jun 17:00), free, open public registration. tsc baseline unchanged (15).
+
+Key design calls (locked): rounds = **UK matchday** (06:00 cut-off, so late-night US games don't lock at 2am UK — every round locks 17:00–22:00 UK); self-expiring **`startFrom`** launch cutoff; **one-team-once** with a private used-teams list + a tactical warning; picks **hidden until lock**; postponed picks **roll forward**; FT-only scoring (pens = a draw = out). **Wording avoids the "last man standing" mark** — reads "elimination game" / "outlast the field".
+
+**Follow-ups (not yet built):** paid-PL flip (real fee + 75/25 pot + LCCP 4.2.9 rules-display copy — commission %, no-winner/carry-over, claim window); post-licence engagement extras. Regulatory note: paid Eliminator **is pool betting** (PBD + UKGC pool betting licence) — same frame as the pools.
+
 ## Schema readiness — what's in the database from day one
 
 The schema lives in `server/db/schema/` split across seven files. Every table the product needs across its full lifecycle is present from the first migration. Tables fall into three groups:
