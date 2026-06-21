@@ -12,7 +12,7 @@ the tab highlights for /tables/... but no longer for /pools/... (legacy
 redirects route those URLs elsewhere anyway).
 */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { House, ListChecks, Shield, Trophy, User2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -216,34 +216,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const mainRef = useRef<HTMLElement>(null);
 
-  // Stop the browser restoring the previous scroll position on back/forward.
-  // By default it re-applies the old position *after* our reset runs, which is
-  // what left some pages opening part-scrolled. We always open pinned to top.
+  // Stop the browser carrying a stale scroll position across page changes.
   useEffect(() => {
     if (typeof window !== "undefined" && "scrollRestoration" in window.history) {
       window.history.scrollRestoration = "manual";
     }
   }, []);
 
-  // Pin every page to the top on navigation. The whole document scrolls here
-  // (the column is min-h-screen, so <main> grows with its content rather than
-  // scrolling internally) — so the window is what needs resetting. We clear the
-  // window, both scroll roots, and main defensively, then repeat once after the
-  // next paint to beat any late layout shift from async content loading in.
+  // Pin every page to the top on navigation. The content area (`main`) is the
+  // only scroller — the app frame is a fixed viewport height — so resetting it
+  // is what counts. The browser can no longer carry a stale document scroll
+  // position into the next page. We reset before paint (no flash), then again
+  // after the next paint and shortly after, to beat late layout shift when a
+  // page swaps its loading state for fetched content. The window resets are a
+  // harmless fallback for any browser that ignores the fixed-height frame.
+  useLayoutEffect(() => {
+    if (mainRef.current) mainRef.current.scrollTop = 0;
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    document.documentElement.scrollTop = 0;
+  }, [location]);
+
   useEffect(() => {
     const toTop = () => {
-      // Explicit "instant": never let a global `scroll-behavior: smooth` turn
-      // this into an animated scroll — an animation gets interrupted by async
-      // content loading in, which left pages landing part-scrolled under the
-      // sticky top bar (worst on data-fetching pages like Eliminator).
+      if (mainRef.current) mainRef.current.scrollTop = 0;
       window.scrollTo({ top: 0, left: 0, behavior: "instant" });
       document.documentElement.scrollTop = 0;
-      if (document.body) document.body.scrollTop = 0;
-      mainRef.current?.scrollTo({ top: 0, left: 0 });
     };
-    toTop();
-    // Repeat after the next paint and once more shortly after, to beat any late
-    // layout shift when a page swaps its loading state for fetched content.
     const raf = requestAnimationFrame(toTop);
     const t = setTimeout(toTop, 80);
     return () => {
@@ -253,8 +251,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [location]);
 
   return (
-    // Outer page background: literal #070f09 per Decided Rules / Dashboard parity.
-    <div className="min-h-screen bg-[#070f09] font-['Manrope'] text-white">
+    // App frame: a fixed viewport height so only the content area scrolls, never
+    // the whole document. `100dvh` tracks the usable height as mobile browser
+    // toolbars show/hide (important for the future iOS/Android wrap). Outer
+    // overflow-hidden guarantees the page body itself can never scroll.
+    <div className="h-[100dvh] overflow-hidden bg-[#070f09] font-['Manrope'] text-white">
       {/* Centred mobile-first column. Caps at 480px (the iPhone Pro width the
           design was authored against) and steps up at tablet/desktop breakpoints.
           Desktop cap is 1024px — fills a laptop screen comfortably without
@@ -264,14 +265,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           native ports later). */}
       <div
         className={cn(
-          "relative mx-auto flex min-h-screen max-w-[480px] md:max-w-[720px] lg:max-w-[1024px] flex-col",
+          "relative mx-auto flex h-full max-w-[480px] md:max-w-[720px] lg:max-w-[1024px] flex-col",
           "border-x border-white/[0.04]",
         )}
       >
         <TopBar />
 
-        {/* Main scroll area. Sticky bottom nav sits inside the column flex flow. */}
-        <main ref={mainRef} className="flex-1 overflow-y-auto">{children}</main>
+        {/* The single scroll area, between the fixed top bar and bottom nav.
+            min-h-0 lets this flex child shrink so it scrolls instead of pushing
+            the frame taller; overscroll-contain stops scroll chaining/rubber-band
+            to the page body (matters inside the native wrap). */}
+        <main
+          ref={mainRef}
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain"
+        >
+          {children}
+        </main>
 
         <BottomNav />
       </div>
