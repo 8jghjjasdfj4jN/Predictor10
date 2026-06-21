@@ -27,21 +27,49 @@ import type { PoolEntry } from "@/lib/portal-api";
 
 // ─── Sub-components ──────────────────────────────────────────────────────
 
+/**
+ * Rank cell. Top 3 get a gold / silver / bronze medal badge; everyone else a
+ * plain number. Pure standing/skill recognition (arch §23 green list) — RG-safe.
+ * Metallic gradients tuned for the dark Broadcast Noir theme; 1st carries a
+ * soft gold glow.
+ */
+function RankBadge({ rank }: { rank: number }) {
+  if (rank < 1 || rank > 3) {
+    return (
+      <span className="text-center font-['Barlow_Condensed'] text-[1rem] font-extrabold tabular-nums text-white/55">
+        {rank}
+      </span>
+    );
+  }
+
+  const medal: Record<number, string> = {
+    1: "bg-gradient-to-br from-amber-200 to-amber-500 text-amber-950 ring-amber-200/60 shadow-[0_0_10px_rgba(251,191,36,0.35)]",
+    2: "bg-gradient-to-br from-slate-100 to-slate-400 text-slate-900 ring-slate-200/50",
+    3: "bg-gradient-to-br from-orange-300 to-orange-700 text-orange-50 ring-orange-300/50",
+  };
+
+  return (
+    <span className="flex justify-center" aria-label={`Rank ${rank}`}>
+      <span
+        className={cn(
+          "flex h-[22px] w-[22px] items-center justify-center rounded-full ring-1",
+          "font-['Barlow_Condensed'] text-[0.82rem] font-black leading-none tabular-nums",
+          medal[rank],
+        )}
+      >
+        {rank}
+      </span>
+    </span>
+  );
+}
+
 function LeaderboardRow({ entry, href }: { entry: PoolEntry; href?: string }) {
-  const isPodium = entry.rank >= 1 && entry.rank <= 3;
   const gridCols = href
     ? "grid-cols-[28px_1fr_36px_36px_44px_16px]"
     : "grid-cols-[28px_1fr_36px_36px_44px]";
   const inner = (
     <>
-      <span
-        className={cn(
-          "text-center font-['Barlow_Condensed'] text-[1rem] font-extrabold tabular-nums",
-          isPodium ? "text-amber-300" : "text-white/55",
-        )}
-      >
-        {entry.rank}
-      </span>
+      <RankBadge rank={entry.rank} />
       <span
         className={cn(
           "min-w-0 truncate font-['Manrope'] text-[0.82rem]",
