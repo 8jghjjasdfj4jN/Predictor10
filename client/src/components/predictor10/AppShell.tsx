@@ -232,14 +232,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // next paint to beat any late layout shift from async content loading in.
   useEffect(() => {
     const toTop = () => {
-      window.scrollTo(0, 0);
+      // Explicit "instant": never let a global `scroll-behavior: smooth` turn
+      // this into an animated scroll — an animation gets interrupted by async
+      // content loading in, which left pages landing part-scrolled under the
+      // sticky top bar (worst on data-fetching pages like Eliminator).
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
       document.documentElement.scrollTop = 0;
       if (document.body) document.body.scrollTop = 0;
       mainRef.current?.scrollTo({ top: 0, left: 0 });
     };
     toTop();
+    // Repeat after the next paint and once more shortly after, to beat any late
+    // layout shift when a page swaps its loading state for fetched content.
     const raf = requestAnimationFrame(toTop);
-    return () => cancelAnimationFrame(raf);
+    const t = setTimeout(toTop, 80);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+    };
   }, [location]);
 
   return (
