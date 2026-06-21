@@ -28,10 +28,11 @@ import type { PoolEntry } from "@/lib/portal-api";
 // ─── Sub-components ──────────────────────────────────────────────────────
 
 /**
- * Rank cell. Top 3 get a gold / silver / bronze medal badge; everyone else a
- * plain number. Pure standing/skill recognition (arch §23 green list) — RG-safe.
- * Metallic gradients tuned for the dark Broadcast Noir theme; 1st carries a
- * soft gold glow.
+ * Rank cell. Top 3 get a shield badge in a distinct, bold colour — gold (1st),
+ * blue (2nd), red (3rd); everyone else a plain number. Pure standing/skill
+ * recognition (arch §23 green list) — RG-safe. Inline SVG (crisp at any size,
+ * no Tailwind colour classes so the three are always clearly different). Green
+ * is deliberately avoided — it's the "you" / active colour elsewhere.
  */
 function RankBadge({ rank }: { rank: number }) {
   if (rank < 1 || rank > 3) {
@@ -42,23 +43,39 @@ function RankBadge({ rank }: { rank: number }) {
     );
   }
 
-  const medal: Record<number, string> = {
-    1: "bg-gradient-to-br from-amber-200 to-amber-500 text-amber-950 ring-amber-200/60 shadow-[0_0_10px_rgba(251,191,36,0.35)]",
-    2: "bg-gradient-to-br from-slate-100 to-slate-400 text-slate-900 ring-slate-200/50",
-    3: "bg-gradient-to-br from-orange-300 to-orange-700 text-orange-50 ring-orange-300/50",
+  const palette: Record<number, { fill: string; stroke: string; text: string }> = {
+    1: { fill: "#f4c430", stroke: "#a9781b", text: "#3d2c00" }, // gold
+    2: { fill: "#3b82f6", stroke: "#1e40af", text: "#ffffff" }, // blue
+    3: { fill: "#ef4444", stroke: "#991b1b", text: "#ffffff" }, // red
   };
+  const c = palette[rank];
 
   return (
     <span className="flex justify-center" aria-label={`Rank ${rank}`}>
-      <span
-        className={cn(
-          "flex h-[22px] w-[22px] items-center justify-center rounded-full ring-1",
-          "font-['Barlow_Condensed'] text-[0.82rem] font-black leading-none tabular-nums",
-          medal[rank],
-        )}
-      >
-        {rank}
-      </span>
+      <svg width="20" height="24" viewBox="0 0 24 28" fill="none" aria-hidden>
+        {/* Shield silhouette: flat top, tapering to a rounded point. */}
+        <path
+          d="M3 3 H21 V14 C21 20.5 16.5 24.5 12 26.5 C7.5 24.5 3 20.5 3 14 Z"
+          fill={c.fill}
+          stroke={c.stroke}
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+        />
+        {/* Subtle top sheen for a bit of depth. */}
+        <path d="M4 4 H20 V8 C16 9.5 8 9.5 4 8 Z" fill="rgba(255,255,255,0.22)" />
+        <text
+          x="12"
+          y="13"
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontFamily="'Barlow Condensed', sans-serif"
+          fontSize="13"
+          fontWeight="800"
+          fill={c.text}
+        >
+          {rank}
+        </text>
+      </svg>
     </span>
   );
 }
