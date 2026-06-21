@@ -4,7 +4,7 @@
 
 ---
 
-# Predictor10 build — picking up after step 3b.12 (scroll fix, juice batches 1–2, podium shields, Eliminator tile clarity, late-entry lock, licence-first directive)
+# Predictor10 build — picking up after step 3b.13 (tsc baseline 0, outcome-recording integrity: confirm-before-commit + divergence alert + correction tool, .gitattributes)
 
 I'm a solo developer building Predictor10, a UK football score-prediction pool betting product. 3-person business forming around it. Targeting UKGC general pool betting licence (likely 2027 grant). **Build the real flow, mock the money** — payments table has `mode='mock'` until licence flip, then becomes `'live'`. Same code paths flip; no rewrites.
 
@@ -546,6 +546,27 @@ Why: a UK pool-betting licence expects fairness rules applied consistently with 
 
 **Licence-first prime directive (now canon — arch §1 top).** Every feature, flow, and architecture decision must hold UK pool-betting / gambling-licence rules in the highest regard (fairness, clear/non-misleading info, RG protections, consistent rule application, clean audit trail). Licence-clean beats nicer/faster/more-engaging whenever they conflict. No mechanism may silently override a fairness rule on the live product. Check new work against this before shipping. **Wez will share the full licence application with Claude once purchased**, so Claude can act as a domain expert and help get the application approved — treat that as a standing goal.
 
+### Step 3b.13 — tsc baseline to zero, score-integrity fix: confirm-before-commit + divergence alert + correction tool (21 June 2026)
+
+A foundational session. Started as a tidy, became the most important data-integrity fix in the product so far.
+
+**1. tsc baseline 15 → 0.** Deleted two dead, never-imported client files (`client/src/lib/fixture-sync.ts`, `client/src/lib/outcome-sync.ts` — a sealed pair that only referenced each other; the real versions live in `server/lib/`), and added the missing `liveStatusLabel` field to `PoolEntriesPoolDto` in `server/lib/portal-data.ts` (the client already read it). New baseline is **0** — the "zero new errors" gate is now "zero errors".
+
+**2. Live scoring incident — Spain 4-0 Saudi recorded as 5-0.** football-data briefly published the WC opener as FINISHED at 5-0 (a goal then disallowed for offside via VAR); the 5-min outcome-sync caught the transient 5-0, wrote it first-write-wins, and scored against it. FD corrected to 4-0 but first-write-wins kept the 5-0. NickyD + Les (both 4-0) got 2 pts instead of 5. Fixed live via a new deliberate, audited correction tool (see below): corrected to 4-0, re-scored, audit row written. WC pool was not settled, so no payouts affected. Eliminator unaffected (Spain won either way).
+
+**3. The permanent fix — outcome-recording integrity (full canon now in arch §24).** Three layers, defence in depth:
+   - **Confirm-before-commit (prevention).** A FINISHED score is buffered in a new `event_outcome_observations` table and only promoted to `event_outcomes` (and used to score) once seen unchanged across sync passes ≥ `CONFIRM_MIN_AGE_MS` (3 min; ~5–10 min to confirm with the 5-min cron). A transient/incorrect score is never committed because the next pass sees it change and the clock resets. Constant has no env/admin override (fairness rule, §1).
+   - **First-write-wins immutability (kept).** A committed outcome is never silently overwritten.
+   - **Divergence alert + correction tool (backstop).** Each sync compares FD's current score to the committed one; if different, raises a `audit_log` "outcome_divergence" alert, surfaced in **Admin → Score alerts**. Never auto-overwrites. Admin reviews and applies `server/scripts/correct-outcome.ts` (dry-run → `--apply`; re-scores via the real `scorePrediction`; audit row). Detector suppresses alerts for admin-set scores and de-dupes.
+   - **Key invariant:** `event_outcomes` only ever holds confirmed/final scores, so display + prediction-scoring + pool-settle (`findReadyPoolIds`) + eliminator-settle (`findReadyRoundIds`) are all unchanged — they key off `event_outcomes` existence and simply wait through the short confirmation window. The provisional buffer is never read by display or settlement.
+   - Visible effect: a finished match shows "awaiting result" for ~5–10 min longer before its score + points appear. That delay is the safety window.
+
+**4. `.gitattributes` added.** Forces LF line endings repo-wide (the repo standard — `.prettierrc` `endOfLine: lf`), so a Windows download/drag-and-drop can't introduce CRLF churn in diffs. One-time hygiene.
+
+Files this session: deleted `client/src/lib/fixture-sync.ts` + `client/src/lib/outcome-sync.ts`; edited `server/lib/portal-data.ts`, `server/lib/outcome-sync.ts`, `server/db/schema/sports.ts` (new `event_outcome_observations` table — **`pnpm db:push` ran in Render**), `server/scripts/sync-outcomes.ts`, `server/routes/admin-portal.ts` (`GET /score-alerts`), `client/src/lib/portal-api.ts` (`fetchScoreAlerts` + `ScoreAlert`), `client/src/pages/portal/AdminPage.tsx` (Score alerts panel); new `server/scripts/correct-outcome.ts`; new `.gitattributes`. tsc **0** throughout, build exit 0, crossorigin fix intact (`vite.config.ts`/`index.html` untouched). DB op: `pnpm db:push` for the new table (no seed change).
+
+> **Operational note:** the WC opener correction was applied with `pnpm tsx server/scripts/correct-outcome.ts --apply` (no team args → defaults to Spain v Saudi → 4-0). For any future correction, pass args: `--home-like= --away-like= --home= --away= --reason= [--apply]`. Always dry-run first.
+
 ## Decisions made in earlier chats — DO NOT relitigate
 
 From arch doc Decided Rules §13 + decisions made in build chats:
@@ -755,4 +776,4 @@ Server admin endpoints:
 2. Skim the step 3b files (see arch §22 "Server + client files"): `db/schema/eliminator.ts`, `lib/eliminator-data.ts`, `lib/eliminator-settle.ts`, `routes/eliminator.ts`, seed Phase 6, and client `EliminatorPlayPage.tsx` / `EliminatorSurvivorsPage.tsx` / `EliminatorRules.tsx` / Home card / `portal-api.ts`. Step 3a.20 was a one-file Predict-card tweak (`PredictMatchRow.tsx`).
 3. Ask Wez what's next. Likely candidates: **(a)** Eliminator10 follow-ups (paid-PL flip = real fee + 75/25 pot + the LCCP 4.2.9 rules-display copy: commission %, no-winner/carry-over, claim window — see arch §22 regulatory posture; engagement extras); **(b)** the pre-Final settled-pool-visibility change (operational, agreed, awaiting go — arch §15); **(c)** WC retirement after the Final (~19–22 July, trigger "Read arch §15 and prepare the WC retirement files" — note this is the pools' WC; the Eliminator game is separate and retires on its own); **(d)** Resend + email verification (last pre-licence-grant code blocker); **(e)** UKGC application narrative.
 4. Eliminator launch state: `world-cup-2026-eliminator` is seeded live (24 rounds, Round 1 = Spain matchday, locks Sun 21 Jun 17:00). To re-time, **delete the game** (`DELETE FROM eliminator_games WHERE slug='world-cup-2026-eliminator';` — cascades) and `pnpm seed`; the `startFrom` cutoff is self-expiring.
-5. Working rules: propose file plans as **File | Folder | Action** tables with complete replacement files; verify `pnpm install --frozen-lockfile` + `pnpm build` exit 0 with **zero new tsc errors (baseline 15)**; ship `pnpm-lock.yaml` with any `package.json` change; flag `db:push` / `pnpm seed` needs; never touch `vite.config.ts` / `client/index.html` without flagging the step-2v crossorigin fix. Wait for "go" before bulk-changing files.
+5. Working rules: propose file plans as **File | Folder | Action** tables with complete replacement files; verify `pnpm install --frozen-lockfile` + `pnpm build` exit 0 with **zero tsc errors (baseline is now 0 since step 3b.13)**; ship `pnpm-lock.yaml` with any `package.json` change; flag `db:push` / `pnpm seed` needs; never touch `vite.config.ts` / `client/index.html` without flagging the step-2v crossorigin fix. Wait for "go" before bulk-changing files.

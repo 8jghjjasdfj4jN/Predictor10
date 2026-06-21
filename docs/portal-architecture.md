@@ -1,6 +1,6 @@
 # Predictor10 — Portal Architecture
 
-Last updated: 21 June 2026 (post step 3b.12) · Status: World Cup live end-to-end; Eliminator10 live; engagement/juice batches 1–2 shipped; scroll + late-entry-lock hardening done; licence-first prime directive adopted (§1).
+Last updated: 21 June 2026 (post step 3b.13) · Status: World Cup live end-to-end; Eliminator10 live; engagement/juice batches 1–2 shipped; scroll + late-entry-lock hardening done; licence-first prime directive adopted (§1); outcome-recording integrity hardened — confirm-before-commit + divergence alert + correction tool (§24); tsc baseline now 0.
 
 This doc describes the post-login user portal: navigation, pages, data, and the path from "user clicks a tier" to "predictions submitted." It assumes the schema in `server/db/schema/` and the public-facing pages in `client/src/components/predictor10/`.
 
@@ -845,7 +845,7 @@ These resolve previously-open questions. They flow into build:
 
 ### Decisions logged in step 3a.16 (June 2026 audit)
 
-- **Score-correction reconciliation (P3) — deliberately NOT automated.** `event_outcomes` is first-write-wins; a football-data score correction after the first write is never re-applied, so a corrected result won't re-score predictions or re-rank the table. This was reviewed and left as-is by choice: silently auto-overwriting a recorded score is the dangerous path — a transient bad FD value could flip a settled result and rewrite the whole leaderboard. An admin-only "stored score diverges from FD" alert was considered and deferred. If reconciliation is ever built, it must be a **manual-review** tool (surface the divergence, admin decides), never a silent auto-overwrite. Open.
+- **Score-correction reconciliation (P3) — RESOLVED in step 3b.13 (see §24).** Previously `event_outcomes` was first-write-wins with no reconciliation, so a football-data correction after the first write was never re-applied. The 21 Jun Spain 4-0 Saudi incident (recorded 5-0 from a transient FD value before a VAR offside, then stuck) drove the full fix: **confirm-before-commit** (a finished score must be stable across sync passes before it's committed/scored — prevents the transient ever landing), first-write-wins immutability retained, plus a **divergence alert** (Admin → Score alerts) and a deliberate, audited **correction tool** (`server/scripts/correct-outcome.ts`) as the backstop. Never a silent auto-overwrite. Full model in §24.
 - **Manual late-entry override has no governed in-app path.** During the WC opener, two late entrants were allowed past the per-match 1hr lock (Rule #7) by inserting their predictions directly via Render Shell SQL, tagged `ip_address='admin-shell-late-entry'` for the audit trail, orientation computed from the event row (not hardcoded) to prevent a reversed scoreline. Acceptable operator discretion for the informal friends' run. Before licence grant this should become a proper governed admin action (explicit reason field, audit row, ideally a bounded override window) rather than raw DB access — a regulator expects lock exceptions to be ruled and recorded, not improvised. Open.
 
 ---
@@ -1245,3 +1245,38 @@ All motion gates behind `prefers-reduced-motion` (also store-readiness).
 - **Batch 1 (step 3b.9, shipped):** app-wide tap feedback; reusable `AnimatedNumber` count-up; exact-score points-pill sheen in `PredictMatchRow` `FinishedView`; `.p10-skeleton` shimmer utility. Front-end only, no schema, `prefers-reduced-motion` respected.
 - **Batch 2 (step 3b.10, shipped):** against-the-grain reveal (finished-match banner when you backed a minority result and were right); settling-table row-climb (FLIP) in `PoolStandingsTable`; shield-shaped podium badges in distinct bold colours — gold/blue/red — for top-3 (`RankBadge` in `PoolStandingsTable`); form sparkline + earned badges on `AccountHistoryPage` (from existing settled history); reusable `Skeleton`/`SkeletonRows` applied to the Eliminator loading state; `lib/haptics.ts` wired to the Eliminator pick (Android web + future native; no-op on iOS web). Front-end only, no schema.
 - **Still blocked / needs prerequisites:** live "N matches live" ticker (paid football-data livescores add-on); exact-scores-in-a-row streak (needs a per-prediction results read endpoint — round-form sparkline covers form for now); pull-to-refresh (custom gesture on the single fixed-height scroller — iOS-overscroll-sensitive, needs on-device iteration).
+
+## 24. Outcome recording — confirm-before-commit + correction tooling (step 3b.13)
+
+The single most important integrity guarantee in the product: **a recorded match result is correct and final.** Points, standings, settlement and payouts all flow from `event_outcomes`, so a wrong score there poisons everything downstream. This section is the canonical model for how a finished score becomes a recorded outcome, and how a wrong one is prevented and (if ever needed) corrected.
+
+### The incident that drove this (21 Jun 2026)
+
+Spain 4-0 Saudi Arabia (WC opener) was recorded as **5-0**. football-data briefly published the match as FINISHED at 5-0 — a fifth goal that was then disallowed for offside (VAR). The 5-minute outcome-sync caught the transient 5-0, wrote it first-write-wins, and scored predictions against it. FD then corrected to 4-0, but first-write-wins meant the 5-0 stuck permanently: NickyD and Les (both 4-0) were scored 2 pts instead of the exact-score 5, and the wrong score showed on the site. The code did exactly what it was told — the model just never anticipated a post-whistle correction.
+
+### The model (three layers, defence in depth)
+
+**Layer 1 — confirm-before-commit (prevention, the primary defence).** A FINISHED full-time score is NOT written straight to `event_outcomes`. It is first buffered in `event_outcome_observations` (one row per event: eventId PK, homeScore, awayScore, observedAt). It is promoted to `event_outcomes` — and predictions scored — only once it has been observed **unchanged across sync passes spanning ≥ `CONFIRM_MIN_AGE_MS`** (currently 3 min; with the 5-min sync cron this means a result confirms ~5–10 min after FT). If the score changes between passes (the VAR case), the buffered value is replaced and the clock resets, so the transient value is never committed. Logic lives entirely in `server/lib/outcome-sync.ts`'s outcome-write path; `CONFIRM_MIN_AGE_MS` is a code constant with **no env/admin override** (a fairness rule, §1).
+
+**Layer 2 — first-write-wins immutability (unchanged).** Once committed, an `event_outcomes` row is never silently overwritten. A transient bad feed value can't rewrite a finished result on its own. This is the rule that was always right and stays.
+
+**Layer 3 — divergence alert + manual correction (backstop).** For the rare case where a wrong score is held by FD longer than the confirmation window (so it commits) and is corrected later: each sync compares FD's current score to the committed one and, if they differ, raises a **score-divergence alert** (an `audit_log` row, surfaced in Admin → Score alerts). It never auto-overwrites. An admin reviews and applies the fix deliberately via `server/scripts/correct-outcome.ts` (dry-run preview → `--apply`; re-scores via the real `scorePrediction`; writes an audit row). The detector suppresses alerts for scores an admin already set (so a deliberate correction vs a stale FD value isn't nagged) and de-dupes repeat alerts.
+
+### Why this is licence-clean
+
+Fairness + accuracy + clean audit trail (§1): results are stable before they count; nothing silently overwrites a recorded score; every correction is a deliberate, recorded human action. A regulator expects a result change to be ruled and logged, not improvised or automatic.
+
+### Key invariant (do not break)
+
+`event_outcomes` only ever holds **confirmed, final** scores. Every downstream consumer (predict-screen display via `match.outcome`, prediction scoring, pool settle `findReadyPoolIds`, eliminator settle `findReadyRoundIds`) keys off `event_outcomes` existence and is therefore unchanged — they all simply wait through the (short) confirmation window. The provisional buffer (`event_outcome_observations`) is never read by display or settlement. If you ever add a new results consumer, read `event_outcomes`, never the observations buffer.
+
+### Files
+
+- `server/db/schema/sports.ts` — `event_outcome_observations` table (needs `pnpm db:push`).
+- `server/lib/outcome-sync.ts` — confirm-before-commit gate + `maybeRaiseOutcomeDivergence` detector + `CONFIRM_MIN_AGE_MS`.
+- `server/scripts/correct-outcome.ts` — deliberate, audited correction tool (CLI-arg driven; dry-run default).
+- `server/routes/admin-portal.ts` `GET /score-alerts` + `client/.../AdminPage.tsx` Score alerts panel + `portal-api.ts fetchScoreAlerts`.
+
+### Supersedes
+
+This resolves the §14 "score-correction reconciliation (P3)" open item, which had been deliberately left as first-write-wins-only with a deferred manual-review alert. P3's stated requirement ("if reconciliation is ever built it must be manual-review, never silent auto-overwrite") is honoured — and prevention (Layer 1) was added on top so the common transient case never needs correcting at all.

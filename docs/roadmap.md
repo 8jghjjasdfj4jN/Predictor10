@@ -170,6 +170,17 @@ Key design calls (locked): rounds = **UK matchday** (06:00 cut-off, so late-nigh
 
 **Follow-ups (not yet built):** paid-PL flip (real fee + 75/25 pot + LCCP 4.2.9 rules-display copy — commission %, no-winner/carry-over, claim window); post-licence engagement extras. Regulatory note: paid Eliminator **is pool betting** (PBD + UKGC pool betting licence) — same frame as the pools.
 
+## Step 3b.13 — Outcome-recording integrity (June 2026) — BUILT + LIVE
+
+A foundational data-integrity fix (full canon in architecture **§24**). Triggered by a live incident: the WC opener Spain 4-0 Saudi was recorded as **5-0** — football-data briefly published a 5-0 FINISHED score (a goal later disallowed for offside by VAR), the 5-min sync caught it first-write-wins and scored against it, FD corrected to 4-0 but the 5-0 stuck (NickyD + Les under-scored).
+
+**Fix — three layers, defence in depth:**
+- **Confirm-before-commit (prevention):** a finished score is buffered in a new `event_outcome_observations` table and only promoted to `event_outcomes` (and scored) once seen unchanged across sync passes ≥ `CONFIRM_MIN_AGE_MS` (3 min). A transient/incorrect score never commits — the next pass sees it change and the clock resets. ~5–10 min to confirm a result with the 5-min cron.
+- **First-write-wins immutability (kept):** a committed outcome is never silently overwritten.
+- **Divergence alert + correction tool (backstop):** sync flags a committed score that no longer matches FD → **Admin → Score alerts**; admin corrects deliberately via `server/scripts/correct-outcome.ts` (dry-run → `--apply`, audited). Never auto-overwrites.
+
+Invariant preserved: `event_outcomes` only ever holds confirmed/final scores, so display + scoring + pool/eliminator settlement are unchanged. Also this session: **tsc baseline 15 → 0** (deleted two dead client files, fixed the `liveStatusLabel` DTO field); **`.gitattributes`** added (force LF). `pnpm db:push` ran for the new table; build green; crossorigin intact.
+
 ## Schema readiness — what's in the database from day one
 
 The schema lives in `server/db/schema/` split across seven files. Every table the product needs across its full lifecycle is present from the first migration. Tables fall into three groups:

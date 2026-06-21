@@ -11,7 +11,7 @@ I'm Wez, solo dev of **Predictor10** (predictor10.com) — a UK football pool-be
 **How I work (please follow):**
 - Deliver complete replacement files (I drag them into GitHub Desktop), presented as a **File | Folder | Action** table. No partial diffs.
 - **Recommend, don't give menus.** Push back once if you disagree, then execute on "go" / "gp" without relitigating. No bulk file changes before approval.
-- **Verify before every delivery:** `pnpm install --frozen-lockfile` clean + `pnpm build` exit 0 + **zero new tsc errors (baseline 15)**.
+- **Verify before every delivery:** `pnpm install --frozen-lockfile` clean + `pnpm build` exit 0 + **zero tsc errors (baseline 0)**.
 - Ship `pnpm-lock.yaml` in the same batch as any `package.json` change. Flag when a change needs `pnpm db:push` or `pnpm seed` (I run them in Render Shell). DB ops are psql one-liners: `psql "$DATABASE_URL" -c "..."`.
 - **Never touch `vite.config.ts` or `client/index.html`** without flagging the step-2v crossorigin fix (iPhone-refresh risk).
 - Mobile-first (480px max column, 44px tap targets, safe-area). I test on my phone after deploy.
