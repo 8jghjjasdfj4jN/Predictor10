@@ -201,3 +201,54 @@ condensed display type, and elegant utility surfaces throughout the product.
     }
   }
 }
+
+/* ── Juice (step 3b.9): RG-safe motion. Celebrates skill/standing, never
+   spending. All motion gated behind prefers-reduced-motion. See arch §23. ── */
+
+@keyframes p10-pop {
+  0% { transform: scale(0.82); }
+  55% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+@keyframes p10-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+  45% { box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.22); }
+}
+
+@keyframes p10-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Loading skeleton — visible base (greys), shimmer only when motion is allowed. */
+.p10-skeleton {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.09) 37%,
+    rgba(255, 255, 255, 0.04) 63%
+  );
+  background-size: 200% 100%;
+  border-radius: 0.5rem;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Tap feedback — gentle press-state on interactive elements, app-wide.
+     No base transition (so it never overrides Tailwind's own transitions);
+     the press is instant and snappy, which reads as tactile, not broken. */
+  button:not(:disabled):active,
+  [role="button"]:not([aria-disabled="true"]):active,
+  a[href]:active {
+    transform: scale(0.97);
+  }
+
+  /* One-shot reveal for an exact-score result — a skill win, not a stake. */
+  .p10-exact-reveal {
+    animation: p10-pop 0.5s ease-out 1, p10-glow 1.2s ease-out 1;
+  }
+
+  .p10-skeleton {
+    animation: p10-shimmer 1.4s ease-in-out infinite;
+  }
+}

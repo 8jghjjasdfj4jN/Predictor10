@@ -23,6 +23,14 @@ Target launch: **No hard date.** Earliest-possible: Round 1 of PL 2026/27 (Sat 2
 
 - **Remove the Eliminator10 launch promo (~Mon 29 Jun 2026).** Temporary one-time modal added in step 3b.6; see `docs/eliminator-promo-teardown.md`. Auto-hides after 28 Jun; manual code delete after that. Code-only, no DB.
 
+## Juice (engagement polish) — batches
+
+RG-safe engagement work. Full design rules + UKGC red lines in architecture **§23** (celebrate skill/standing, never spending or urgency-to-spend).
+
+- **Batch 1 (step 3b.9, shipped 21 Jun):** app-wide tap feedback, `AnimatedNumber` count-up, exact-score points-pill reveal, `.p10-skeleton` shimmer utility. Front-end only, no schema, `prefers-reduced-motion` respected.
+- **Queued (need backend / data / paid feed / native wrap):** skill streaks + badges + form sparkline; "against the grain" reveal on pick distribution; settling-table row-climb animation; live "N matches live" ticker (gated on the paid football-data livescores add-on); pull-to-refresh; haptics (Capacitor wrap).
+
+
 ## Build progress (status as of May 2026)
 
 The calendar weeks below were the original plan. Reality ran roughly to schedule, with the build progressing through a series of fine-grained steps inside the broader weekly themes. Current state:

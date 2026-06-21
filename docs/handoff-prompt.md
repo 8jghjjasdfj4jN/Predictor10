@@ -481,7 +481,36 @@ A run of UX work on top of the step-3b Eliminator launch. tsc baseline stayed **
 - **Back button (`BackButton.tsx`).** Replaced the "← Home" links on the lobby / play / survivors pages with a shared **Back** that returns to the *actual previous page* (`window.history.back()`, sensible fallback on cold load).
 - **Scroll-to-top fix (AppShell).** Some pages opened part-scrolled because the browser restored the previous scroll position after the reset, and the old reset targeted `<main>` (which never scrolls — the document does, the column is `min-h-screen`). Fix: `history.scrollRestoration = "manual"` + reset the **window** (and roots/main defensively) on every navigation, repeated after paint. Every page now opens pinned to top. **Shared shell — affects all pages** (intended); not vite.config/index.html, so no crossorigin risk.
 
-New client files this session: `EliminatorLobbyPage.tsx`, `EliminatorPromoModal.tsx`, `BackButton.tsx`. New route: `/eliminator` (lobby). Open decisions/concerns carried forward: WC Game-N renumber (above); **knockout rounds-vs-teams maths** — R32 is split into ~6 daily pick-rounds and "one-team-once" gets very tight in the thin late knockout rounds; flagged, not actioned, worth a proper think before paid.
+New client files this session: `EliminatorLobbyPage.tsx`, `EliminatorPromoModal.tsx`, `BackButton.tsx`. New route: `/eliminator` (lobby). Open decisions/concerns carried forward: WC Game-N renumber (decided 21 Jun — **NO**, the two WC games keep descriptive names; "Game N" applies only to future weekly PL/Champ games); **knockout rounds-vs-teams maths** — R32 is split into ~6 daily pick-rounds and "one-team-once" gets very tight in the thin late knockout rounds; flagged, not actioned, worth a proper think before paid.
+
+### Step 3b.8 — App-wide scroll-to-top fix: single fixed-height scroll container (21 June 2026)
+
+The recurring "pages open slightly scrolled down, top text tucked under the sticky bar" bug — finally fixed, and the fix is confirmed working on Wez's phone. History: the step-3b.7 AppShell reset and a follow-up `scroll-behavior: smooth` removal both failed to hold; pages still landed part-scrolled, and the offset tracked how far the *previous* page had been scrolled.
+
+**Root cause.** The **whole document** was the scroll container. The AppShell column was `min-h-screen`, so content grew the page past the viewport and the window/document scrolled. On same-document (SPA) navigation the browser carries that document scroll position into the next page, and the reset couldn't reliably beat it (worst on data-fetching pages like Eliminator, where async content reflows after the reset).
+
+**Fix — turn the portal into a fixed-height app frame so only the content area scrolls, never the document.** In `AppShell.tsx`:
+- Outer is now `h-[100dvh] overflow-hidden` (was `min-h-screen`); the centred column is `h-full`; `<main>` is the **single** scroller (`flex-1 min-h-0 overflow-y-auto overscroll-contain`). Top bar + bottom nav are fixed-height flex siblings (their existing `sticky` is now redundant but harmless, and helps the no-`dvh` fallback).
+- Scroll reset targets `main.scrollTop = 0` in a **`useLayoutEffect`** (before paint, no flash), plus a `requestAnimationFrame` + 80ms follow-up to beat late async content. Window / `documentElement` resets kept as a harmless fallback for any browser that ignores `dvh`.
+- `scroll-behavior: smooth` removed from `html` in `index.css` (it had been turning the reset into an interruptible animation).
+- `100dvh` + `overscroll-contain` are also the **correct native pattern** for the future iOS/Android (Capacitor) wrap — `dvh` tracks the usable height as mobile toolbars show/hide. So this fixes today's web bug and a guaranteed future native one.
+
+**Verified clear of the step-2v crossorigin fix:** `vite.config.ts` and `client/index.html` were untouched (diffed byte-for-byte against the prior build); the freshly built `index.html` still strips `crossorigin` from the module script + stylesheet and keeps it only on the font preconnect. `pnpm build` exit 0; tsc baseline unchanged (15).
+
+Files: `AppShell.tsx`, `index.css`.
+
+> **If this ever bites again — the invariant:** the portal must have exactly ONE scroll container (`main`); the app frame height must be fixed (`100dvh`, not `min-h-screen`); the scroll reset must target `main`, not the window. Do **not** reintroduce `min-h-screen` on the AppShell column, and do not add a second `overflow-y-auto` ancestor above `main` (a page may have its own inner scroller — e.g. the chat — that's fine, but the shell stays single-scroller).
+
+### Step 3b.9 — Juice pass #1: RG-safe polish (21 June 2026)
+
+First batch of "juice" (see arch §23 for the full design rules + UKGC red lines). The guiding rule: celebrate **skill, anticipation and standing**, never spending or urgency-to-spend. Batch 1 is all front-end, no schema, no backend, no new deps:
+- **Tap feedback** — a gentle press-state (slight scale + dim) on buttons and links, app-wide via `index.css`. Makes the whole app feel responsive in one change.
+- **Animated count-up numbers** — new reusable `AnimatedNumber.tsx`; numbers tick up to their value instead of snapping. Wired into the finished-prediction points first; reusable for pot/points elsewhere.
+- **Exact-score reveal** — a one-shot sheen on the points pill in the Predict-screen `FinishedView` when you land an exact score (5 pts). Celebrates a correct *prediction*, not a stake.
+- **Shimmer skeleton** — a `.p10-skeleton` utility (shimmer keyframes in `index.css`) to replace bare spinners on loading states going forward.
+- All animations are gated behind `prefers-reduced-motion` (accessibility + store-readiness).
+
+Files: `index.css`, `AnimatedNumber.tsx` (new), `PredictMatchRow.tsx`. Queued for later batches (need backend / data / paid feed / native wrap): skill **streaks + badges + form sparkline**; the **"against the grain"** reveal on pick distribution; the **settling-table row-climb** animation; **live "N matches live"** ticker (gated on the paid football-data livescores add-on); **pull-to-refresh**; **haptics** (Capacitor only).
 
 ## Decisions made in earlier chats — DO NOT relitigate
 

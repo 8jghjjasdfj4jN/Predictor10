@@ -1212,3 +1212,33 @@ A one-time welcome modal (`EliminatorPromoModal.tsx`, sentinel-fenced, mounted i
 
 ### Launch state (20 June 2026)
 Seeded live: `world-cup-2026-eliminator`, **24 rounds**, Round 1 = Spain matchday (Spain v Saudi, Belgium v Iran, Uruguay v Cape Verde, New Zealand v Egypt), locks **Sun 21 Jun 17:00**, entries close then. Free, open public registration. The WC **Knockout** game (`world-cup-2026-knockout-eliminator`) is added in step 3b.4 — seeded via `pnpm seed` (no schema change), opens for entry and starts at the Round of 32. e5 deployed and phone-tested. tsc baseline unchanged at **15**.
+
+## 23. Juice — engagement polish within UKGC limits (step 3b.9)
+
+"Juice" = the satisfying feedback (motion, reveals, count-ups, status) that makes the app feel alive. For a product heading to a UKGC pool-betting licence, juice has a hard fence: **celebrate skill, anticipation and standing — never spending, and never urgency to spend.**
+
+### The one rule
+The UKGC restricts celebratory effects that misrepresent outcomes — specifically dressing up a return below the stake as a win ("losses disguised as wins"), because feedback that mimics winning more often than it truly happens nudges players into a heightened, harm-prone state. The newer direction also pushes operators to keep real spend and session time visible rather than hidden. So: the safe place for celebration is a **correct prediction** and a **rising rank**; the unsafe place is the **act of entering / paying**.
+
+### Green — build freely
+- **Result reveals:** score flip-in on settle, points-pill sheen on an exact score, table rows climbing to their new rank. Tied to skill outcomes.
+- **Live texture:** the pulsing LIVE badge; a "N matches live" ticker; factual goal nudges ("Goal — Liverpool 1-0, your pick 2-1"). (Real-time goals need the paid football-data livescores add-on — the free tier has none.)
+- **Status / mastery:** skill streaks ("3 exact scores running"), skill badges ("called the upset"), a form sparkline, the planned Predictor Elo. Frame streaks as pride in past results, never "keep entering or lose your streak."
+- **"Against the grain":** after lock, surface where the table went vs the player, then the reveal when the contrarian was right. Reuses the pick-distribution data.
+- **Pure polish (zero RG risk):** count-up numbers, tap/press feedback, shimmer skeletons, smooth transitions, pull-to-refresh, light haptics — provided haptics/whooshes land on *locking a prediction* or navigation, never on payment.
+
+### Red — do not build
+- No celebratory effect (flash, sheen, sound, haptic) on **entering or paying**.
+- No urgency/pressure on **entry deadlines** (no flashing "pool closing!" countdowns to spend). Urgency to *finish predictions you've already entered* is fine; urgency to *spend* is not.
+- No **losses disguised as wins** — never present a 0-point or out-of-the-money result as a celebration; show people their true standing.
+- Nothing with **strong appeal to under-18s** (keep styling adult).
+- Never gamify away the **responsible-gambling tools** or hide real spend/session info.
+- Keep **social features light and inside the betting frame** (full fusion with a social product risks regulatory collision — see ideas.md / roadmap).
+- **Sound:** default off, opt-in, never on the stake, never loss-disguised-as-win. Deprioritised until post-licence with RG sign-off.
+
+### Accessibility
+All motion gates behind `prefers-reduced-motion` (also store-readiness).
+
+### Build batches
+- **Batch 1 (step 3b.9, shipped):** app-wide tap feedback; reusable `AnimatedNumber` count-up; exact-score points-pill sheen in `PredictMatchRow` `FinishedView`; `.p10-skeleton` shimmer utility. Front-end only, no schema, `prefers-reduced-motion` respected.
+- **Later batches (queued):** streaks + badges + form sparkline (needs computed/stored skill stats); against-the-grain reveal (UI on existing distribution data); settling-table row-climb; live ticker (paid feed); pull-to-refresh; haptics (Capacitor wrap).

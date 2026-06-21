@@ -37,6 +37,7 @@ import {
   type SavePredictionResponse,
 } from "@/lib/portal-api";
 import { PickDistribution } from "./PickDistribution";
+import { AnimatedNumber } from "./AnimatedNumber";
 
 type Props = {
   match: EntryMatch;
@@ -333,7 +334,7 @@ function FinishedView({
             <span className="font-['Barlow_Condensed'] text-[1.05rem] font-bold tabular-nums text-white/85">
               {pred.homeScore} – {pred.awayScore}
             </span>
-            <PointsPill points={points} tone={tone} />
+            <PointsPill points={points} tone={tone} exact={tone === "emerald"} />
           </>
         ) : (
           <>
@@ -363,19 +364,34 @@ function FtScoreBox({ value }: { value: number }) {
   );
 }
 
-function PointsPill({ points, tone }: { points: number; tone: "emerald" | "amber" | "rose" }) {
-  const label = points > 0 ? `+${points} pts` : `0 pts`;
+function PointsPill({
+  points,
+  tone,
+  exact,
+}: {
+  points: number;
+  tone: "emerald" | "amber" | "rose";
+  exact?: boolean;
+}) {
   return (
     <span
       className={cn(
         "inline-flex items-center rounded-full px-2 py-0.5",
-        "font-['Manrope'] text-[0.66rem] font-semibold",
+        "font-['Manrope'] text-[0.66rem] font-semibold tabular-nums",
         tone === "emerald" && "bg-emerald-400/15 text-emerald-200",
         tone === "amber" && "bg-amber-400/15 text-amber-200",
         tone === "rose" && "bg-rose-400/10 text-rose-200/80",
+        // One-shot reveal when you land an exact score (skill, not spend).
+        exact && "p10-exact-reveal",
       )}
     >
-      {label}
+      {points > 0 ? (
+        <>
+          +<AnimatedNumber value={points} durationMs={500} /> pts
+        </>
+      ) : (
+        "0 pts"
+      )}
     </span>
   );
 }
