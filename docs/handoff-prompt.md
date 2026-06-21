@@ -4,7 +4,7 @@
 
 ---
 
-# Predictor10 build — picking up after step 3a.15 (admin portal + WC informal-run prep)
+# Predictor10 build — picking up after step 3b.12 (scroll fix, juice batches 1–2, podium shields, Eliminator tile clarity, late-entry lock, licence-first directive)
 
 I'm a solo developer building Predictor10, a UK football score-prediction pool betting product. 3-person business forming around it. Targeting UKGC general pool betting licence (likely 2027 grant). **Build the real flow, mock the money** — payments table has `mode='mock'` until licence flip, then becomes `'live'`. Same code paths flip; no rewrites.
 

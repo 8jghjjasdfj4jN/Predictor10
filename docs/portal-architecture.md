@@ -1,6 +1,6 @@
 # Predictor10 — Portal Architecture
 
-Last updated: June 2026 (post step 3a.19) · Status: Step 3a complete; World Cup live end-to-end; group-stage engagement features shipped.
+Last updated: 21 June 2026 (post step 3b.12) · Status: World Cup live end-to-end; Eliminator10 live; engagement/juice batches 1–2 shipped; scroll + late-entry-lock hardening done; licence-first prime directive adopted (§1).
 
 This doc describes the post-login user portal: navigation, pages, data, and the path from "user clicks a tier" to "predictions submitted." It assumes the schema in `server/db/schema/` and the public-facing pages in `client/src/components/predictor10/`.
 
