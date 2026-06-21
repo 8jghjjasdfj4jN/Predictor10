@@ -28,7 +28,8 @@ Target launch: **No hard date.** Earliest-possible: Round 1 of PL 2026/27 (Sat 2
 RG-safe engagement work. Full design rules + UKGC red lines in architecture **§23** (celebrate skill/standing, never spending or urgency-to-spend).
 
 - **Batch 1 (step 3b.9, shipped 21 Jun):** app-wide tap feedback, `AnimatedNumber` count-up, exact-score points-pill reveal, `.p10-skeleton` shimmer utility. Front-end only, no schema, `prefers-reduced-motion` respected.
-- **Queued (need backend / data / paid feed / native wrap):** skill streaks + badges + form sparkline; "against the grain" reveal on pick distribution; settling-table row-climb animation; live "N matches live" ticker (gated on the paid football-data livescores add-on); pull-to-refresh; haptics (Capacitor wrap).
+- **Batch 2 (step 3b.10, shipped 21 Jun):** against-the-grain reveal; settling-table row-climb (FLIP); form sparkline + earned badges on History; reusable `Skeleton` applied to Eliminator loading; `lib/haptics.ts` on the Eliminator pick (Android web + future native; no-op on iOS web). Front-end only, no schema.
+- **Still blocked / needs prerequisites:** live "N matches live" ticker (paid football-data livescores add-on); exact-scores-in-a-row streak (needs a per-prediction results read endpoint); pull-to-refresh (custom gesture on the single fixed-height scroller — iOS-overscroll-sensitive, needs on-device iteration).
 
 
 ## Build progress (status as of May 2026)

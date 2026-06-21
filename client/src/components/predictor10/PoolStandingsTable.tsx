@@ -19,7 +19,7 @@ can always see their rank without expanding.
 Standalone callers (PoolTablePage) omit `maxRows` to get the full list.
 */
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { ChevronDown, ChevronRight, ChevronUp, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -166,6 +166,44 @@ type PoolStandingsTableProps = {
 export function PoolStandingsTable({ entries, maxRows, linkTo }: PoolStandingsTableProps) {
   const [expanded, setExpanded] = useState(false);
 
+  // ── Climb animation (arch §23) ──
+  // When the standings re-order between renders (a settle pass, a refetch),
+  // each row slides from its old position to its new one (FLIP). Pure visual,
+  // celebrates movement up the table. Skipped under prefers-reduced-motion.
+  const rowNodes = useRef<Map<string, HTMLElement>>(new Map());
+  const prevTops = useRef<Map<string, number>>(new Map());
+
+  useLayoutEffect(() => {
+    const reduce =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const newTops = new Map<string, number>();
+    rowNodes.current.forEach((node, id) => {
+      newTops.set(id, node.getBoundingClientRect().top);
+    });
+
+    if (!reduce) {
+      newTops.forEach((newTop, id) => {
+        const oldTop = prevTops.current.get(id);
+        const node = rowNodes.current.get(id);
+        if (oldTop == null || !node) return;
+        const delta = oldTop - newTop;
+        if (delta === 0) return;
+        node.style.transform = `translateY(${delta}px)`;
+        node.style.transition = "transform 0s";
+        void node.getBoundingClientRect(); // force reflow so the jump is applied
+        requestAnimationFrame(() => {
+          node.style.transition = "transform 420ms cubic-bezier(0.22, 1, 0.36, 1)";
+          node.style.transform = "";
+        });
+      });
+    }
+
+    prevTops.current = newTops;
+  });
+
   const total = entries.length;
   const shouldTruncate =
     typeof maxRows === "number" && maxRows > 0 && total > maxRows && !expanded;
@@ -186,7 +224,16 @@ export function PoolStandingsTable({ entries, maxRows, linkTo }: PoolStandingsTa
 
         <div className="divide-y divide-white/5">
           {visible.map((e) => (
-            <LeaderboardRow key={e.entryId} entry={e} href={linkTo?.(e)} />
+            <div
+              key={e.entryId}
+              ref={(el) => {
+                if (el) rowNodes.current.set(e.entryId, el);
+                else rowNodes.current.delete(e.entryId);
+              }}
+              className="will-change-transform"
+            >
+              <LeaderboardRow entry={e} href={linkTo?.(e)} />
+            </div>
           ))}
         </div>
 

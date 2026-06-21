@@ -512,6 +512,23 @@ First batch of "juice" (see arch §23 for the full design rules + UKGC red lines
 
 Files: `index.css`, `AnimatedNumber.tsx` (new), `PredictMatchRow.tsx`. Queued for later batches (need backend / data / paid feed / native wrap): skill **streaks + badges + form sparkline**; the **"against the grain"** reveal on pick distribution; the **settling-table row-climb** animation; **live "N matches live"** ticker (gated on the paid football-data livescores add-on); **pull-to-refresh**; **haptics** (Capacitor only).
 
+### Step 3b.10 — Juice pass #2: the buildable-now batch (21 June 2026)
+
+Built the rest of the RG-safe juice list that didn't need a paid feed or the native wrap. All front-end, no schema, no backend, no new deps; `prefers-reduced-motion` respected throughout; tsc baseline unchanged (15); crossorigin fix re-verified intact.
+
+- **Against-the-grain reveal** — on a finished match, if you backed a result the table mostly didn't *and* you were right, the distribution block shows an emerald "Against the grain — you called it" banner (with the exact-score pop). Computed in `MatchDistribution` (`PredictMatchRow.tsx`) from the outcome + your pick + the distribution majority; new `resultOf()` helper.
+- **Settling-table row-climb** — `PoolStandingsTable.tsx` now FLIP-animates rows to their new position whenever the standings re-order between renders (settle / refetch). Each visible row is wrapped in a ref'd div; a `useLayoutEffect` measures old vs new top and slides the delta. Reduced-motion skips it.
+- **Form sparkline + earned badges** — on `AccountHistoryPage.tsx`, a points-per-round mini SVG chart (`FormSparkline`, pure SVG, no deps) plus derived badges (`badgesFor`): Champion / Podium / In the money / Regular / Top score. All computed from existing settled-history data — no backend. (NOTE: an *exact-scores-in-a-row* streak still needs a per-prediction results read the client doesn't get yet — flagged below.)
+- **Shimmer skeletons** — new reusable `Skeleton.tsx` (`Skeleton`, `SkeletonRows`) using the `.p10-skeleton` utility; first applied to the Eliminator play loading state (replaced the spinner). Roll out to other loading states as touched.
+- **Haptics** — new `lib/haptics.ts` (`tap`, `success`) wired to the deliberate Eliminator team-pick. Honest support note: `navigator.vibrate` fires on Android web now, **no-ops on iOS Safari/PWA** (so nothing on Wez's iPhone web), and the call site is ready to swap to Capacitor Haptics for a real iPhone tap once the native wrap lands. Deliberately NOT wired to the predict screen (auto-save, no single lock-in moment) or to join/enter (RG: never celebrate the stake/entry action).
+
+New client files: `Skeleton.tsx`, `lib/haptics.ts`. Edited: `PredictMatchRow.tsx`, `PoolStandingsTable.tsx`, `AccountHistoryPage.tsx`, `EliminatorPlayPage.tsx`.
+
+**Still not done (genuine prerequisites, not deferral-by-preference):**
+- **Live "N matches live" ticker** — blocked on the paid football-data livescores add-on; the free tier carries no in-play scores, and the top-bar `LiveBadge` stays the hard-zero placeholder until that feed is bought.
+- **Exact-scores-in-a-row streak** — needs a small new read endpoint aggregating the user's per-prediction results (exact/result, chronological); not in any current client payload. Round-by-round *form* (sparkline) ships now as the available form feature. Build the streak endpoint as a focused follow-up if wanted.
+- **Pull-to-refresh** — held deliberately: a custom pull gesture on the new single fixed-height scroller is iOS-overscroll-sensitive and needs real-device iteration to feel right and not fight Safari; worth its own focused pass.
+
 ## Decisions made in earlier chats — DO NOT relitigate
 
 From arch doc Decided Rules §13 + decisions made in build chats:

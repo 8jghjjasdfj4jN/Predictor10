@@ -27,7 +27,7 @@ The "Live (in-play)" state lives behind live-sync — step 2j+.
 */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Lock } from "lucide-react";
+import { Lock, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   savePrediction,
@@ -99,6 +99,14 @@ function stageLabelFor(match: EntryMatch): string | null {
   if (!match.fdStage) return null;
   if (match.fdStage === "GROUP_STAGE" || match.fdStage === "REGULAR_SEASON") return null;
   return KNOCKOUT_STAGE_DISPLAY[match.fdStage] ?? null;
+}
+
+type ResultKind = "home" | "draw" | "away";
+
+function resultOf(home: number, away: number): ResultKind {
+  if (home > away) return "home";
+  if (home < away) return "away";
+  return "draw";
 }
 
 function pointsTone(points: number): "emerald" | "amber" | "rose" {
@@ -241,8 +249,34 @@ function MatchDistribution({
   entrantCount?: number;
 }) {
   if (!distribution) return null;
+
+  // "Against the grain" reveal (arch §23): celebrate skill — you backed a
+  // result the table mostly didn't, and you were right. Finished matches only.
+  const out = match.outcome;
+  const pred = match.prediction;
+  let contrarianWin = false;
+  if (out && pred && distribution.total > 0) {
+    const actual = resultOf(out.homeScore, out.awayScore);
+    const yours = resultOf(pred.homeScore, pred.awayScore);
+    const counts: Array<[ResultKind, number]> = [
+      ["home", distribution.homeWin],
+      ["draw", distribution.draw],
+      ["away", distribution.awayWin],
+    ];
+    const majority = counts.reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+    contrarianWin = yours === actual && yours !== majority;
+  }
+
   return (
     <div className="mt-2.5 border-t border-white/10 pt-2.5">
+      {contrarianWin && (
+        <div className="mb-2 flex items-center gap-2 rounded-lg border border-emerald-300/25 bg-emerald-400/[0.08] px-3 py-2 p10-exact-reveal">
+          <Sparkles className="h-3.5 w-3.5 flex-shrink-0 text-emerald-300" aria-hidden />
+          <span className="font-['Manrope'] text-[0.72rem] font-semibold text-emerald-100">
+            Against the grain — you called it
+          </span>
+        </div>
+      )}
       <PickDistribution
         data={distribution}
         entrantCount={entrantCount}

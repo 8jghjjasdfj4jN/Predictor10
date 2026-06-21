@@ -100,6 +100,74 @@ function StatStrip({ stats }: { stats: AccountHistory["stats"] }) {
   );
 }
 
+/**
+ * Your-form mini-chart (arch §23): points scored per settled round, oldest →
+ * newest. Pure SVG, no deps. Returns null with fewer than two data points.
+ * `vector-effect` keeps the stroke a constant 2px while the viewBox stretches.
+ */
+function FormSparkline({ points }: { points: number[] }) {
+  if (points.length < 2) return null;
+  const w = 240;
+  const h = 44;
+  const max = Math.max(...points, 1);
+  const min = Math.min(...points, 0);
+  const range = max - min || 1;
+  const stepX = w / (points.length - 1);
+  const coords = points.map((p, i) => {
+    const x = i * stepX;
+    const y = h - ((p - min) / range) * (h - 6) - 3; // 3px padding top/bottom
+    return [x, y] as const;
+  });
+  const d = coords
+    .map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`)
+    .join(" ");
+  const [lx, ly] = coords[coords.length - 1];
+  return (
+    <svg
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio="none"
+      className="h-11 w-full"
+      aria-hidden
+    >
+      <path
+        d={d}
+        fill="none"
+        stroke="rgb(52 211 153)"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+      />
+      <circle cx={lx} cy={ly} r="3" fill="rgb(110 231 183)" />
+    </svg>
+  );
+}
+
+/**
+ * Earned badges derived from real settled history (no backend needed).
+ * Skill / standing only — never anything about how much was spent.
+ */
+function badgesFor(history: AccountHistory): { label: string; sub: string }[] {
+  const { stats, entries } = history;
+  const out: { label: string; sub: string }[] = [];
+  if (entries.some((e) => e.finalRank === 1)) {
+    out.push({ label: "Champion", sub: "won a round" });
+  } else if (stats.bestRank !== null && stats.bestRank <= 3) {
+    out.push({ label: "Podium", sub: "top-3 finish" });
+  }
+  if (stats.cashes >= 1) {
+    out.push({ label: "In the money", sub: `${stats.cashes} cash${stats.cashes === 1 ? "" : "es"}` });
+  }
+  if (stats.rounds >= 5) {
+    out.push({ label: "Regular", sub: `${stats.rounds} rounds` });
+  }
+  const bestPts = entries.reduce((m, e) => Math.max(m, e.finalPoints), 0);
+  if (bestPts > 0) {
+    out.push({ label: "Top score", sub: `${bestPts} pts best` });
+  }
+  return out;
+}
+
 function EntryCard({ entry }: { entry: SettledEntry }) {
   const rankLabel = `${formatRankSuffix(entry.finalRank)} of ${entry.entryCount}`;
 
@@ -269,6 +337,51 @@ export default function AccountHistoryPage() {
       </header>
 
       <StatStrip stats={history.stats} />
+
+      {(() => {
+        const formPoints = [...history.entries]
+          .sort(
+            (a, b) =>
+              new Date(a.settledAt).getTime() - new Date(b.settledAt).getTime(),
+          )
+          .map((e) => e.finalPoints);
+        const badges = badgesFor(history);
+        if (formPoints.length < 2 && badges.length === 0) return null;
+        return (
+          <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+            {formPoints.length >= 2 && (
+              <>
+                <div className="flex items-center justify-between">
+                  <p className="font-['Manrope'] text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-white/45">
+                    Your form
+                  </p>
+                  <p className="font-['Manrope'] text-[0.6rem] text-white/35">
+                    points per round
+                  </p>
+                </div>
+                <FormSparkline points={formPoints} />
+              </>
+            )}
+            {badges.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {badges.map((b) => (
+                  <span
+                    key={b.label}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300/25 bg-emerald-400/[0.08] px-2.5 py-1"
+                  >
+                    <span className="font-['Manrope'] text-[0.66rem] font-bold text-emerald-100">
+                      {b.label}
+                    </span>
+                    <span className="font-['Manrope'] text-[0.58rem] text-emerald-200/55">
+                      {b.sub}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {empty ? (
         <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-8 text-center">

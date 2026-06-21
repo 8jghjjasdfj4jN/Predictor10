@@ -21,7 +21,9 @@ import { useEffect, useState } from "react";
 import { Link, useRoute } from "wouter";
 import { BookOpen, Check, Loader2, Lock, Trophy, Users } from "lucide-react";
 import { BackButton } from "@/components/predictor10/BackButton";
+import { SkeletonRows } from "@/components/predictor10/Skeleton";
 import { cn } from "@/lib/utils";
+import { tap } from "@/lib/haptics";
 import { toast } from "sonner";
 import {
   fetchEliminatorOverview,
@@ -148,6 +150,7 @@ export default function EliminatorPlayPage() {
     try {
       await submitEliminatorPick(slug, { roundId, eventId: fixture.eventId, side });
       const team = side === "home" ? fixture.homeTeam : fixture.awayTeam;
+      tap(); // light haptic on a deliberate pick (no-op on iOS web; see lib/haptics)
       toast.success(`${displayTeamName(team)} to win`);
     } catch (err) {
       setLocalPick(prev);
@@ -164,9 +167,8 @@ export default function EliminatorPlayPage() {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 px-4 py-12 text-white/50">
-        <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-        <p className="font-['Manrope'] text-xs">Loading…</p>
+      <div className="px-4 py-6">
+        <SkeletonRows count={4} />
       </div>
     );
   }
