@@ -1,39 +1,39 @@
 /*
-EliminatorLobbyPage (step 3b.5) — the Eliminator10 game-mode hub at
+EliminatorLobbyPage (step 3b.7) — the Eliminator10 game-mode hub at
 `/eliminator`.
 
-Home shows a single "Eliminator10" mode tile that routes here. The lobby lists
-the real games in three tabs, with a slim "do this next" action prompt up top.
+Home shows a single "Eliminator10" mode tile that routes here. The lobby is
+three self-contained tabs — no floating banner — so the screen always matches
+the tab you're on:
 
-Tabs:
   Your games   — games you hold an entry in that are still live (alive or
-                 eliminated-but-running). Settled ones move to Finished.
-  Open to join — games you're not in that are still joinable. Entry stays open
-                 to the first kick-off, so this is also the "what's coming"
-                 list; each card shows the join deadline.
+                 eliminated-but-running). A game that needs a pick shows a
+                 "Make pick" button on its own row. Settled ones move to
+                 Finished.
+  Open to join — games you're not in that are still joinable. Each shows when it
+                 STARTS (for an Eliminator the game starts and entries close at
+                 the same moment — the first kick-off) and a Join button.
   Finished     — settled games (your result shown if you played).
 
-Action prompt (step 3b.5 — replaces the old "Starting next" hero):
-  A slim, accurate nudge to the single most urgent thing, chosen by the
-  SOONEST lock/close time across {a pick that's due} ∪ {a game open to join}.
-  Honest label ("Pick due" / "New game") with the real lock time — no
-  "starting next" on something a week out. The prompt is a shortcut only; the
-  game ALSO appears as a normal row in its tab, so the tab count always matches
-  the rows on screen (no de-dupe, no count/row mismatch).
+The call-to-action lives on the card it belongs to (Make pick / Join), not in a
+banner above the tabs. Tab counts always match the rows shown.
 
 A running game you're NOT in (entry closed, can't join) isn't shown — no action
 to take — until it settles into Finished.
 
+Game naming (step 3b.7): staggered weekly games are named "{Competition} · Game
+N" so players can always tell which game they're in across Open to join, Your
+games and Finished. Names come straight from the game record; this page just
+renders game.name.
+
 Data: GET /api/eliminator (fetchEliminatorOverviews) — viewer-aware. No backend;
 buckets client-side. Rows deep-link to the play screen (/eliminator/:slug) and
 survivors board (/eliminator/:slug/survivors).
-
-Free for the WC demo; PL-ready (free now → real fee + 75/25 pot later).
 */
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, ArrowRight, Clock, Lock, Trophy, Users, Zap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Clock, Lock, Trophy, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   fetchEliminatorOverviews,
@@ -99,69 +99,18 @@ function sortByClose(a: EliminatorOverview, b: EliminatorOverview): number {
   return new Date(a.entryClosesAt).getTime() - new Date(b.entryClosesAt).getTime();
 }
 
-// ─── Action prompt ───────────────────────────────────────────────────────
-// The single most urgent thing, by soonest lock/close. A pick that's due, or
-// the soonest game open to join. Null when there's nothing to act on.
-
-type Action = { kind: "pick" | "join"; ov: EliminatorOverview } | null;
-
-function chooseAction(list: EliminatorOverview[]): Action {
-  const cands: { kind: "pick" | "join"; ov: EliminatorOverview; deadline: number }[] = [];
-  for (const o of list) {
-    if (o.entry.state === "alive" && o.currentRound && !o.currentRound.isLocked && o.currentRound.needsPick) {
-      cands.push({ kind: "pick", ov: o, deadline: Date.parse(o.currentRound.deadlineAt) });
-    } else if (o.entry.state === "none" && o.canJoin) {
-      cands.push({ kind: "join", ov: o, deadline: Date.parse(o.entryClosesAt) });
-    }
-  }
-  if (cands.length === 0) return null;
-  cands.sort((a, b) => a.deadline - b.deadline);
-  return { kind: cands[0].kind, ov: cands[0].ov };
-}
-
-function ActionPrompt({ action }: { action: Action }) {
-  if (!action) return null;
-  const ov = action.ov;
-  const href = `/eliminator/${ov.slug}`;
-  const isPick = action.kind === "pick";
-  const whenIso = isPick && ov.currentRound ? ov.currentRound.deadlineAt : ov.entryClosesAt;
-  const eyebrow = isPick ? "Pick due" : "New game";
-  const where = isPick && ov.currentRound ? `${ov.name} · ${ov.currentRound.name}` : ov.name;
-  const cta = isPick ? "Make pick" : ov.isFree ? "Join — free" : "Join";
-
-  return (
-    <Link
-      href={href}
-      className={cn(
-        "flex items-center gap-3 rounded-xl border border-emerald-400/45 bg-emerald-400/[0.10] px-4 py-3",
-        "transition hover:bg-emerald-400/[0.16]",
-        "outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/50",
-      )}
-    >
-      <Zap className="h-4 w-4 flex-shrink-0 text-emerald-300" aria-hidden />
-      <div className="min-w-0 flex-1">
-        <p className="m-0 font-['Manrope'] text-[0.7rem] font-bold uppercase tracking-[0.14em] text-emerald-300/80">
-          {eyebrow}
-        </p>
-        <p className="m-0 truncate font-['Manrope'] text-[0.82rem] font-semibold text-white">{where}</p>
-        <p className="m-0 font-['Manrope'] text-[0.72rem] text-emerald-100/70">
-          {isPick ? "Picks lock" : "Joins close"} {formatLock(whenIso)} · in {lockCountdown(whenIso)}
-        </p>
-      </div>
-      <span className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-emerald-500 px-3 py-2 font-['Manrope'] text-[0.76rem] font-bold text-[#0b1f14]">
-        {cta}
-        <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-      </span>
-    </Link>
-  );
-}
-
 // ─── Game row ────────────────────────────────────────────────────────────
 
 function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
   const watch = tab === "done";
   const href = watch ? `/eliminator/${ov.slug}/survivors` : `/eliminator/${ov.slug}`;
   const won = ov.entry.state === "won";
+  const pickDue =
+    tab === "your" &&
+    ov.entry.state === "alive" &&
+    !!ov.currentRound &&
+    !ov.currentRound.isLocked &&
+    ov.currentRound.needsPick;
 
   let sub: React.ReactNode;
   if (tab === "your") {
@@ -198,7 +147,7 @@ function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
       <span className="text-white/55">
         {ov.isFree ? "Free" : "Paid"}
         <span aria-hidden className="mx-1.5 text-white/25">·</span>
-        Joins close {formatLock(ov.entryClosesAt)}
+        Starts {formatLock(ov.entryClosesAt)}
       </span>
     );
   } else {
@@ -238,6 +187,11 @@ function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
       {tab === "open" ? (
         <span className="flex-shrink-0 rounded-lg bg-emerald-500 px-3 py-2 font-['Manrope'] text-[0.76rem] font-bold text-[#0b1f14]">
           {ov.isFree ? "Join" : "View"}
+        </span>
+      ) : pickDue ? (
+        <span className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-emerald-500 px-3 py-2 font-['Manrope'] text-[0.76rem] font-bold text-[#0b1f14]">
+          Make pick
+          <ArrowRight className="h-3.5 w-3.5" aria-hidden />
         </span>
       ) : watch ? (
         <span className="flex-shrink-0 rounded-md border border-white/15 px-2.5 py-1.5 font-['Manrope'] text-[0.66rem] font-bold uppercase tracking-[0.1em] text-white/60">
@@ -373,18 +327,15 @@ export default function EliminatorLobbyPage() {
     return out;
   }, [games]);
 
-  const action = useMemo(() => chooseAction(games ?? []), [games]);
-  const actionBucket: Tab | null = action ? (action.kind === "pick" ? "your" : "open") : null;
-
   const counts: Record<Tab, number> = {
     your: buckets.your.length,
     open: buckets.open.length,
     done: buckets.done.length,
   };
 
-  // Open on the tab that holds the action's game; otherwise first non-empty.
-  const resolvedActive: Tab =
-    active ?? actionBucket ?? TAB_ORDER.find((t) => counts[t] > 0) ?? "your";
+  // Land on Your games if you're in any (TAB_ORDER puts it first); otherwise the
+  // first non-empty tab.
+  const resolvedActive: Tab = active ?? TAB_ORDER.find((t) => counts[t] > 0) ?? "your";
 
   if (error) {
     return (
@@ -420,8 +371,6 @@ export default function EliminatorLobbyPage() {
     );
   }
 
-  // Every game lists as a row in its tab — the action prompt is a shortcut, not
-  // a replacement — so the tab count always matches what's on screen.
   const rows = buckets[resolvedActive];
 
   return (
@@ -429,8 +378,6 @@ export default function EliminatorLobbyPage() {
       <LobbyHeading />
 
       <div className="mt-4 flex flex-col gap-4">
-        <ActionPrompt action={action} />
-
         <TabStrip active={resolvedActive} counts={counts} onSelect={setActive} />
 
         <div className="flex flex-col gap-2.5">
