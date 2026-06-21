@@ -1327,6 +1327,11 @@ export type PoolEntriesPoolDto = {
   // Drives the "Round in progress · GW2 of 4" status pill per arch §8.6.
   currentMatchdayOrdinal: number | null;
   totalMatchdays: number;
+  // Tournament-aware status label for the standings pill (e.g. "Round of 32",
+  // "Group MD2 of 3", "Awaiting settlement"). Null for league-style comps,
+  // which use the matchday-driven label instead. Computed below and already
+  // read by the client (portal-api.ts / PoolTablePage.tsx). See arch §13 #22.
+  liveStatusLabel: string | null;
 };
 
 export type PoolEntriesDto = {
