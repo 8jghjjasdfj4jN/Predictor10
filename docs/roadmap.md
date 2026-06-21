@@ -13,11 +13,15 @@ Target launch: **No hard date.** Earliest-possible: Round 1 of PL 2026/27 (Sat 2
 1. **Build the real flow, mock the money.** Every screen, endpoint and ledger entry behaves as if real money is moving. Behind the scenes, payments are recorded with `mode = "mock"` and never hit a PSP. When the UKGC licence lands, the same code paths flip to `mode = "live"`.
 2. **Compliance-ready schema from day one — no structural migrations at licence flip.** All tables a licensed operator needs (KYC, AML, withdrawals, customer interactions, GAMSTOP, payment provider events) are in the schema from the first migration. They sit dormant during V1; the licensed work populates them rather than creating them.
 3. **Simplest viable architecture.** Single repo. Render hosting. Postgres + Drizzle. No Redis, no queue infrastructure — Render Cron Jobs handle settlement. The existing `football-data.org` feed stays untouched.
-4. **One product, one scoring rule.** Match-by-match score prediction. 5 points for exact score, 2 for correct result, 0 otherwise. Four tiers from £5 to £50 — The Fiver / The Tenner / The Pony / The Big One. (The Pound (£1) was in the original five-tier plan but retired in step 2m — see Build progress below.)
+4. **One product, one scoring rule.** Match-by-match score prediction. 5 points for exact score, 2 for correct result, 0 otherwise. League tiers: **three** — The Tenner (£10) / The Pony (£25) / The Big One (£50). (The Pound (£1) and The Fiver (£5) were retired — steps 2m and 3b.3; small stakes don't clear fees against the 75% player pool. See architecture §3.)
 5. **Round = multi-gameweek tournament block.** PL: 9 Rounds of 4-5 GWs each (38 GWs total). Champ: 9 Rounds of 5-6 MDs each (46 MDs total). One stake per Round; user predicts every match across all GWs in that Round. See architecture doc Section 3.
 6. **Anti-cheat by design.** Predictions for matches already kicked off are never accepted. Late entry is allowed up to 7 days into a Round but with explicit warning that already-played matches score 0. Lock = kickoff minus 1 hour, server-enforced.
 
 ---
+
+## Near-term teardown
+
+- **Remove the Eliminator10 launch promo (~Mon 29 Jun 2026).** Temporary one-time modal added in step 3b.6; see `docs/eliminator-promo-teardown.md`. Auto-hides after 28 Jun; manual code delete after that. Code-only, no DB.
 
 ## Build progress (status as of May 2026)
 

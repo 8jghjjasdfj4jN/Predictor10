@@ -36,6 +36,9 @@ tournament-style (WC), `'wait'` = league-style (PL/Champ).
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { ArrowRight, BookOpen, Check, Clock, Loader2, Trophy, Users } from "lucide-react";
+// ─── BEGIN TEMP: Eliminator10 launch promo (step 3b.6) — remove per docs/eliminator-promo-teardown.md
+import { EliminatorPromoModal } from "@/components/predictor10/EliminatorPromoModal";
+// ─── END TEMP: Eliminator10 launch promo
 import { cn } from "@/lib/utils";
 import {
   fetchCompetitions,
@@ -746,6 +749,9 @@ export default function HomePage() {
 
   return (
     <div className="pb-6">
+      {/* ─── BEGIN TEMP: Eliminator10 launch promo (step 3b.6) — remove per docs/eliminator-promo-teardown.md ─── */}
+      <EliminatorPromoModal />
+      {/* ─── END TEMP: Eliminator10 launch promo ─── */}
       <PageHeading />
       {cards.length > 0 && (
         <div className="flex flex-col gap-3 px-4 pt-2">
