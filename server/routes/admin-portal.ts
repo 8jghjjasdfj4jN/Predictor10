@@ -34,9 +34,10 @@ retention requirement.
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { hash } from "@node-rs/argon2";
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { users } from "../db/schema/users";
+import { auditLog } from "../db/schema/compliance";
 import { requireAuth } from "../lib/auth-middleware";
 import { writeAudit } from "../lib/audit";
 // ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md)
@@ -102,6 +103,65 @@ router.get(
         emailVerifiedAt: undefined,
       })),
     });
+  },
+);
+
+// ─── GET /score-alerts ──────────────────────────────────────────────────
+//
+// Surfaces "score divergence" alerts raised by the results-checker's detector
+// (server/lib/outcome-sync.ts) — cases where football-data now reports a
+// different result than the one already recorded. Read-only: the actual fix is
+// applied deliberately via server/scripts/correct-outcome.ts. An alert is
+// "resolved" once a later admin correction for the same event is recorded.
+router.get(
+  "/score-alerts",
+  requireAuth,
+  requireAdmin,
+  async (_req: Request, res: Response): Promise<void> => {
+    const rows = await db
+      .select({
+        id: auditLog.id,
+        entityId: auditLog.entityId,
+        before: auditLog.before,
+        after: auditLog.after,
+        ipAddress: auditLog.ipAddress,
+        metadata: auditLog.metadata,
+        createdAt: auditLog.createdAt,
+      })
+      .from(auditLog)
+      .where(and(eq(auditLog.action, "admin.action"), eq(auditLog.entityType, "event_outcome")))
+      .orderBy(desc(auditLog.createdAt))
+      .limit(100);
+
+    const corrections = rows.filter((r) => {
+      const md = (r.metadata ?? {}) as { tool?: string };
+      return (
+        r.ipAddress === "admin-shell-outcome-correction" ||
+        md.tool === "server/scripts/correct-outcome.ts"
+      );
+    });
+
+    const alerts = rows.filter((r) => ((r.metadata ?? {}) as { kind?: string }).kind === "outcome_divergence");
+
+    const payload = alerts.map((a) => {
+      const md = (a.metadata ?? {}) as { match?: string };
+      const before = (a.before ?? {}) as { homeScore?: number; awayScore?: number };
+      const after = (a.after ?? {}) as { homeScore?: number; awayScore?: number };
+      // Resolved if a correction for the same event was recorded after this alert.
+      const resolved = corrections.some(
+        (c) => c.entityId === a.entityId && c.createdAt > a.createdAt,
+      );
+      return {
+        id: a.id,
+        match: md.match ?? "Unknown match",
+        recorded: `${before.homeScore ?? "?"}-${before.awayScore ?? "?"}`,
+        footballData: `${after.homeScore ?? "?"}-${after.awayScore ?? "?"}`,
+        detectedAt: a.createdAt.toISOString(),
+        resolved,
+      };
+    });
+
+    res.json({ alerts: payload });
   },
 );
 

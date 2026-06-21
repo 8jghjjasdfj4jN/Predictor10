@@ -21,15 +21,18 @@ import {
   fetchAdminUsers,
   setAdminUserPaid,
   resetAdminUserPassword,
+  fetchScoreAlerts,
   AdminAccessError,
   type AdminUser,
+  type ScoreAlert,
 } from "@/lib/portal-api";
 import { cn } from "@/lib/utils";
-import { Loader2, Shield, KeyRound, Check, X } from "lucide-react";
+import { Loader2, Shield, KeyRound, Check, X, AlertTriangle } from "lucide-react";
 
 export default function AdminPage() {
   const { user } = useAuth();
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [alerts, setAlerts] = useState<ScoreAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [accessDenied, setAccessDenied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +60,13 @@ export default function AdminPage() {
         if (!cancelled) {
           setUsers(list);
           setLoading(false);
+        }
+        // Best-effort: load score alerts. Non-critical — never fail the page.
+        try {
+          const al = await fetchScoreAlerts();
+          if (!cancelled) setAlerts(al);
+        } catch {
+          /* ignore — alerts are a secondary surface */
         }
       } catch (err) {
         if (cancelled) return;
@@ -134,6 +144,9 @@ export default function AdminPage() {
           </button>
         </div>
       )}
+
+      {/* Score alerts — post-record divergences flagged by the results-checker */}
+      <ScoreAlertsPanel alerts={alerts} />
 
       {/* User list */}
       {loading ? (
@@ -214,6 +227,71 @@ export default function AdminPage() {
           onError={(msg) => setError(msg)}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Score alerts panel ───────────────────────────────────────────────
+
+function ScoreAlertsPanel({ alerts }: { alerts: ScoreAlert[] }) {
+  if (alerts.length === 0) return null;
+  const unresolved = alerts.filter((a) => !a.resolved);
+
+  return (
+    <div className="mt-5">
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="h-4 w-4 text-amber-300" />
+        <h2 className="font-['Barlow_Condensed'] text-lg font-bold uppercase tracking-[0.04em] text-white">
+          Score alerts
+        </h2>
+        {unresolved.length > 0 && (
+          <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[0.55rem] font-bold uppercase tracking-[0.18em] text-amber-300">
+            {unresolved.length} to review
+          </span>
+        )}
+      </div>
+      <p className="mt-1 text-[0.7rem] text-white/40">
+        Football-data reports a different result than the one recorded. Nothing is
+        changed automatically — review, then correct deliberately.
+      </p>
+
+      <ul className="mt-3 space-y-2">
+        {alerts.map((a) => (
+          <li
+            key={a.id}
+            className={cn(
+              "rounded-2xl border px-4 py-3",
+              a.resolved
+                ? "border-white/10 bg-[#070d0a] opacity-60"
+                : "border-amber-400/30 bg-amber-400/[0.06]",
+            )}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-white">{a.match}</p>
+                <p className="mt-0.5 text-xs text-white/60">
+                  Recorded <span className="font-semibold text-white">{a.recorded}</span>
+                  {" · "}football-data now{" "}
+                  <span className="font-semibold text-amber-200">{a.footballData}</span>
+                </p>
+                <p className="mt-0.5 text-[0.65rem] text-white/30">
+                  {new Date(a.detectedAt).toLocaleString("en-GB")}
+                </p>
+              </div>
+              <span
+                className={cn(
+                  "flex-shrink-0 rounded-full px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-[0.14em]",
+                  a.resolved
+                    ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                    : "border border-amber-400/40 bg-amber-400/15 text-amber-200",
+                )}
+              >
+                {a.resolved ? "Resolved" : "Review"}
+              </span>
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

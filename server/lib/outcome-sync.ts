@@ -51,10 +51,12 @@ scheduler logs all surface a structured summary.
 */
 
 import "dotenv/config";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db";
 import { competitions, events, eventOutcomes, stages } from "../db/schema/sports";
 import { predictions } from "../db/schema/pools";
+import { auditLog } from "../db/schema/compliance";
+import { writeAudit } from "./audit";
 import { ROUNDS_BY_CODE, roundForMatchday } from "./rounds";
 import {
   extractRegulationScore,
@@ -75,6 +77,11 @@ export type SyncResult = {
   outcomesWritten: number;
   eventsMarkedFinished: number;
   predictionsScored: number;
+
+  // Post-record score corrections detected (football-data now reports a
+  // different result than the one already recorded). Surfaced as an alert
+  // for an admin to review + apply deliberately — never auto-overwritten.
+  outcomeDivergencesDetected: number;
 
   // Fixture-refresh path (non-finished matches). Added in step 2l.
   fixturesInserted: number;
@@ -111,6 +118,105 @@ export function scorePrediction(
   return { points: 0, isExact: false, isCorrectResult: false };
 }
 
+// ─── Score-divergence detector ─────────────────────────────────────────────
+
+/**
+ * Called when first-write-wins blocked an outcome write (a score is already
+ * recorded) but football-data now reports a different 90-min score. Records a
+ * visible "score divergence" alert in the audit log for an admin to review and
+ * correct deliberately. NEVER overwrites the stored score.
+ *
+ * Returns true if a NEW alert was written this run, false otherwise.
+ *
+ * Quiet by design — it suppresses an alert when:
+ *   (a) the stored score was set by a deliberate admin correction (so a stale
+ *       football-data value isn't actionable — the admin already ruled), or
+ *   (b) an identical divergence alert already exists (the cron runs every few
+ *       minutes; we don't re-log an unchanged divergence each tick).
+ */
+async function maybeRaiseOutcomeDivergence(input: {
+  eventId: string;
+  match: string;
+  footballData: { home: number; away: number };
+}): Promise<boolean> {
+  const [stored] = await db
+    .select({ home: eventOutcomes.homeScore, away: eventOutcomes.awayScore })
+    .from(eventOutcomes)
+    .where(eq(eventOutcomes.eventId, input.eventId))
+    .limit(1);
+  if (!stored) return false;
+  if (stored.home === input.footballData.home && stored.away === input.footballData.away) {
+    return false; // identical — no divergence
+  }
+
+  const history = await db
+    .select({
+      before: auditLog.before,
+      after: auditLog.after,
+      ipAddress: auditLog.ipAddress,
+      metadata: auditLog.metadata,
+    })
+    .from(auditLog)
+    .where(and(eq(auditLog.entityId, input.eventId), eq(auditLog.action, "admin.action")))
+    .orderBy(desc(auditLog.createdAt))
+    .limit(30);
+
+  const asScore = (v: unknown): { home?: number; away?: number } => {
+    const o = (v ?? {}) as { homeScore?: number; awayScore?: number };
+    return { home: o.homeScore, away: o.awayScore };
+  };
+
+  // (a) Stored score came from a deliberate admin correction → authoritative.
+  const storedIsAdminSet = history.some((h) => {
+    const md = (h.metadata ?? {}) as { tool?: string };
+    const isCorrection =
+      h.ipAddress === "admin-shell-outcome-correction" ||
+      md.tool === "server/scripts/correct-outcome.ts";
+    if (!isCorrection) return false;
+    const a = asScore(h.after);
+    return a.home === stored.home && a.away === stored.away;
+  });
+  if (storedIsAdminSet) return false;
+
+  // (b) Already alerted for this exact divergence → don't duplicate.
+  const alreadyAlerted = history.some((h) => {
+    const md = (h.metadata ?? {}) as { kind?: string };
+    if (md.kind !== "outcome_divergence") return false;
+    const b = asScore(h.before);
+    const a = asScore(h.after);
+    return (
+      b.home === stored.home &&
+      b.away === stored.away &&
+      a.home === input.footballData.home &&
+      a.away === input.footballData.away
+    );
+  });
+  if (alreadyAlerted) return false;
+
+  console.warn(
+    `[outcome-sync] ⚠ SCORE DIVERGENCE — ${input.match}: recorded ` +
+      `${stored.home}-${stored.away}, football-data now ` +
+      `${input.footballData.home}-${input.footballData.away}. Not auto-applied. ` +
+      `Review in Admin → Score alerts; correct via correct-outcome.ts.`,
+  );
+
+  await writeAudit({
+    action: "admin.action",
+    entityType: "event_outcome",
+    entityId: input.eventId,
+    before: { homeScore: stored.home, awayScore: stored.away },
+    after: { homeScore: input.footballData.home, awayScore: input.footballData.away },
+    metadata: {
+      kind: "outcome_divergence",
+      source: "system-sync-divergence-detector",
+      match: input.match,
+      note: "football-data score differs from the recorded result; not auto-applied. Review and correct deliberately via server/scripts/correct-outcome.ts.",
+    },
+  });
+
+  return true;
+}
+
 // ─── Main entry point ────────────────────────────────────────────────────
 
 export async function syncOutcomes(): Promise<SyncResult> {
@@ -120,6 +226,7 @@ export async function syncOutcomes(): Promise<SyncResult> {
     outcomesWritten: 0,
     eventsMarkedFinished: 0,
     predictionsScored: 0,
+    outcomeDivergencesDetected: 0,
     fixturesInserted: 0,
     fixturesUpdated: 0,
     fixturesUnchanged: 0,
@@ -267,7 +374,23 @@ export async function syncOutcomes(): Promise<SyncResult> {
         })
         .onConflictDoNothing({ target: eventOutcomes.eventId })
         .returning({ eventId: eventOutcomes.eventId });
-      if (inserted.length > 0) result.outcomesWritten++;
+      if (inserted.length > 0) {
+        result.outcomesWritten++;
+      } else {
+        // First-write-wins blocked the write: an outcome is already recorded.
+        // We never silently overwrite it (arch §14 — a transient bad feed
+        // value must not be able to rewrite a finished result on its own).
+        // But if football-data now reports a DIFFERENT 90-min score, that's a
+        // genuine post-record correction (e.g. a VAR-disallowed goal after FT
+        // was first published). Raise a visible alert for an admin to review
+        // and apply deliberately via server/scripts/correct-outcome.ts.
+        const raised = await maybeRaiseOutcomeDivergence({
+          eventId,
+          match: `${ours?.homeTeam ?? "?"} v ${ours?.awayTeam ?? "?"}`,
+          footballData: { home, away },
+        });
+        if (raised) result.outcomeDivergencesDetected++;
+      }
 
       // Count status → 'finished' transitions on this run for the summary
       // line. The fixture-upsert helper already wrote the value to the DB;

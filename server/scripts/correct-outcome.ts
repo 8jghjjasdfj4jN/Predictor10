@@ -59,9 +59,14 @@ import {
 import { scorePrediction } from "../lib/outcome-sync";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CONFIG — the correction to apply. Edit these for a different fixture.
+// CONFIG — defaults for the current incident. Each can be overridden by a CLI
+// flag (see below), so future corrections need no file edit:
+//
+//   pnpm tsx server/scripts/correct-outcome.ts \
+//     --comp=world-cup-2026 --home-like=Brazil --away-like=Serbia \
+//     --home=2 --away=0 --reason="VAR correction" [--apply] [--force]
 // ─────────────────────────────────────────────────────────────────────────────
-const CONFIG = {
+const DEFAULTS = {
   competitionSlug: "world-cup-2026",
   // Case-insensitive substring match on the stored team names.
   homeTeamLike: "Spain",
@@ -77,6 +82,21 @@ const CONFIG = {
     "predictions. World Cup pool not settled at time of correction.",
 } as const;
 
+function argVal(name: string): string | undefined {
+  const pre = `--${name}=`;
+  const hit = process.argv.find((a) => a.startsWith(pre));
+  return hit ? hit.slice(pre.length) : undefined;
+}
+
+const CONFIG = {
+  competitionSlug: argVal("comp") ?? DEFAULTS.competitionSlug,
+  homeTeamLike: argVal("home-like") ?? DEFAULTS.homeTeamLike,
+  awayTeamLike: argVal("away-like") ?? DEFAULTS.awayTeamLike,
+  correctHome: argVal("home") !== undefined ? Number(argVal("home")) : DEFAULTS.correctHome,
+  correctAway: argVal("away") !== undefined ? Number(argVal("away")) : DEFAULTS.correctAway,
+  reason: argVal("reason") ?? DEFAULTS.reason,
+} as const;
+
 const APPLY = process.argv.includes("--apply");
 const FORCE = process.argv.includes("--force");
 
@@ -85,6 +105,9 @@ function log(s = "") {
 }
 
 async function main() {
+  if (!Number.isInteger(CONFIG.correctHome) || !Number.isInteger(CONFIG.correctAway)) {
+    throw new Error("--home and --away must be whole numbers (e.g. --home=4 --away=0).");
+  }
   log(`Predictor10 result correction — ${APPLY ? "APPLY" : "DRY RUN"}`);
   log("─".repeat(64));
 

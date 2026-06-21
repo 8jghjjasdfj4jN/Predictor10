@@ -610,6 +610,26 @@ export async function resetAdminUserPassword(userId: string, newPassword: string
   }
 }
 
+// ─── Score alerts (post-record divergence) ───────────────────────────────
+
+export type ScoreAlert = {
+  id: string;
+  match: string;
+  recorded: string; // what we have stored, e.g. "5-0"
+  footballData: string; // what football-data now reports, e.g. "4-0"
+  detectedAt: string;
+  resolved: boolean;
+};
+
+export async function fetchScoreAlerts(): Promise<ScoreAlert[]> {
+  const res = await fetch("/api/admin-portal/score-alerts", { credentials: "include" });
+  notify401IfNeeded(res);
+  if (res.status === 404) throw new AdminAccessError();
+  if (!res.ok) throw new Error(`Failed to load score alerts (${res.status}).`);
+  const data = (await res.json()) as { alerts: ScoreAlert[] };
+  return data.alerts;
+}
+
 // ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md)
 
 export type ChatMessage = {

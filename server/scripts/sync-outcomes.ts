@@ -40,6 +40,12 @@ function log(s: string) {
       `${result.eventsMarkedFinished} events marked finished, ` +
       `${result.predictionsScored} predictions scored`,
     );
+    if (result.outcomeDivergencesDetected > 0) {
+      log(
+        `  ⚠ ${result.outcomeDivergencesDetected} score divergence alert(s) raised — ` +
+        `review in Admin → Score alerts`,
+      );
+    }
     log(
       `  fixtures: ${result.fixturesInserted} inserted, ` +
       `${result.fixturesUpdated} updated, ` +
