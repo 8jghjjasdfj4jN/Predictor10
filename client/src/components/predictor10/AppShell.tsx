@@ -216,12 +216,30 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const mainRef = useRef<HTMLElement>(null);
 
-  // Every page should open pinned at the top. The scroll lives on <main>
-  // (flex-1 + overflow-y-auto), so reset that element on navigation; also
-  // nudge the window for any browser that scrolls the document instead.
+  // Stop the browser restoring the previous scroll position on back/forward.
+  // By default it re-applies the old position *after* our reset runs, which is
+  // what left some pages opening part-scrolled. We always open pinned to top.
   useEffect(() => {
-    mainRef.current?.scrollTo({ top: 0, left: 0 });
-    window.scrollTo(0, 0);
+    if (typeof window !== "undefined" && "scrollRestoration" in window.history) {
+      window.history.scrollRestoration = "manual";
+    }
+  }, []);
+
+  // Pin every page to the top on navigation. The whole document scrolls here
+  // (the column is min-h-screen, so <main> grows with its content rather than
+  // scrolling internally) — so the window is what needs resetting. We clear the
+  // window, both scroll roots, and main defensively, then repeat once after the
+  // next paint to beat any late layout shift from async content loading in.
+  useEffect(() => {
+    const toTop = () => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      if (document.body) document.body.scrollTop = 0;
+      mainRef.current?.scrollTo({ top: 0, left: 0 });
+    };
+    toTop();
+    const raf = requestAnimationFrame(toTop);
+    return () => cancelAnimationFrame(raf);
   }, [location]);
 
   return (
