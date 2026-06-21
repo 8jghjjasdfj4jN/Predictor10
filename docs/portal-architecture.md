@@ -1280,3 +1280,17 @@ Fairness + accuracy + clean audit trail (§1): results are stable before they co
 ### Supersedes
 
 This resolves the §14 "score-correction reconciliation (P3)" open item, which had been deliberately left as first-write-wins-only with a deferred manual-review alert. P3's stated requirement ("if reconciliation is ever built it must be manual-review, never silent auto-overwrite") is honoured — and prevention (Layer 1) was added on top so the common transient case never needs correcting at all.
+
+### Data sourcing — pre-licence vs real-money (HARD pre-licence requirement)
+
+The integrity *logic* above (confirm-before-commit → immutability → verify-and-alert → manual correction) is sound and mirrors how large regulated operators work. The weak link for real money is the *source*: **football-data.org is a free, hobbyist-grade feed — not settlement-grade.** It is acceptable for the free pre-licence WC/friends' run; it must NOT be the settlement source once real money is staked.
+
+Industry practice (researched 21 Jun 2026): professional books settle against an **official/authoritative data feed** (Sportradar, Genius Sports, Stats Perform/Opta — the leagues' official partners) and bolt on a **second "settlement verification" feed** whose job is to cross-check the result and **pause payouts on any mismatch** for human review before money moves (e.g. Entain/Ladbrokes/Coral run SportsDataIO's Settlement Verification Feed exactly this way). The recognised model is **two sources, not three**: one authoritative primary + one verification source that halts settlement on disagreement, plus a human to resolve.
+
+**Real-money requirement (before the licensed flip):**
+1. Move the settlement source off football-data.org to a **settlement-grade feed** (authoritative primary). Because Predictor10 is **pool betting, not a bookmaker**, we need accurate **fixtures + final results only** — not live odds/pricing — which is materially cheaper and narrows the provider shortlist (e.g. SportsDataIO settlement-verification, Sportmonks, Enetpulse, LSports; or an official feed if budget allows).
+2. Add a **second source as cross-check**: a result is only auto-confirmed when **both sources agree**; on disagreement, **hold settlement and raise an alert** (extend the existing Layer-3 divergence alert + Admin → Score alerts to a two-source compare). This generalises confirm-before-commit from "stable over time on one feed" to "agreement across two feeds."
+3. Keep the **manual, audited correction tool** as the human-resolution step (already built).
+4. Document the source(s), the agreement rule, the hold-and-review procedure, and the dispute/claim window in the published rules (LCCP 4.2.9) and the licence application narrative.
+
+Until then (pre-licence, free play): single football-data.org feed + confirm-before-commit + divergence alert is the proportionate, documented position. The flip to dual-source verification is a **named pre-licence-grant task** — see roadmap.
