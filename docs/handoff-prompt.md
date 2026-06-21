@@ -530,6 +530,14 @@ New client files: `Skeleton.tsx`, `lib/haptics.ts`. Edited: `PredictMatchRow.tsx
 - **Exact-scores-in-a-row streak** — needs a small new read endpoint aggregating the user's per-prediction results (exact/result, chronological); not in any current client payload. Round-by-round *form* (sparkline) ships now as the available form feature. Build the streak endpoint as a focused follow-up if wanted.
 - **Pull-to-refresh** — held deliberately: a custom pull gesture on the new single fixed-height scroller is iOS-overscroll-sensitive and needs real-device iteration to feel right and not fight Safari; worth its own focused pass.
 
+### Step 3b.11 — Eliminator Home-tile messaging clarity (21 June 2026)
+
+Fairness/clarity fix prompted by the Home tile reading as if a *running* Eliminator was still open to join for a week. Investigation outcome: the entry-close **logic is correct** — `seed.ts` sets each game's `entryClosesAt = firstRoundDeadline` (round 1's first kick-off; comment: "nobody banks a survival on a round they didn't actually play"). The running group-stage WC game (`world-cup-2026-eliminator`) closed when R1 locked. The "Entries close Sun 28 Jun" the tile showed was the **separate knockout game** (`world-cup-2026-knockout-eliminator`), which is fair to keep open until R32 because everyone in it starts together at the Round of 32. So: no logic bug — but the tile blurred the two games together, which for a UKGC-bound product is unacceptable (info must be clear and not misleading).
+
+Fix (`HomePage.tsx`, `EliminatorModeTile`): every line now names its game. `startingNextNote` split into `nextPickNote` (your due pick, in a game you're in) and `joinNote` (a separate joinable game), each carrying a `shortGameName` (strips the redundant "Eliminator10 ·" prefix → "World Cup" / "WC Knockout"). The status line names the single game you're alive in ("You're still in World Cup"); the join note renders as its own row with the eyebrow **"Another game open to join"** when you're already in a game (just "Open to join" otherwise), and always shows "{game} · Entries close {time}". Pick note and join note are separate boxes, so your next pick and a different open game can never be read as the same thing. Front-end only; no schema; tsc baseline 15; build clean; crossorigin fix intact.
+
+> **Operational must-check (not a code issue): `BYPASS_LATE_ENTRY`.** The join guard is `now <= entryClosesAt || BYPASS_LATE_ENTRY()` (server). Repo default is `false` (`env.example`). It's a **Render dashboard** env var — if it was ever set to `true` (e.g. to let mates join late during the casual run), late entry to a *running* game becomes possible, which would be the actual fairness hole. Confirm it's absent/false in Render (also surfaced in Admin as `bypassLateEntry`). With it off, the close-at-round-1 rule holds.
+
 ## Decisions made in earlier chats — DO NOT relitigate
 
 From arch doc Decided Rules §13 + decisions made in build chats:

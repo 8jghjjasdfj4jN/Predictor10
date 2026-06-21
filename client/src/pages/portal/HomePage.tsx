@@ -447,11 +447,16 @@ function TournamentCard({ state }: { state: CompState }) {
 // once weekly PL eliminators run in parallel, and gives future game modes a
 // natural home below the competitions.
 
-function startingNextNote(games: EliminatorOverview[]): {
-  eyebrow: string;
-  iso: string;
-  label: string;
-} | null {
+// Display name without the redundant "Eliminator10 ·" prefix the seed uses,
+// so tile lines read "World Cup" / "WC Knockout" rather than repeating the mode.
+function shortGameName(name: string): string {
+  return name.replace(/^Eliminator10\s*·?\s*/i, "").trim() || name;
+}
+
+// Your soonest pick that's due, in a game you're alive in.
+function nextPickNote(games: EliminatorOverview[]):
+  | { eyebrow: string; iso: string; game: string }
+  | null {
   const pickDue = games
     .filter(
       (g) =>
@@ -465,32 +470,41 @@ function startingNextNote(games: EliminatorOverview[]): {
         new Date(a.currentRound!.deadlineAt).getTime() -
         new Date(b.currentRound!.deadlineAt).getTime(),
     );
-  if (pickDue[0] && pickDue[0].currentRound) {
-    const r = pickDue[0].currentRound;
-    return {
-      eyebrow: r.ordinal === 1 ? "Starting soon" : "Pick due",
-      iso: r.deadlineAt,
-      label: "Picks lock",
-    };
-  }
+  if (!pickDue[0] || !pickDue[0].currentRound) return null;
+  return {
+    eyebrow: pickDue[0].currentRound.ordinal === 1 ? "Starting soon" : "Pick due",
+    iso: pickDue[0].currentRound.deadlineAt,
+    game: shortGameName(pickDue[0].name),
+  };
+}
+
+// A *separate* game that's still open to join (soonest to close first). Named
+// explicitly so its entry deadline can never be mistaken for a game you're
+// already in — that distinction matters for clear, non-misleading messaging.
+function joinNote(games: EliminatorOverview[]):
+  | { iso: string; game: string }
+  | null {
   const joinable = games
     .filter((g) => g.canJoin && g.entry.state === "none")
-    .sort((a, b) => new Date(a.entryClosesAt).getTime() - new Date(b.entryClosesAt).getTime());
-  if (joinable[0]) {
-    return { eyebrow: "Open to join", iso: joinable[0].entryClosesAt, label: "Entries close" };
-  }
-  return null;
+    .sort(
+      (a, b) =>
+        new Date(a.entryClosesAt).getTime() - new Date(b.entryClosesAt).getTime(),
+    );
+  if (!joinable[0]) return null;
+  return { iso: joinable[0].entryClosesAt, game: shortGameName(joinable[0].name) };
 }
 
 function EliminatorModeTile({ overviews }: { overviews: EliminatorOverview[] }) {
   const [rulesOpen, setRulesOpen] = useState(false);
   const games = overviews;
-  const aliveCount = games.filter((g) => g.entry.state === "alive").length;
+  const aliveGames = games.filter((g) => g.entry.state === "alive");
+  const aliveCount = aliveGames.length;
   const wonCount = games.filter((g) => g.entry.state === "won").length;
   const joinCount = games.filter((g) => g.canJoin && g.entry.state === "none").length;
   const allFree = games.length > 0 && games.every((g) => g.isFree);
   const entered = aliveCount > 0 || wonCount > 0;
-  const note = startingNextNote(games);
+  const pick = nextPickNote(games);
+  const join = joinNote(games);
 
   return (
     <CardShell entered={entered}>
@@ -504,35 +518,60 @@ function EliminatorModeTile({ overviews }: { overviews: EliminatorOverview[] }) 
 
       {aliveCount > 0 ? (
         <YoureInLine>
-          You're still in {aliveCount} {aliveCount === 1 ? "game" : "games"}
+          {aliveCount === 1
+            ? `You're still in ${shortGameName(aliveGames[0].name)}`
+            : `You're still in ${aliveCount} games`}
         </YoureInLine>
       ) : wonCount > 0 ? (
         <p className="m-0 mt-1.5 inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] font-semibold text-amber-200">
           <Trophy className="h-3.5 w-3.5 flex-shrink-0" aria-hidden />
           You outlasted the field
         </p>
-      ) : joinCount > 0 ? (
+      ) : joinCount > 1 ? (
         <p className="m-0 mt-1.5 inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] text-white/55">
           <Users className="h-3.5 w-3.5 flex-shrink-0" aria-hidden />
-          <span className="font-semibold text-emerald-200">{joinCount}</span>
-          {joinCount === 1 ? " game" : " games"} open to join
+          <span className="font-semibold text-emerald-200">{joinCount}</span> games open to join
         </p>
       ) : null}
 
-      {note && (
+      {/* Your next pick — in a game you're already in. Named so its deadline is
+          never confused with a separate game's entry deadline. */}
+      {pick && (
         <div className="my-3 rounded-[10px] border border-white/[0.04] bg-black/25 px-3.5 py-3 font-['Manrope'] text-[0.78rem] leading-[1.5] text-white/55">
           <span className="text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-emerald-300/70">
-            {note.eyebrow}
+            {pick.eyebrow}
           </span>
           <br />
           <span className="text-white">
-            {note.label} {formatLock(note.iso)}
+            {pick.game} · Picks lock {formatLock(pick.iso)}
           </span>
-          <span> · in {lockCountdown(note.iso)}</span>
+          <span> · in {lockCountdown(pick.iso)}</span>
         </div>
       )}
 
-      <div className={cn(note ? "mt-1" : "mt-4", "flex flex-col gap-2")}>
+      {/* A separate game open to join. Always names the game and, when you're
+          already in another game, says "another game" so it's unmistakably not
+          the one you're playing. */}
+      {join && (
+        <div
+          className={cn(
+            "rounded-[10px] border border-white/[0.04] bg-black/25 px-3.5 py-3",
+            "font-['Manrope'] text-[0.78rem] leading-[1.5] text-white/55",
+            pick ? "mb-3" : "my-3",
+          )}
+        >
+          <span className="text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-emerald-300/70">
+            {entered ? "Another game open to join" : "Open to join"}
+          </span>
+          <br />
+          <span className="text-white">
+            {join.game} · Entries close {formatLock(join.iso)}
+          </span>
+          <span> · in {lockCountdown(join.iso)}</span>
+        </div>
+      )}
+
+      <div className={cn(pick || join ? "mt-1" : "mt-4", "flex flex-col gap-2")}>
         <PrimaryButton href="/eliminator">
           <span>View games</span>
           <ArrowRight className="h-4 w-4" aria-hidden />
