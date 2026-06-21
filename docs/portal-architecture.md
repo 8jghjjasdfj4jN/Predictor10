@@ -8,6 +8,8 @@ This doc describes the post-login user portal: navigation, pages, data, and the 
 
 ## 1. First principles
 
+> **Prime directive — licence-first (added 21 Jun 2026).** Predictor10 is heading for a UK Gambling Commission pool-betting licence. Every feature, every user flow, and every architectural decision must hold UK pool-betting / gambling-licence rules in the highest regard — fairness, clear and non-misleading information, responsible-gambling protections, consistent rule application, and a clean audit trail. When a choice trades off "nicer/faster/more engaging" against "licence-clean," licence-clean wins. There must be **no mechanism — env var, admin toggle, or otherwise — that can silently override a fairness rule on the live product** (see §22 entry deadlines, the dev-only late-entry lock in `server/lib/late-entry.ts`, and §23 the RG-safe juice rules). New work is checked against this before it ships. Wez will share the full licence application with Claude once purchased, so Claude can act as a domain expert through the application process.
+
 1. **Build the real flow, mock the money.** Every screen, button, and database row that exists in the licensed product exists today, with `payments.mode = 'mock'` flipping to `'live'` on licence grant. No screens are added at flip; no screens are removed.
 2. **One pool entry = one stake on one round.** Users do not "join a tier" once and stay forever. They enter a specific pool (Competition × Tier × Round) round-by-round.
 3. **Mobile-first, max 480px column on desktop.** Already established by `Dashboard.tsx`. Hold the line.

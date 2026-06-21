@@ -19,6 +19,7 @@ import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { requireAuth } from "../lib/auth-middleware";
 import { writeAudit } from "../lib/audit";
+import { lateEntryBypassActive } from "../lib/late-entry";
 import {
   enterPool,
   getAccountHistory,
@@ -137,7 +138,7 @@ router.post("/pools/:id/enter", requireAuth, async (req: Request, res: Response)
         metadata: {
           poolId,
           paymentId: outcome.paymentId,
-          bypassLateEntry: process.env.BYPASS_LATE_ENTRY === "true",
+          bypassLateEntry: lateEntryBypassActive(),
         },
       });
     }

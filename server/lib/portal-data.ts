@@ -11,6 +11,7 @@ route handlers.
 
 import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db";
+import { lateEntryBypassActive } from "./late-entry";
 import { competitions, stages, events, eventOutcomes } from "../db/schema/sports";
 import { leagues } from "../db/schema/leagues";
 import { pools, poolEntries, predictions } from "../db/schema/pools";
@@ -507,7 +508,7 @@ export async function getPoolDetail(
   }
 
   // Window state.
-  const bypassActive = process.env.BYPASS_LATE_ENTRY === "true";
+  const bypassActive = lateEntryBypassActive();
   const nowMs = Date.now();
   const closesAtMs = row.poolClosesAt.getTime();
   const firstKickoffMs = firstKickoffDate ? firstKickoffDate.getTime() : null;
@@ -628,7 +629,7 @@ export async function enterPool(opts: {
   if (!row) return { ok: false, error: "POOL_NOT_FOUND" };
   if (row.poolStatus !== "open") return { ok: false, error: "POOL_NOT_OPEN" };
 
-  const bypassActive = process.env.BYPASS_LATE_ENTRY === "true";
+  const bypassActive = lateEntryBypassActive();
   if (Date.now() > row.poolClosesAt.getTime() && !bypassActive) {
     return { ok: false, error: "LATE_ENTRY_CLOSED" };
   }

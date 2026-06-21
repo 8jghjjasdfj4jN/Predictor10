@@ -538,6 +538,14 @@ Fix (`HomePage.tsx`, `EliminatorModeTile`): every line now names its game. `star
 
 > **Operational must-check (not a code issue): `BYPASS_LATE_ENTRY`.** The join guard is `now <= entryClosesAt || BYPASS_LATE_ENTRY()` (server). Repo default is `false` (`env.example`). It's a **Render dashboard** env var — if it was ever set to `true` (e.g. to let mates join late during the casual run), late entry to a *running* game becomes possible, which would be the actual fairness hole. Confirm it's absent/false in Render (also surfaced in Admin as `bypassLateEntry`). With it off, the close-at-round-1 rule holds.
 
+### Step 3b.12 — Lock the late-entry bypass to testing only + licence-first principle (21 June 2026)
+
+Licence-integrity hardening. The `BYPASS_LATE_ENTRY` switch (which, when on, let users join an Eliminator after round 1 locked, and enter a pool after its window closed) is now **honoured only outside production**. New `server/lib/late-entry.ts` exports `lateEntryBypassActive()` = `NODE_ENV !== "production" && BYPASS_LATE_ENTRY === "true"`. All four read sites now go through it (`eliminator-data.ts`, `portal-data.ts` ×2, `routes/portal.ts`). In the live app the entry/late-entry deadlines are **always** enforced — no env var, admin, or anything can override a fairness rule in production. The switch stays usable for local/staging testing only; the client "Dev mode: late-entry override active" warning can now only ever appear off-production. Front-end untouched; tsc baseline 15 (the one `portal-data.ts` baseline error shifted from L1610→L1611 due to an added import — same error, not new); build clean; crossorigin intact.
+
+Why: a UK pool-betting licence expects fairness rules applied consistently with no silent override path on the live service. A deploy-flippable bypass was a governance smell even though it was off and not an in-app admin toggle.
+
+**Licence-first prime directive (now canon — arch §1 top).** Every feature, flow, and architecture decision must hold UK pool-betting / gambling-licence rules in the highest regard (fairness, clear/non-misleading info, RG protections, consistent rule application, clean audit trail). Licence-clean beats nicer/faster/more-engaging whenever they conflict. No mechanism may silently override a fairness rule on the live product. Check new work against this before shipping. **Wez will share the full licence application with Claude once purchased**, so Claude can act as a domain expert and help get the application approved — treat that as a standing goal.
+
 ## Decisions made in earlier chats — DO NOT relitigate
 
 From arch doc Decided Rules §13 + decisions made in build chats:

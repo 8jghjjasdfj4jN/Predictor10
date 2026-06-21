@@ -19,6 +19,7 @@ competition-agnostic — it carries to the Premier League unchanged.
 
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "../db";
+import { lateEntryBypassActive } from "./late-entry";
 import { competitions, events } from "../db/schema/sports";
 import { users } from "../db/schema/users";
 import { payments } from "../db/schema/payments";
@@ -122,7 +123,8 @@ export type EliminatorOverviewDto = {
   } | null;
 };
 
-const BYPASS_LATE_ENTRY = () => process.env.BYPASS_LATE_ENTRY === "true";
+// Locked to testing only — in production this is always false. See lib/late-entry.
+const BYPASS_LATE_ENTRY = lateEntryBypassActive;
 
 export async function getEliminatorOverview(
   slug: string,
