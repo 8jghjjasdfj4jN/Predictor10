@@ -10,8 +10,9 @@ is settled, entrant-only while it's live.
 */
 
 import { useEffect, useState } from "react";
-import { Link, useRoute } from "wouter";
-import { ArrowLeft, Loader2, Lock, Trophy } from "lucide-react";
+import { useRoute } from "wouter";
+import { Loader2, Lock, Trophy } from "lucide-react";
+import { BackButton } from "@/components/predictor10/BackButton";
 import { cn } from "@/lib/utils";
 import {
   fetchEliminatorSurvivors,
@@ -134,15 +135,7 @@ export default function EliminatorSurvivorsPage() {
 }
 
 function BackToGame({ slug }: { slug: string }) {
-  return (
-    <Link
-      href={`/eliminator/${slug}`}
-      className="inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] font-semibold text-white/55 transition hover:text-white"
-    >
-      <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
-      <span>Back to game</span>
-    </Link>
-  );
+  return <BackButton fallbackHref={`/eliminator/${slug}`} />;
 }
 
 function SectionLabel({ children, className }: { children: React.ReactNode; className?: string }) {

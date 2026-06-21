@@ -19,7 +19,8 @@ hidden until the round locks — enforced server-side, surfaced here as a note.
 
 import { useEffect, useState } from "react";
 import { Link, useRoute } from "wouter";
-import { ArrowLeft, BookOpen, Check, Loader2, Lock, Trophy, Users } from "lucide-react";
+import { BookOpen, Check, Loader2, Lock, Trophy, Users } from "lucide-react";
+import { BackButton } from "@/components/predictor10/BackButton";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -250,15 +251,7 @@ export default function EliminatorPlayPage() {
 // ─── Pieces ──────────────────────────────────────────────────────────────
 
 function BackLink() {
-  return (
-    <Link
-      href="/"
-      className="inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] font-semibold text-white/55 transition hover:text-white"
-    >
-      <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
-      <span>Home</span>
-    </Link>
-  );
+  return <BackButton fallbackHref="/eliminator" />;
 }
 
 /** The "when it starts" banner — Round N + lock day/time + countdown. */

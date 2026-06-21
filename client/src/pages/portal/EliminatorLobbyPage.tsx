@@ -33,12 +33,13 @@ survivors board (/eliminator/:slug/survivors).
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, ArrowRight, Clock, Lock, Trophy, Users } from "lucide-react";
+import { ArrowRight, Clock, Lock, Trophy, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   fetchEliminatorOverviews,
   type EliminatorOverview,
 } from "@/lib/portal-api";
+import { BackButton } from "@/components/predictor10/BackButton";
 
 // ─── Formatters ──────────────────────────────────────────────────────────
 
@@ -117,26 +118,30 @@ function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
     if (ov.entry.state === "alive") {
       sub = (
         <>
-          <span className="inline-flex items-center gap-1.5 text-emerald-200">
+          {ov.currentRound && (
+            <span className="block">
+              <span className="font-semibold text-white/85">{ov.currentRound.name}</span>
+              {!ov.currentRound.isLocked ? (
+                <>
+                  <span aria-hidden className="mx-1.5 text-white/25">·</span>
+                  <span className={cn(ov.currentRound.needsPick ? "font-semibold text-emerald-300" : "text-white/55")}>
+                    {ov.currentRound.needsPick ? "Pick due" : "Picked"} · locks in {lockCountdown(ov.currentRound.deadlineAt)}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span aria-hidden className="mx-1.5 text-white/25">·</span>
+                  <span className="inline-flex items-center gap-1 text-white/55">
+                    <Lock className="h-3 w-3" aria-hidden /> awaiting result
+                  </span>
+                </>
+              )}
+            </span>
+          )}
+          <span className="mt-0.5 flex items-center gap-1.5 text-emerald-200/80">
             <Users className="h-3.5 w-3.5" aria-hidden />
             Still in · {ov.aliveCount} of {ov.entrantCount} left
           </span>
-          {ov.currentRound && !ov.currentRound.isLocked && (
-            <>
-              <span aria-hidden className="mx-1.5 text-white/25">·</span>
-              <span className={cn(ov.currentRound.needsPick ? "font-semibold text-emerald-300" : "text-white/55")}>
-                {ov.currentRound.needsPick ? "Pick due" : "Picked"} · locks in {lockCountdown(ov.currentRound.deadlineAt)}
-              </span>
-            </>
-          )}
-          {ov.currentRound && ov.currentRound.isLocked && (
-            <>
-              <span aria-hidden className="mx-1.5 text-white/25">·</span>
-              <span className="inline-flex items-center gap-1 text-white/55">
-                <Lock className="h-3 w-3" aria-hidden /> awaiting result
-              </span>
-            </>
-          )}
         </>
       );
     } else {
@@ -146,6 +151,12 @@ function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
     sub = (
       <span className="text-white/55">
         {ov.isFree ? "Free" : "Paid"}
+        {ov.currentRound && (
+          <>
+            <span aria-hidden className="mx-1.5 text-white/25">·</span>
+            {ov.currentRound.name}
+          </>
+        )}
         <span aria-hidden className="mx-1.5 text-white/25">·</span>
         Starts {formatLock(ov.entryClosesAt)}
       </span>
@@ -182,7 +193,7 @@ function GameRow({ ov, tab }: { ov: EliminatorOverview; tab: Tab }) {
         <p className="m-0 truncate font-['Barlow_Condensed'] text-[1.1rem] font-bold uppercase leading-tight tracking-[0.01em] text-white">
           {ov.name}
         </p>
-        <p className="m-0 mt-1 font-['Manrope'] text-[0.76rem] leading-[1.3] text-white/55">{sub}</p>
+        <div className="m-0 mt-1 font-['Manrope'] text-[0.76rem] leading-[1.35] text-white/55">{sub}</div>
       </div>
       {tab === "open" ? (
         <span className="flex-shrink-0 rounded-lg bg-emerald-500 px-3 py-2 font-['Manrope'] text-[0.76rem] font-bold text-[#0b1f14]">
@@ -275,13 +286,9 @@ function EmptyTab({ tab }: { tab: Tab }) {
 function LobbyHeading() {
   return (
     <div className="px-1 pt-5">
-      <Link
-        href="/"
-        className="mb-3 inline-flex items-center gap-1.5 font-['Manrope'] text-[0.78rem] font-semibold text-white/55 transition hover:text-white"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
-        Home
-      </Link>
+      <div className="mb-3">
+        <BackButton fallbackHref="/" />
+      </div>
       <p className="m-0 mb-1.5 font-['Manrope'] text-[0.6875rem] font-bold uppercase tracking-[0.32em] text-emerald-300/70">
         Outlast the field
       </p>
