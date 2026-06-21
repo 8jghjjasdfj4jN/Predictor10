@@ -153,3 +153,21 @@ export const eventOutcomes = pgTable("event_outcomes", {
   finishedAt: timestamp("finished_at", { withTimezone: true }).notNull(),
   recordedAt: timestamp("recorded_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// Provisional finished-score observations — the confirm-before-commit buffer.
+// A FINISHED match's full-time score is recorded HERE first, and only promoted
+// to event_outcomes once it has been seen UNCHANGED on a later sync pass (see
+// CONFIRM_MIN_AGE_MS in server/lib/outcome-sync.ts). This stops a transient or
+// incorrect score — e.g. a goal football-data published then removed after a
+// VAR offside review — from ever being committed, scored, or settled. The row
+// is short-lived: it exists only between first sighting and confirmation, and
+// is deleted the moment the confirmed outcome is written. Because
+// event_outcomes therefore only ever holds confirmed scores, every downstream
+// consumer (display, prediction scoring, pool + eliminator settlement) is
+// unchanged — they all key off event_outcomes existence exactly as before.
+export const eventOutcomeObservations = pgTable("event_outcome_observations", {
+  eventId: uuid("event_id").primaryKey().references(() => events.id, { onDelete: "cascade" }),
+  homeScore: integer("home_score").notNull(),
+  awayScore: integer("away_score").notNull(),
+  observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+});

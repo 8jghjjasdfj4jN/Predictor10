@@ -40,6 +40,12 @@ function log(s: string) {
       `${result.eventsMarkedFinished} events marked finished, ` +
       `${result.predictionsScored} predictions scored`,
     );
+    if (result.outcomesPending > 0) {
+      log(
+        `  ${result.outcomesPending} finished score(s) awaiting confirmation ` +
+        `(held until stable — confirm-before-commit)`,
+      );
+    }
     if (result.outcomeDivergencesDetected > 0) {
       log(
         `  ⚠ ${result.outcomeDivergencesDetected} score divergence alert(s) raised — ` +

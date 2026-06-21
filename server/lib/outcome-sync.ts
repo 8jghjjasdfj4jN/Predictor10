@@ -53,7 +53,7 @@ scheduler logs all surface a structured summary.
 import "dotenv/config";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db";
-import { competitions, events, eventOutcomes, stages } from "../db/schema/sports";
+import { competitions, events, eventOutcomes, eventOutcomeObservations, stages } from "../db/schema/sports";
 import { predictions } from "../db/schema/pools";
 import { auditLog } from "../db/schema/compliance";
 import { writeAudit } from "./audit";
@@ -69,6 +69,16 @@ import {
 
 // ─── Sync result type (returned from the entry points) ───────────────────
 
+// Confirm-before-commit window. A FINISHED full-time score must be observed
+// UNCHANGED across sync passes spanning at least this long before it's promoted
+// from the provisional observations buffer into event_outcomes (and used to
+// score predictions). With the every-5-minutes sync cron this means a normal
+// result is confirmed and scored within ~5–10 minutes of full-time, and a
+// transient/incorrect score (e.g. a VAR-disallowed goal football-data briefly
+// published) is never committed because the next pass sees it change. Tunable
+// here only — there is no env/admin override (a fairness rule, arch §1).
+const CONFIRM_MIN_AGE_MS = 3 * 60 * 1000;
+
 export type SyncResult = {
   competitionsChecked: number;
   matchesSeen: number;
@@ -77,6 +87,10 @@ export type SyncResult = {
   outcomesWritten: number;
   eventsMarkedFinished: number;
   predictionsScored: number;
+
+  // Finished scores seen but NOT yet committed — held in the confirm-before-
+  // commit buffer until proven stable across sync passes (CONFIRM_MIN_AGE_MS).
+  outcomesPending: number;
 
   // Post-record score corrections detected (football-data now reports a
   // different result than the one already recorded). Surfaced as an alert
@@ -226,6 +240,7 @@ export async function syncOutcomes(): Promise<SyncResult> {
     outcomesWritten: 0,
     eventsMarkedFinished: 0,
     predictionsScored: 0,
+    outcomesPending: 0,
     outcomeDivergencesDetected: 0,
     fixturesInserted: 0,
     fixturesUpdated: 0,
@@ -350,7 +365,7 @@ export async function syncOutcomes(): Promise<SyncResult> {
         upsert.eventId;
       if (!eventId) continue;
 
-      // ── Outcome-write path ───────────────────────────────────────────
+      // ── Outcome-write path (confirm-before-commit) ───────────────────
       // Only finished matches with a complete full-time score qualify.
       // For knockouts that went to extra time or penalties (WC), we read
       // the 90-minute score only — Predictor10 settles on FT, not the
@@ -363,7 +378,88 @@ export async function syncOutcomes(): Promise<SyncResult> {
 
       const finishedAt = m.lastUpdated ? new Date(m.lastUpdated) : new Date();
 
-      // Upsert outcome (first-write-wins).
+      // Count status → 'finished' transitions on this run for the summary
+      // line. The fixture-upsert helper already wrote events.status; this is
+      // independent of whether the outcome is committed yet.
+      const mappedStatus = mapFootballDataStatus(m.status);
+      const becameFinished =
+        (upsert.action === "inserted" && mappedStatus === "finished") ||
+        (upsert.action === "updated" && ours?.status !== "finished" && mappedStatus === "finished");
+      if (becameFinished) result.eventsMarkedFinished++;
+
+      // Is the outcome already committed (i.e. confirmed and final)?
+      const [committed] = await db
+        .select({ home: eventOutcomes.homeScore, away: eventOutcomes.awayScore })
+        .from(eventOutcomes)
+        .where(eq(eventOutcomes.eventId, eventId))
+        .limit(1);
+
+      if (committed) {
+        // Recorded & final. We never silently overwrite it (arch §14 — a
+        // transient bad feed value must not be able to rewrite a finished
+        // result on its own). If football-data now reports a DIFFERENT 90-min
+        // score, that's a post-confirmation correction (rare): raise a visible
+        // alert for an admin to review and apply deliberately via
+        // server/scripts/correct-outcome.ts.
+        const raised = await maybeRaiseOutcomeDivergence({
+          eventId,
+          match: `${ours?.homeTeam ?? "?"} v ${ours?.awayTeam ?? "?"}`,
+          footballData: { home, away },
+        });
+        if (raised) result.outcomeDivergencesDetected++;
+        continue;
+      }
+
+      // Not yet committed — run the confirm-before-commit gate. A finished
+      // score must be seen UNCHANGED across sync passes (>= CONFIRM_MIN_AGE_MS
+      // apart) before it's promoted to event_outcomes and used to score. This
+      // is the steel-solid prevention: a transient/incorrect FT score is held
+      // here and never committed, because the next pass sees it change and the
+      // clock resets. event_outcomes therefore only ever holds stable scores.
+      const [obs] = await db
+        .select({
+          home: eventOutcomeObservations.homeScore,
+          away: eventOutcomeObservations.awayScore,
+          observedAt: eventOutcomeObservations.observedAt,
+        })
+        .from(eventOutcomeObservations)
+        .where(eq(eventOutcomeObservations.eventId, eventId))
+        .limit(1);
+
+      const nowMs = Date.now();
+
+      if (!obs) {
+        // First sighting of a finished score — buffer it, wait for confirmation.
+        await db.insert(eventOutcomeObservations).values({
+          eventId,
+          homeScore: home,
+          awayScore: away,
+          observedAt: new Date(nowMs),
+        });
+        result.outcomesPending++;
+        continue;
+      }
+
+      if (obs.home !== home || obs.away !== away) {
+        // Score changed since the last sighting (the correction case, e.g.
+        // 5-0 → 4-0). Re-buffer the new value and reset the stability clock;
+        // do NOT commit. The old (transient) score is never written.
+        await db
+          .update(eventOutcomeObservations)
+          .set({ homeScore: home, awayScore: away, observedAt: new Date(nowMs) })
+          .where(eq(eventOutcomeObservations.eventId, eventId));
+        result.outcomesPending++;
+        continue;
+      }
+
+      if (nowMs - obs.observedAt.getTime() < CONFIRM_MIN_AGE_MS) {
+        // Same score, but not stable for long enough yet — keep waiting.
+        result.outcomesPending++;
+        continue;
+      }
+
+      // Confirmed: the finished score has been stable. Commit it (first-write-
+      // wins) and clear the provisional buffer.
       const inserted = await db
         .insert(eventOutcomes)
         .values({
@@ -374,35 +470,10 @@ export async function syncOutcomes(): Promise<SyncResult> {
         })
         .onConflictDoNothing({ target: eventOutcomes.eventId })
         .returning({ eventId: eventOutcomes.eventId });
-      if (inserted.length > 0) {
-        result.outcomesWritten++;
-      } else {
-        // First-write-wins blocked the write: an outcome is already recorded.
-        // We never silently overwrite it (arch §14 — a transient bad feed
-        // value must not be able to rewrite a finished result on its own).
-        // But if football-data now reports a DIFFERENT 90-min score, that's a
-        // genuine post-record correction (e.g. a VAR-disallowed goal after FT
-        // was first published). Raise a visible alert for an admin to review
-        // and apply deliberately via server/scripts/correct-outcome.ts.
-        const raised = await maybeRaiseOutcomeDivergence({
-          eventId,
-          match: `${ours?.homeTeam ?? "?"} v ${ours?.awayTeam ?? "?"}`,
-          footballData: { home, away },
-        });
-        if (raised) result.outcomeDivergencesDetected++;
-      }
-
-      // Count status → 'finished' transitions on this run for the summary
-      // line. The fixture-upsert helper already wrote the value to the DB;
-      // we just decide whether to tally:
-      //   - inserted as finished                          → +1
-      //   - updated from a non-finished status → finished → +1
-      //   - everything else (already finished, unchanged, skipped) → 0
-      const mappedStatus = mapFootballDataStatus(m.status);
-      const becameFinished =
-        (upsert.action === "inserted" && mappedStatus === "finished") ||
-        (upsert.action === "updated" && ours?.status !== "finished" && mappedStatus === "finished");
-      if (becameFinished) result.eventsMarkedFinished++;
+      if (inserted.length > 0) result.outcomesWritten++;
+      await db
+        .delete(eventOutcomeObservations)
+        .where(eq(eventOutcomeObservations.eventId, eventId));
 
       // Score any unscored predictions on this event.
       const unscored = await db
