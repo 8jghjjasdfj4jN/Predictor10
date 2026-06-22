@@ -4,7 +4,7 @@
 
 ---
 
-# Predictor10 build — picking up after step 3b.13 (tsc baseline 0, outcome-recording integrity: confirm-before-commit + divergence alert + correction tool, .gitattributes)
+# Predictor10 build — picking up after step 3b.14 (admin "Remove from pool" = audited entry void; outcome-recording integrity from 3b.13; tsc baseline 0)
 
 I'm a solo developer building Predictor10, a UK football score-prediction pool betting product. 3-person business forming around it. Targeting UKGC general pool betting licence (likely 2027 grant). **Build the real flow, mock the money** — payments table has `mode='mock'` until licence flip, then becomes `'live'`. Same code paths flip; no rewrites.
 
@@ -567,6 +567,20 @@ Files this session: deleted `client/src/lib/fixture-sync.ts` + `client/src/lib/o
 
 > **Operational note:** the WC opener correction was applied with `pnpm tsx server/scripts/correct-outcome.ts --apply` (no team args → defaults to Spain v Saudi → 4-0). For any future correction, pass args: `--home-like= --away-like= --home= --away= --reason= [--apply]`. Always dry-run first.
 
+### Step 3b.14 — Admin "Remove from pool" = audited entry void (22 June 2026)
+
+The first player-removal tool, built licence-clean from the start. Prompted by the friendly WC run having an entrant ("terterter") who never paid their £10 and never predicted, so needed removing — but built future-proof so it serves the licensed product unchanged.
+
+**The principle.** A licensed operator never hard-deletes a player or stake — records are retained (≈5 years post-relationship under the MLRs; GDPR erasure is overridden for legally-retained records), and removals must be **recorded, reasoned admin actions**, not raw DB edits. So "remove" = **void + retain**, never delete. Pre-licence this doesn't strictly bite (informal exemption), but per §1 we build it the licensed way now. Full canon: **architecture §25**.
+
+**What shipped.** `pool_entries` gains `voided_at` / `voided_by` / `void_reason` (nullable; `pnpm db:push` **already run in Render** — confirmed: 3 columns + the `voided_by→users` FK applied). A voided entry is excluded from the **three** entry-count sites (so the pot — `fee × COUNT(*)` — and the 60/25/15 splits self-correct live), the standings build, the player's own live-entries list, the two entrant access-gates, the opponent-picks read, and **settlement scoring/ranking**. The row, its payment, and the audit trail are retained. Admin route `POST /entries/:entryId/void` (reason ≥3 chars required; **409 on a settled entry**; idempotent on already-voided; audited as `admin.action` / `entityType: "pool_entry"` with reason + acting admin) plus `GET /users/:id/entries` to list a player's current entries. Admin UI: a "Remove from pool" button per user opens a modal listing live entries, each with a reason box + Remove.
+
+**Key invariant:** `voided_at IS NULL` = the entry counts. Any new consumer that counts entries / builds standings / scores must add `isNull(poolEntries.voidedAt)`.
+
+**Known limitation (deferred):** the temporary per-pool chat entrant-gate (§21) is not voided-aware — a removed player could still open old chat. Harmless for the free run (chat is itself scheduled for teardown); fold a void check in only if chat goes into the licensed product.
+
+Files this step: `server/db/schema/pools.ts` (3 void columns — **`pnpm db:push` done**), `server/lib/portal-data.ts` (8 read sites), `server/lib/pool-settle.ts` (scoring/ranking gather), `server/routes/admin-portal.ts` (2 new routes), `client/src/lib/portal-api.ts` (`fetchAdminUserEntries` + `voidAdminPoolEntry`), `client/src/pages/portal/AdminPage.tsx` ("Remove from pool" button + modal). tsc **0** throughout, build exit 0, crossorigin intact (`vite.config.ts`/`index.html` untouched). No seed.
+
 ## Decisions made in earlier chats — DO NOT relitigate
 
 From arch doc Decided Rules §13 + decisions made in build chats:
@@ -759,6 +773,8 @@ Server admin endpoints:
 | `GET /api/admin-portal/users` | Session + `is_admin=true` | List users for the in-app admin UI |
 | `POST /api/admin-portal/users/:id/password` | Session + `is_admin=true` | Reset a user's password (Argon2-hashed; audit-logged) |
 | `PATCH /api/admin-portal/users/:id/paid` | Session + `is_admin=true` | Toggle the WC off-platform paid flag (audit-logged) |
+| `GET /api/admin-portal/users/:id/entries` | Session + `is_admin=true` | List a player's current (live, non-voided) entries for the removal UI (step 3b.14) |
+| `POST /api/admin-portal/entries/:entryId/void` | Session + `is_admin=true` | Remove a player from a pool — voids the entry (reason required; 409 if settled; audited). Pot/standings/scoring self-correct; nothing deleted (step 3b.14, arch §25) |
 | `PATCH /api/account/nickname` | Session (any user) | User updates their own nickname (audit-logged) |
 | `GET /api/pools/:poolId/entries/:entryId/predictions` | Public when settled; session + entrant when live | Lock-gated read of one entrant's picks (step 3a.18). Unlocked picks omitted from payload |
 | `GET /api/pools/:id/distribution` | Public when settled; session + entrant when live | Pick distribution (step 3a.19). Locked events only; returns entrant count + per-event home/draw/away + top scorelines |

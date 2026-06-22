@@ -1034,13 +1034,15 @@ The decision to return 404 (not 403) on the server is deliberate. 403 signals "t
 | `GET /api/admin-portal/users` | — | List all users with id, email, names, nickname, signup date, country, status flags. Password hashes never returned. | — (read-only) |
 | `POST /api/admin-portal/users/:id/password` | `{newPassword}` | Argon2-hashes and writes the new password. Password value is NEVER written to logs. | `user.password_change` with `{performedBy, performedByEmail, adminInitiated: true}` |
 | `PATCH /api/admin-portal/users/:id/paid` | `{isPaid}` | Toggle the `is_paid` flag. No-op when state already matches (no audit row written in that case). | `admin.action` with `{field: "isPaid", performedBy, performedByEmail}` and before/after |
+| `GET /api/admin-portal/users/:id/entries` | — | List a player's current (live, not settled, not voided) entries for the removal UI. | — (read-only) |
+| `POST /api/admin-portal/entries/:entryId/void` | `{reason}` | Remove a player from a pool — **voids** the entry (drops it from pot/standings/scoring; row + payment + audit retained). 409 on a settled entry; idempotent. Full model in **§25**. | `admin.action` with `{field: "voidedAt", poolId, reason, performedBy, performedByEmail}` and before/after |
 
 ### UI (`client/src/pages/portal/AdminPage.tsx`)
 
 Mobile-first user list. Each row is a card with:
 - Public handle (nickname or display_name fallback) + Admin pill if applicable
 - Full name + email + country + join date
-- Right-side controls: "Paid" checkbox (optimistic update with rollback on server error) + "Reset password" button (opens modal)
+- Right-side controls: "Paid" checkbox (optimistic update with rollback on server error) + "Reset password" button (opens modal) + "Remove from pool" button (opens a modal listing the player's current entries, each with a required reason box + Remove — see §25 for the void model)
 
 Password reset modal is intentionally simple — admin types the new value, taps Save, sees "Saved" confirmation, modal auto-closes. The user is told the new password out of band (the platform doesn't email it).
 
@@ -1294,3 +1296,47 @@ Industry practice (researched 21 Jun 2026): professional books settle against an
 4. Document the source(s), the agreement rule, the hold-and-review procedure, and the dispute/claim window in the published rules (LCCP 4.2.9) and the licence application narrative.
 
 Until then (pre-licence, free play): single football-data.org feed + confirm-before-commit + divergence alert is the proportionate, documented position. The flip to dual-source verification is a **named pre-licence-grant task** — see roadmap.
+
+## 25. Player / entry removal — void, not delete (step 3b.14)
+
+How a player is removed from a pool, built the way a licensed operator must do it. Triggered by a practical case (the friendly WC run had an entrant — "terterter" — who never paid their £10 and never predicted, so needed removing), but built future-proof so the same tool serves the licensed product with no rework.
+
+### The principle (licence-first, §1)
+
+A licensed gambling operator **does not hard-delete a player or their stake.** Customer ID/verification and transaction records must be retained (typically **5 years after the account relationship ends** under the MLRs; LCCP requires comprehensive record-keeping), and the GDPR right to erasure is **overridden** for records held under a legal obligation until that retention lapses. So "remove" must mean **close / void and retain**, never wipe — and the action must be a **recorded, reasoned admin action**, never an ad-hoc DB edit. (Pre-licence, under the informal private-betting exemption, none of this strictly bites yet — but per §1 we build it the licensed way from day one, and the schema is already retention-ready.)
+
+### The model — void a `pool_entries` row
+
+Removal operates on the **entry** (a stake in one Round), not the user. `pool_entries` carries three nullable columns (added step 3b.14, `pnpm db:push`):
+- `voided_at` (timestamptz) — NULL = live entry; non-NULL = removed.
+- `voided_by` (uuid → users.id) — the admin who removed it.
+- `void_reason` (text) — required free-text reason (≥3 chars), captured at removal.
+
+A voided entry is **excluded from**: the pot count (so the displayed pot — `fee × COUNT(*)` — and the 60/25/15 splits self-correct immediately, because the pot is derived live from the count), the live standings, the player's own live-entries list, the entrant access-gates (league table + pick distribution → a removed player is treated as not-entrant), the opponent-picks view, and **settlement scoring/ranking** (`findReadyPoolIds`/`scoreList` skip voided). The row, its `payments` row, and the audit trail are all **retained**. Nothing is deleted.
+
+### Key invariant (do not break)
+
+`voided_at IS NULL` means the entry counts; non-NULL means it is gone for every player-facing and money-facing purpose while staying on record. Any **new** consumer that counts entries, builds standings, or scores/settles **must** add `isNull(poolEntries.voidedAt)`. The audit row (`action: "admin.action"`, `entityType: "pool_entry"`, before/after + reason + acting admin) is the permanent record of the removal.
+
+### Rules / guards
+
+- **Settled entries can't be voided** — a finished result and any payout are final (the route returns 409). Removal is for live (pre-settlement) entries only.
+- **Idempotent** — voiding an already-voided entry is a no-op (no second audit row).
+- **Final for that Round** — the one-entry-per-pool unique index keeps the slot, so a voided player can't simply re-enter; un-removal (clear `voided_at`) is a deliberate future action if ever needed (not built — no UI today).
+
+### Files
+
+- `server/db/schema/pools.ts` — the three `pool_entries` void columns (needs `pnpm db:push`).
+- `server/lib/portal-data.ts` — voided excluded from the three entry-count sites, the standings build, the own-entries list, the two entrant access-gates, and the opponent-picks read.
+- `server/lib/pool-settle.ts` — voided excluded from the scored/ranked entry set.
+- `server/routes/admin-portal.ts` — `GET /users/:id/entries` (a player's live, non-voided entries) + `POST /entries/:entryId/void` (reason-required, settled-blocked, audited).
+- `client/src/lib/portal-api.ts` — `fetchAdminUserEntries` + `voidAdminPoolEntry`.
+- `client/src/pages/portal/AdminPage.tsx` — per-player "Remove from pool" button → modal listing current entries, each with a reason box + Remove.
+
+### Known limitation (deferred to the licensed pass)
+
+The temporary per-pool **chat** entrant-gate (§21) is **not** voided-aware — a removed player could in theory still open old chat. Harmless for the free WC run; the chat is itself scheduled for teardown (`wc-chat-teardown.md`). Fold a `voided_at` check into the chat gate only if chat is carried into the licensed product.
+
+### How this feeds the licence application
+
+This is concrete evidence for the application narrative: player removals are **deliberate, reasoned, audit-logged** actions through the admin UI — not raw SQL — exactly the "lock/account exceptions are ruled, not improvised" posture a regulator expects (cf. the manual late-entry follow-up flag in the handoff).

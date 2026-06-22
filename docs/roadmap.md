@@ -181,6 +181,12 @@ A foundational data-integrity fix (full canon in architecture **§24**). Trigger
 
 Invariant preserved: `event_outcomes` only ever holds confirmed/final scores, so display + scoring + pool/eliminator settlement are unchanged. Also this session: **tsc baseline 15 → 0** (deleted two dead client files, fixed the `liveStatusLabel` DTO field); **`.gitattributes`** added (force LF). `pnpm db:push` ran for the new table; build green; crossorigin intact.
 
+## Step 3b.14 — Admin "Remove from pool" = audited entry void (June 2026) — BUILT + LIVE
+
+The first player-removal tool, built licence-clean (full canon in architecture **§25**). A licensed operator never hard-deletes a player/stake — records are retained (≈5yr post-relationship, MLRs; GDPR erasure overridden for legally-retained data) and removals must be **recorded, reasoned admin actions**, not DB edits. So "remove" = **void + retain**, never delete.
+
+`pool_entries` gains `voided_at` / `voided_by` / `void_reason` (`pnpm db:push` done). A voided entry drops from the pot (so the displayed pot + 60/25/15 splits self-correct, being derived live from the entry count), the standings, the player's own entries, the entrant access-gates, the opponent-picks view, and settlement scoring — while the row, its payment, and the audit trail are retained. Admin gets `POST /entries/:entryId/void` (reason required, 409 on settled, idempotent, audited) + `GET /users/:id/entries`, surfaced as a per-player "Remove from pool" button + reason modal. Used to remove the unpaid/non-predicting WC entrant "terterter". **Deferred:** the temporary chat entrant-gate isn't voided-aware (harmless; chat is scheduled for teardown). Licence value: removals are deliberate, reasoned, audit-logged actions for the application narrative. tsc 0, build green, crossorigin intact.
+
 ## Schema readiness — what's in the database from day one
 
 The schema lives in `server/db/schema/` split across seven files. Every table the product needs across its full lifecycle is present from the first migration. Tables fall into three groups:
