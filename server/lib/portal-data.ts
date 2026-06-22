@@ -292,7 +292,8 @@ export async function getCompetitionsWithOpenPools(): Promise<CompetitionDto[]> 
       count: sql<number>`COUNT(*)::int`,
     })
     .from(poolEntries)
-    .where(inArray(poolEntries.poolId, poolIds))
+    // Voided entries don't count toward the pot.
+    .where(and(inArray(poolEntries.poolId, poolIds), isNull(poolEntries.voidedAt)))
     .groupBy(poolEntries.poolId);
   const countByPool = new Map(counts.map((c) => [c.poolId, Number(c.count)]));
 
@@ -375,7 +376,7 @@ export async function getUserOpenEntries(userId: string): Promise<UserEntryDto[]
     .innerJoin(competitions, eq(pools.competitionId, competitions.id))
     .innerJoin(leagues, eq(pools.leagueId, leagues.id))
     .innerJoin(stages, eq(pools.stageId, stages.id))
-    .where(and(eq(poolEntries.userId, userId), isNull(poolEntries.settledAt)))
+    .where(and(eq(poolEntries.userId, userId), isNull(poolEntries.settledAt), isNull(poolEntries.voidedAt)))
     .orderBy(asc(pools.closesAt));
 
   if (rows.length === 0) return [];
@@ -477,7 +478,8 @@ export async function getPoolDetail(
   const [entryAgg] = await db
     .select({ count: sql<number>`COUNT(*)::int` })
     .from(poolEntries)
-    .where(eq(poolEntries.poolId, poolId));
+    // Voided entries don't count toward the pot.
+    .where(and(eq(poolEntries.poolId, poolId), isNull(poolEntries.voidedAt)));
   const entryCount = Number(entryAgg?.count ?? 0);
 
   // Event aggregates: total matches in stage, earliest kickoff, count locked.
@@ -1253,7 +1255,8 @@ export async function getAccountHistory(userId: string): Promise<AccountHistoryD
       count: sql<number>`COUNT(*)::int`,
     })
     .from(poolEntries)
-    .where(inArray(poolEntries.poolId, poolIds))
+    // Voided entries don't count toward the pot.
+    .where(and(inArray(poolEntries.poolId, poolIds), isNull(poolEntries.voidedAt)))
     .groupBy(poolEntries.poolId);
   const countByPool = new Map(counts.map((c) => [c.poolId, Number(c.count)]));
 
@@ -1410,7 +1413,8 @@ export async function getPoolEntries(
     const [own] = await db
       .select({ id: poolEntries.id })
       .from(poolEntries)
-      .where(and(eq(poolEntries.poolId, poolId), eq(poolEntries.userId, viewerUserId)));
+      // A voided entry is treated as not-entrant.
+      .where(and(eq(poolEntries.poolId, poolId), eq(poolEntries.userId, viewerUserId), isNull(poolEntries.voidedAt)));
     if (!own) return { ok: false, error: "NOT_ENTRANT" };
   }
 
@@ -1456,7 +1460,8 @@ export async function getPoolEntries(
     .from(poolEntries)
     .innerJoin(users, eq(users.id, poolEntries.userId))
     .leftJoin(predictions, eq(predictions.poolEntryId, poolEntries.id))
-    .where(eq(poolEntries.poolId, poolId))
+    // Voided entries are removed from the standings.
+    .where(and(eq(poolEntries.poolId, poolId), isNull(poolEntries.voidedAt)))
     .groupBy(
       poolEntries.id,
       poolEntries.userId,
@@ -1749,7 +1754,8 @@ export async function getEntryPredictionsForViewer(
     const [own] = await db
       .select({ id: poolEntries.id })
       .from(poolEntries)
-      .where(and(eq(poolEntries.poolId, poolId), eq(poolEntries.userId, viewerUserId)));
+      // A voided entry is treated as not-entrant.
+      .where(and(eq(poolEntries.poolId, poolId), eq(poolEntries.userId, viewerUserId), isNull(poolEntries.voidedAt)));
     if (!own) return { ok: false, error: "NOT_ENTRANT" };
   }
 
@@ -1763,7 +1769,8 @@ export async function getEntryPredictionsForViewer(
     })
     .from(poolEntries)
     .innerJoin(users, eq(poolEntries.userId, users.id))
-    .where(and(eq(poolEntries.id, entryId), eq(poolEntries.poolId, poolId)));
+    // A voided entry's picks are not viewable.
+    .where(and(eq(poolEntries.id, entryId), eq(poolEntries.poolId, poolId), isNull(poolEntries.voidedAt)));
 
   if (!target) return { ok: false, error: "ENTRY_NOT_FOUND" };
 

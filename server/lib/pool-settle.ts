@@ -382,7 +382,7 @@ async function settleOnePool(poolId: string): Promise<SettleOnePoolOutcome> {
       })
       .from(poolEntries)
       .leftJoin(predictions, eq(predictions.poolEntryId, poolEntries.id))
-      .where(eq(poolEntries.poolId, poolId))
+      .where(and(eq(poolEntries.poolId, poolId), isNull(poolEntries.voidedAt)))
       .groupBy(poolEntries.id, poolEntries.userId);
 
     const entryCount = scoreList.length;

@@ -65,6 +65,15 @@ export const poolEntries = pgTable(
 
     enteredAt: timestamp("entered_at", { withTimezone: true }).defaultNow().notNull(),
     settledAt: timestamp("settled_at", { withTimezone: true }),
+
+    // Admin removal (void). A licensed operator never hard-deletes an entry —
+    // it is voided: dropped from the pot, the standings, the player's own
+    // entries and from settlement scoring, while the row (and its payment +
+    // audit trail) is retained. voidedAt IS NULL means the entry is live.
+    // Set only via the admin "Remove from pool" action (audit-logged).
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedBy: uuid("voided_by").references(() => users.id),
+    voidReason: text("void_reason"),
   },
   (t) => ({
     poolIdx: index("pool_entries_pool_idx").on(t.poolId),

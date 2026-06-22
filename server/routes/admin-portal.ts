@@ -34,9 +34,12 @@ retention requirement.
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { hash } from "@node-rs/argon2";
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { db } from "../db";
 import { users } from "../db/schema/users";
+import { poolEntries, pools } from "../db/schema/pools";
+import { competitions, stages } from "../db/schema/sports";
+import { leagues } from "../db/schema/leagues";
 import { auditLog } from "../db/schema/compliance";
 import { requireAuth } from "../lib/auth-middleware";
 import { writeAudit } from "../lib/audit";
@@ -267,6 +270,124 @@ router.patch(
     });
 
     res.json({ ok: true, isPaid });
+  },
+);
+
+// ─── GET /users/:id/entries ─────────────────────────────────────────────
+//
+// Lists a player's CURRENT entries — live (not settled) and not already
+// voided — so an admin can remove one from the round it belongs to. Settled
+// entries are excluded: their result and any payout are final and are read
+// from /account/history, not from here.
+router.get(
+  "/users/:id/entries",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response): Promise<void> => {
+    const targetId = req.params.id;
+    const rows = await db
+      .select({
+        entryId: poolEntries.id,
+        poolId: poolEntries.poolId,
+        enteredAt: poolEntries.enteredAt,
+        competitionName: competitions.name,
+        tierName: leagues.name,
+        roundName: stages.name,
+      })
+      .from(poolEntries)
+      .innerJoin(pools, eq(poolEntries.poolId, pools.id))
+      .innerJoin(competitions, eq(pools.competitionId, competitions.id))
+      .innerJoin(leagues, eq(pools.leagueId, leagues.id))
+      .innerJoin(stages, eq(pools.stageId, stages.id))
+      .where(
+        and(
+          eq(poolEntries.userId, targetId),
+          isNull(poolEntries.settledAt),
+          isNull(poolEntries.voidedAt),
+        ),
+      )
+      .orderBy(asc(pools.closesAt));
+
+    res.json({
+      entries: rows.map((r) => ({ ...r, enteredAt: r.enteredAt.toISOString() })),
+    });
+  },
+);
+
+// ─── POST /entries/:entryId/void ────────────────────────────────────────
+//
+// "Remove from pool" — the licensed-clean removal. It does NOT delete the
+// entry: it marks it voided (with the acting admin + a required reason),
+// which drops the player from the pot, the standings, their own live entries
+// and from settlement scoring, while the entry, its payment row and the audit
+// trail are retained. A settled entry can't be voided (its payout is final).
+const voidEntrySchema = z.object({
+  reason: z.string().trim().min(3, "A reason is required.").max(300),
+});
+
+router.post(
+  "/entries/:entryId/void",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response): Promise<void> => {
+    const parsed = voidEntrySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid payload." });
+      return;
+    }
+    const entryId = req.params.entryId;
+
+    const [entry] = await db
+      .select({
+        id: poolEntries.id,
+        userId: poolEntries.userId,
+        poolId: poolEntries.poolId,
+        voidedAt: poolEntries.voidedAt,
+        settledAt: poolEntries.settledAt,
+      })
+      .from(poolEntries)
+      .where(eq(poolEntries.id, entryId));
+
+    if (!entry) {
+      res.status(404).json({ error: "Entry not found." });
+      return;
+    }
+    if (entry.voidedAt) {
+      // Idempotent — already removed. No second audit row.
+      res.json({ ok: true, alreadyVoided: true });
+      return;
+    }
+    if (entry.settledAt) {
+      res.status(409).json({
+        error: "Can't remove a settled entry — its result and any payout are final.",
+      });
+      return;
+    }
+
+    const now = new Date();
+    await db
+      .update(poolEntries)
+      .set({ voidedAt: now, voidedBy: req.user!.id, voidReason: parsed.data.reason })
+      .where(eq(poolEntries.id, entryId));
+
+    await writeAudit({
+      req,
+      userId: entry.userId,
+      action: "admin.action",
+      entityType: "pool_entry",
+      entityId: entry.id,
+      before: { voidedAt: null },
+      after: { voidedAt: now.toISOString() },
+      metadata: {
+        field: "voidedAt",
+        poolId: entry.poolId,
+        reason: parsed.data.reason,
+        performedBy: req.user!.id,
+        performedByEmail: req.user!.email,
+      },
+    });
+
+    res.json({ ok: true });
   },
 );
 

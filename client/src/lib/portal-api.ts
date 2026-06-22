@@ -610,6 +610,48 @@ export async function resetAdminUserPassword(userId: string, newPassword: string
   }
 }
 
+// ─── Admin: remove a player from a pool (void entry) ─────────────────────
+
+export type AdminUserEntry = {
+  entryId: string;
+  poolId: string;
+  enteredAt: string;
+  competitionName: string;
+  tierName: string;
+  roundName: string;
+};
+
+export async function fetchAdminUserEntries(userId: string): Promise<AdminUserEntry[]> {
+  const res = await fetch(`/api/admin-portal/users/${encodeURIComponent(userId)}/entries`, {
+    credentials: "include",
+  });
+  notify401IfNeeded(res);
+  if (res.status === 404) throw new AdminAccessError();
+  if (!res.ok) throw new Error(`Failed to load entries (${res.status}).`);
+  const data = (await res.json()) as { entries: AdminUserEntry[] };
+  return data.entries;
+}
+
+export async function voidAdminPoolEntry(entryId: string, reason: string): Promise<void> {
+  const res = await fetch(`/api/admin-portal/entries/${encodeURIComponent(entryId)}/void`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+  notify401IfNeeded(res);
+  if (!res.ok) {
+    let message = `Failed to remove entry (${res.status}).`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = data.error;
+    } catch {
+      /* non-JSON */
+    }
+    throw new Error(message);
+  }
+}
+
 // ─── Score alerts (post-record divergence) ───────────────────────────────
 
 export type ScoreAlert = {

@@ -22,12 +22,15 @@ import {
   setAdminUserPaid,
   resetAdminUserPassword,
   fetchScoreAlerts,
+  fetchAdminUserEntries,
+  voidAdminPoolEntry,
   AdminAccessError,
   type AdminUser,
+  type AdminUserEntry,
   type ScoreAlert,
 } from "@/lib/portal-api";
 import { cn } from "@/lib/utils";
-import { Loader2, Shield, KeyRound, Check, X, AlertTriangle } from "lucide-react";
+import { Loader2, Shield, KeyRound, Check, X, AlertTriangle, UserMinus } from "lucide-react";
 
 export default function AdminPage() {
   const { user } = useAuth();
@@ -43,6 +46,9 @@ export default function AdminPage() {
 
   // Password-reset modal target. null = closed.
   const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
+
+  // Remove-from-pool modal target. null = closed.
+  const [removeTarget, setRemoveTarget] = useState<AdminUser | null>(null);
 
   useEffect(() => {
     // Defence in depth: refuse to fetch admin data when the local user
@@ -212,6 +218,17 @@ export default function AdminPage() {
                       <KeyRound className="h-3 w-3" />
                       Reset password
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setRemoveTarget(u)}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-md border border-rose-400/25 bg-rose-500/[0.06]",
+                        "px-2 py-1 text-[0.7rem] font-medium text-rose-200/85 hover:bg-rose-500/[0.12] hover:text-rose-100",
+                      )}
+                    >
+                      <UserMinus className="h-3 w-3" />
+                      Remove from pool
+                    </button>
                   </div>
                 </div>
               </li>
@@ -224,6 +241,14 @@ export default function AdminPage() {
         <PasswordResetModal
           target={resetTarget}
           onClose={() => setResetTarget(null)}
+          onError={(msg) => setError(msg)}
+        />
+      )}
+
+      {removeTarget && (
+        <RemoveFromPoolModal
+          target={removeTarget}
+          onClose={() => setRemoveTarget(null)}
           onError={(msg) => setError(msg)}
         />
       )}
@@ -413,6 +438,188 @@ function PasswordResetModal({
             ) : (
               "Save"
             )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Remove-from-pool modal ───────────────────────────────────────────
+//
+// Lists the player's CURRENT entries (live, not settled, not already
+// removed) and lets the admin remove one with a required reason. Removal
+// is a void, not a delete — the entry, its payment and the audit trail are
+// retained; the player simply drops out of that round's pot and standings.
+function RemoveFromPoolModal({
+  target,
+  onClose,
+  onError,
+}: {
+  target: AdminUser;
+  onClose: () => void;
+  onError: (message: string) => void;
+}) {
+  const [entries, setEntries] = useState<AdminUserEntry[] | null>(null);
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<Set<string>>(new Set());
+  const [removed, setRemoved] = useState<Set<string>>(new Set());
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchAdminUserEntries(target.id);
+        if (!cancelled) setEntries(list);
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : "Couldn't load entries.";
+        setLocalError(msg);
+        setEntries([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [target.id]);
+
+  const remove = async (entry: AdminUserEntry) => {
+    const reason = (reasons[entry.entryId] ?? "").trim();
+    if (reason.length < 3) {
+      setLocalError("Add a short reason before removing.");
+      return;
+    }
+    setLocalError(null);
+    setSaving((s) => new Set(s).add(entry.entryId));
+    try {
+      await voidAdminPoolEntry(entry.entryId, reason);
+      setRemoved((r) => new Set(r).add(entry.entryId));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Couldn't remove entry.";
+      setLocalError(msg);
+      onError(msg);
+    } finally {
+      setSaving((s) => {
+        const copy = new Set(s);
+        copy.delete(entry.entryId);
+        return copy;
+      });
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#0a1411] p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-['Barlow_Condensed'] text-xl font-bold uppercase tracking-[0.03em] text-white">
+              Remove from pool
+            </h2>
+            <p className="mt-1 text-xs text-white/55">
+              {target.nickname ?? target.email}. The entry is kept on record (not
+              deleted) and they drop out of that round's pot and table.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1 text-white/55 hover:bg-white/5 hover:text-white"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {entries === null ? (
+            <div className="flex justify-center py-6 text-white/40">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : entries.length === 0 ? (
+            <p className="py-4 text-center text-sm text-white/45">
+              No current entries to remove.
+            </p>
+          ) : (
+            entries.map((e) => {
+              const isRemoved = removed.has(e.entryId);
+              const isSaving = saving.has(e.entryId);
+              return (
+                <div
+                  key={e.entryId}
+                  className={cn(
+                    "rounded-xl border px-3 py-2.5",
+                    isRemoved
+                      ? "border-emerald-400/25 bg-emerald-400/[0.06] opacity-70"
+                      : "border-white/10 bg-black/30",
+                  )}
+                >
+                  <p className="text-sm font-semibold text-white">
+                    {e.competitionName}
+                    <span className="font-normal text-white/50"> · {e.tierName}</span>
+                  </p>
+                  <p className="mt-0.5 text-[0.7rem] text-white/40">{e.roundName}</p>
+
+                  {isRemoved ? (
+                    <p className="mt-2 inline-flex items-center gap-1 text-[0.78rem] font-medium text-emerald-300">
+                      <Check className="h-3.5 w-3.5" /> Removed
+                    </p>
+                  ) : (
+                    <div className="mt-2 space-y-2">
+                      <input
+                        type="text"
+                        value={reasons[e.entryId] ?? ""}
+                        onChange={(ev) =>
+                          setReasons((r) => ({ ...r, [e.entryId]: ev.target.value }))
+                        }
+                        disabled={isSaving}
+                        placeholder="Reason (e.g. didn't pay)"
+                        className={cn(
+                          "w-full rounded-md border border-white/15 bg-black/40 px-2.5 py-1.5 text-[0.82rem] text-white",
+                          "outline-none focus:border-rose-400/60 placeholder:text-white/30",
+                        )}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => remove(e)}
+                        disabled={isSaving}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[0.8rem] font-semibold",
+                          "bg-rose-500/90 text-white hover:bg-rose-500 disabled:opacity-50",
+                        )}
+                      >
+                        {isSaving ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Removing
+                          </>
+                        ) : (
+                          <>
+                            <UserMinus className="h-3.5 w-3.5" /> Remove
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+          {localError && <p className="text-xs text-rose-300">{localError}</p>}
+        </div>
+
+        <div className="mt-5 flex items-center justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-white/15 bg-white/5 px-3 py-1.5 text-sm text-white/75 hover:bg-white/10"
+          >
+            Done
           </button>
         </div>
       </div>
