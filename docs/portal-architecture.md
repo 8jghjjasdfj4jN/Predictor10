@@ -1036,6 +1036,8 @@ The decision to return 404 (not 403) on the server is deliberate. 403 signals "t
 | `PATCH /api/admin-portal/users/:id/paid` | `{isPaid}` | Toggle the `is_paid` flag. No-op when state already matches (no audit row written in that case). | `admin.action` with `{field: "isPaid", performedBy, performedByEmail}` and before/after |
 | `GET /api/admin-portal/users/:id/entries` | — | List a player's current (live, not settled, not voided) entries for the removal UI. | — (read-only) |
 | `POST /api/admin-portal/entries/:entryId/void` | `{reason}` | Remove a player from a pool — **voids** the entry (drops it from pot/standings/scoring; row + payment + audit retained). 409 on a settled entry; idempotent. Full model in **§25**. | `admin.action` with `{field: "voidedAt", poolId, reason, performedBy, performedByEmail}` and before/after |
+| `POST /api/admin-portal/score-alerts/preview` | `{eventId, home, away}` | Dry-run a score correction — returns which predictions would change (old→new). No write. Shared logic with the CLI (§24.2). | — (read-only) |
+| `POST /api/admin-portal/score-alerts/correct` | `{eventId, home, away, reason}` | Apply a deliberate, audited score correction from the panel; re-scores all predictions. 409 on a settled pool (never forced from the panel). §24.2. | `admin.action`, `entityType: event_outcome`, `metadata.kind: "outcome_correction"`, `source: "admin-panel"`, before/after |
 
 ### UI (`client/src/pages/portal/AdminPage.tsx`)
 
@@ -1296,6 +1298,18 @@ Industry practice (researched 21 Jun 2026): professional books settle against an
 4. Document the source(s), the agreement rule, the hold-and-review procedure, and the dispute/claim window in the published rules (LCCP 4.2.9) and the licence application narrative.
 
 Until then (pre-licence, free play): single football-data.org feed + confirm-before-commit + divergence alert is the proportionate, documented position. The flip to dual-source verification is a **named pre-licence-grant task** — see roadmap.
+
+### 24.1 Divergence alert is scoped to live pools (step 3b.15)
+
+The divergence detector and the Admin → Score alerts panel are **pool-scoped** so they only surface what's actionable. The detector (`maybeRaiseOutcomeDivergence`) raises an alert only when the match belongs to a pool that is open, locked, or settled — a finished fixture on a Round nobody pooled (e.g. a season-over league match still being polled because its competition is `isActive`) is silently ignored. The panel narrows further: it shows **only divergences on a LIVE pool (open/locked)**, tagged with the competition + Round, since those are the cases where a correction would remap points cleanly before settlement. No-pool and settled-pool divergences are hidden from the panel (the latter still logged for the audit trail). This removed a standing false-positive (a season-over PL fixture, Man City v Aston Villa, stored 2-2 vs football-data's 1-2, on no live pool).
+
+### 24.2 Correcting a result re-scores all players — and the after-settlement gap
+
+`correct-outcome.ts` (the audited correction path) re-scores **every** prediction on the corrected match through the same `scorePrediction` engine the live game uses: points are both removed (from players who matched the old wrong score) and added (to players who match the corrected score), in one transaction with an audit row. The live league table is the **sum** of those per-prediction points, so it self-corrects on next read — no separate re-rank, and the pot is unaffected (pot is entry-count-based). **Before a pool settles this is clean.**
+
+**Two entry points, one implementation (step 3b.16).** Corrections can now be applied **from the admin panel** ("Correct score" on a live-pool score alert) as well as the CLI. Both call the shared `server/lib/outcome-correction.ts` (`previewCorrection` + `applyCorrection`), so the re-score can never drift between them. The panel flow is deliberately two-step: enter the real score → **Preview** (shows exactly which players gain/lose points, nothing written) → type a required reason → **Apply**. This is a human-initiated, confirmed, audited correction — it does **not** reopen the "never a silent auto-overwrite" rule (§24); the feed still can't change a result on its own, only a person can, on the record. The panel never passes `--force`: it refuses a settled pool (409). Correction audit rows carry `metadata.kind: "outcome_correction"` (panel `source: "admin-panel"`, CLI `source: "admin-shell"`), which is also how the Score-alerts panel now detects a divergence as "resolved".
+
+**Known gap (named pre-licence item):** there is **no built procedure to correct a result *after* a pool has settled.** Settlement banks `finalRank` / `finalPoints` and (post-licence) pays real money; the tool deliberately **refuses** a settled pool unless `--force`, and even forced it re-scores predictions but does **not** unwind a payout or recompute/re-pay final standings. Pre-licence (free play) this is acceptable — force + manual table sort. For real money, a proper **settled-result reversal** (recompute ranks, reverse/adjust payouts, audited, with a claim/dispute window per LCCP 4.2.9) is required before the licensed flip. Tracked in roadmap + pre-launch §3.
 
 ## 25. Player / entry removal — void, not delete (step 3b.14)
 

@@ -44,19 +44,10 @@ Reads DATABASE_URL from env (set on Render, or .env locally). Exit 0 on success.
 */
 
 import "dotenv/config";
-import { and, eq, ilike, inArray } from "drizzle-orm";
+import { and, eq, ilike } from "drizzle-orm";
 import { db, client } from "../db";
-import {
-  competitions,
-  events,
-  eventOutcomes,
-  predictions,
-  pools,
-  poolEntries,
-  users,
-  auditLog,
-} from "../db/schema";
-import { scorePrediction } from "../lib/outcome-sync";
+import { competitions, events } from "../db/schema";
+import { previewCorrection, applyCorrection } from "../lib/outcome-correction";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONFIG — defaults for the current incident. Each can be overridden by a CLI
@@ -156,87 +147,41 @@ async function main() {
   log(`Kickoff: ${ev.kickoffAt.toISOString()}`);
   log(`Status:  ${ev.status}`);
 
-  // 3. Current stored outcome.
-  const [outcome] = await db
-    .select({ home: eventOutcomes.homeScore, away: eventOutcomes.awayScore })
-    .from(eventOutcomes)
-    .where(eq(eventOutcomes.eventId, ev.id))
-    .limit(1);
-  if (!outcome) {
+  // 3-6. Preview via the SHARED correction lib — the exact same compute the
+  // admin panel uses, so the CLI and the panel can never drift.
+  const preview = await previewCorrection(ev.id, CONFIG.correctHome, CONFIG.correctAway);
+  if (!preview.hasStoredOutcome) {
     throw new Error("No stored outcome for this event yet — nothing to correct.");
   }
-  log(`Stored result:    ${outcome.home}-${outcome.away}`);
+  log(`Stored result:    ${preview.storedHome}-${preview.storedAway}`);
   log(`Correct result:   ${CONFIG.correctHome}-${CONFIG.correctAway}`);
+  if (preview.anySettled && !FORCE) {
+    throw new Error(
+      "A pool on this event is already settled — payouts may be banked. " +
+        "Re-run with --force only after a considered settled-correction plan.",
+    );
+  }
   log("─".repeat(64));
 
-  // 4. Pool settled guard — find the pool(s) these predictions belong to.
-  const predRows = await db
-    .select({
-      id: predictions.id,
-      poolId: predictions.poolId,
-      home: predictions.homeScorePredicted,
-      away: predictions.awayScorePredicted,
-      oldPoints: predictions.pointsAwarded,
-      userName: users.nickname,
-      userDisplay: users.displayName,
-    })
-    .from(predictions)
-    .innerJoin(users, eq(users.id, predictions.userId))
-    .where(eq(predictions.eventId, ev.id));
-
-  const poolIds = Array.from(new Set(predRows.map((p) => p.poolId)));
-  if (poolIds.length > 0) {
-    const poolRows = await db
-      .select({ id: pools.id, status: pools.status })
-      .from(pools)
-      .where(inArray(pools.id, poolIds));
-    const settled = poolRows.filter((p) => p.status === "settled");
-    if (settled.length > 0 && !FORCE) {
-      throw new Error(
-        `${settled.length} pool(s) on this event are already settled — payouts may be banked. ` +
-          `Re-run with --force only after a considered settled-correction plan.`,
-      );
-    }
-  }
-
-  // 5. Compute the re-score for each prediction (using the real engine).
-  const corrected = { homeScore: CONFIG.correctHome, awayScore: CONFIG.correctAway };
-  const changes = predRows.map((p) => {
-    const s = scorePrediction({ homeScore: p.home, awayScore: p.away }, corrected);
-    return {
-      ...p,
-      name: p.userName ?? p.userDisplay,
-      newPoints: s.points,
-      isExact: s.isExact,
-      isCorrectResult: s.isCorrectResult,
-      changed: p.oldPoints !== s.points,
-    };
-  });
-
-  const outcomeAlreadyRight =
-    outcome.home === CONFIG.correctHome && outcome.away === CONFIG.correctAway;
-  const anyPredChanges = changes.some((c) => c.changed);
-
-  if (outcomeAlreadyRight && !anyPredChanges) {
+  if (preview.outcomeAlreadyRight && preview.changedCount === 0) {
     log("Nothing to do — stored result is already correct and all points match.");
     return;
   }
 
-  // 6. Show the change table.
-  log(`Predictions on this match: ${changes.length}`);
+  // Show the change table.
+  log(`Predictions on this match: ${preview.changes.length}`);
   log("");
   log("  Player                Pick    Old → New   ");
   log("  ──────────────────────────────────────────");
-  for (const c of changes) {
+  for (const c of preview.changes) {
     const name = (c.name ?? "—").padEnd(20).slice(0, 20);
-    const pick = `${c.home}-${c.away}`.padEnd(6);
+    const pick = c.pick.padEnd(6);
     const arrow = c.changed ? `${c.oldPoints ?? "—"} → ${c.newPoints}` : `${c.newPoints} (same)`;
     const flag = c.changed ? "  ✱" : "";
     log(`  ${name}  ${pick}  ${arrow}${flag}`);
   }
   log("");
-  const changedCount = changes.filter((c) => c.changed).length;
-  log(`${changedCount} prediction(s) would change. ✱ = changes.`);
+  log(`${preview.changedCount} prediction(s) would change. ✱ = changes.`);
   log("─".repeat(64));
 
   if (!APPLY) {
@@ -244,50 +189,22 @@ async function main() {
     return;
   }
 
-  // 7. Apply, transactionally, with an audit row.
-  await db.transaction(async (tx) => {
-    await tx
-      .update(eventOutcomes)
-      .set({ homeScore: CONFIG.correctHome, awayScore: CONFIG.correctAway })
-      .where(eq(eventOutcomes.eventId, ev.id));
-
-    for (const c of changes) {
-      if (!c.changed) continue;
-      await tx
-        .update(predictions)
-        .set({
-          pointsAwarded: c.newPoints,
-          isExact: c.isExact,
-          isCorrectResult: c.isCorrectResult,
-        })
-        .where(eq(predictions.id, c.id));
-    }
-
-    await tx.insert(auditLog).values({
-      userId: null,
-      action: "admin.action",
-      entityType: "event_outcome",
-      entityId: ev.id,
-      before: {
-        homeScore: outcome.home,
-        awayScore: outcome.away,
-      },
-      after: {
-        homeScore: CONFIG.correctHome,
-        awayScore: CONFIG.correctAway,
-      },
-      ipAddress: "admin-shell-outcome-correction",
-      metadata: {
-        match: `${ev.homeTeam} v ${ev.awayTeam}`,
-        reason: CONFIG.reason,
-        predictionsRescored: changedCount,
-        tool: "server/scripts/correct-outcome.ts",
-      },
-    });
+  // 7. Apply via the shared lib (transaction + audit row inside).
+  const result = await applyCorrection({
+    eventId: ev.id,
+    correctHome: CONFIG.correctHome,
+    correctAway: CONFIG.correctAway,
+    reason: CONFIG.reason,
+    force: FORCE,
+    actorUserId: null,
+    actorLabel: "admin-shell",
+    source: "admin-shell",
   });
 
-  log(`APPLIED — result corrected to ${CONFIG.correctHome}-${CONFIG.correctAway}, ` +
-    `${changedCount} prediction(s) re-scored, audit row written.`);
+  log(
+    `APPLIED — result corrected to ${result.correctHome}-${result.correctAway}, ` +
+      `${result.rescored} prediction(s) re-scored, audit row written.`,
+  );
 }
 
 main()

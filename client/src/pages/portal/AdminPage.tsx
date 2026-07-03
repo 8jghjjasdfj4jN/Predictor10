@@ -24,13 +24,25 @@ import {
   fetchScoreAlerts,
   fetchAdminUserEntries,
   voidAdminPoolEntry,
+  previewScoreCorrection,
+  applyScoreCorrection,
   AdminAccessError,
   type AdminUser,
   type AdminUserEntry,
   type ScoreAlert,
+  type CorrectionPreviewResult,
 } from "@/lib/portal-api";
 import { cn } from "@/lib/utils";
-import { Loader2, Shield, KeyRound, Check, X, AlertTriangle, UserMinus } from "lucide-react";
+import {
+  Loader2,
+  Shield,
+  KeyRound,
+  Check,
+  X,
+  AlertTriangle,
+  UserMinus,
+  SquarePen,
+} from "lucide-react";
 
 export default function AdminPage() {
   const { user } = useAuth();
@@ -152,7 +164,16 @@ export default function AdminPage() {
       )}
 
       {/* Score alerts — post-record divergences flagged by the results-checker */}
-      <ScoreAlertsPanel alerts={alerts} />
+      <ScoreAlertsPanel
+        alerts={alerts}
+        onCorrected={() => {
+          fetchScoreAlerts()
+            .then(setAlerts)
+            .catch(() => {
+              /* secondary surface — ignore */
+            });
+        }}
+      />
 
       {/* User list */}
       {loading ? (
@@ -258,7 +279,14 @@ export default function AdminPage() {
 
 // ─── Score alerts panel ───────────────────────────────────────────────
 
-function ScoreAlertsPanel({ alerts }: { alerts: ScoreAlert[] }) {
+function ScoreAlertsPanel({
+  alerts,
+  onCorrected,
+}: {
+  alerts: ScoreAlert[];
+  onCorrected: () => void;
+}) {
+  const [correctTarget, setCorrectTarget] = useState<ScoreAlert | null>(null);
   if (alerts.length === 0) return null;
   const unresolved = alerts.filter((a) => !a.resolved);
 
@@ -276,8 +304,10 @@ function ScoreAlertsPanel({ alerts }: { alerts: ScoreAlert[] }) {
         )}
       </div>
       <p className="mt-1 text-[0.7rem] text-white/40">
-        Football-data reports a different result than the one recorded. Nothing is
-        changed automatically — review, then correct deliberately.
+        Football-data reports a different result than the one recorded, on a match
+        in a live pool. Nothing changes on its own — check the real result, then tap
+        Correct score to fix it. Correcting re-scores every player (points added and
+        removed) and the table updates itself.
       </p>
 
       <ul className="mt-3 space-y-2">
@@ -294,29 +324,300 @@ function ScoreAlertsPanel({ alerts }: { alerts: ScoreAlert[] }) {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="truncate font-semibold text-white">{a.match}</p>
+                {(a.competition || a.round) && (
+                  <p className="mt-0.5 truncate text-[0.7rem] text-white/50">
+                    {[a.competition, a.round].filter(Boolean).join(" · ")}
+                    {a.live && <span className="text-emerald-300/80"> · live pool</span>}
+                  </p>
+                )}
                 <p className="mt-0.5 text-xs text-white/60">
                   Recorded <span className="font-semibold text-white">{a.recorded}</span>
                   {" · "}football-data now{" "}
                   <span className="font-semibold text-amber-200">{a.footballData}</span>
                 </p>
+                {!a.resolved && (
+                  <p className="mt-1 text-[0.68rem] text-amber-200/70">
+                    Affects a live pool. If football-data is right, correct it before this
+                    round settles.
+                  </p>
+                )}
                 <p className="mt-0.5 text-[0.65rem] text-white/30">
                   {new Date(a.detectedAt).toLocaleString("en-GB")}
                 </p>
               </div>
-              <span
-                className={cn(
-                  "flex-shrink-0 rounded-full px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-[0.14em]",
-                  a.resolved
-                    ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
-                    : "border border-amber-400/40 bg-amber-400/15 text-amber-200",
+              <div className="flex flex-shrink-0 flex-col items-end gap-2">
+                <span
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-[0.14em]",
+                    a.resolved
+                      ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                      : "border border-amber-400/40 bg-amber-400/15 text-amber-200",
+                  )}
+                >
+                  {a.resolved ? "Resolved" : "Review"}
+                </span>
+                {!a.resolved && a.eventId && (
+                  <button
+                    type="button"
+                    onClick={() => setCorrectTarget(a)}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-400/15",
+                      "px-2 py-1 text-[0.7rem] font-semibold text-amber-100 hover:bg-amber-400/25",
+                    )}
+                  >
+                    <SquarePen className="h-3 w-3" />
+                    Correct score
+                  </button>
                 )}
-              >
-                {a.resolved ? "Resolved" : "Review"}
-              </span>
+              </div>
             </div>
           </li>
         ))}
       </ul>
+
+      {correctTarget && (
+        <ScoreCorrectionModal
+          alert={correctTarget}
+          onClose={() => setCorrectTarget(null)}
+          onApplied={() => {
+            setCorrectTarget(null);
+            onCorrected();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Score-correction modal ───────────────────────────────────────────
+//
+// Deliberate, two-step correction: enter the real score → Preview (shows who
+// gains/loses points, nothing written) → type a reason → Apply. This is the
+// audited, human-initiated path — never a silent overwrite.
+function ScoreCorrectionModal({
+  alert,
+  onClose,
+  onApplied,
+}: {
+  alert: ScoreAlert;
+  onClose: () => void;
+  onApplied: () => void;
+}) {
+  const [home, setHome] = useState<string>(
+    alert.suggestedHome != null ? String(alert.suggestedHome) : "",
+  );
+  const [away, setAway] = useState<string>(
+    alert.suggestedAway != null ? String(alert.suggestedAway) : "",
+  );
+  const [reason, setReason] = useState("");
+  const [preview, setPreview] = useState<CorrectionPreviewResult | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const parsed = (): { h: number; a: number } | null => {
+    const h = Number(home);
+    const a = Number(away);
+    if (!Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0) return null;
+    return { h, a };
+  };
+
+  const runPreview = async () => {
+    const p = parsed();
+    if (!alert.eventId || !p) {
+      setLocalError("Enter a valid score (whole numbers).");
+      return;
+    }
+    setLocalError(null);
+    setPreviewing(true);
+    setPreview(null);
+    try {
+      const result = await previewScoreCorrection(alert.eventId, p.h, p.a);
+      setPreview(result);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "Preview failed.");
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const apply = async () => {
+    const p = parsed();
+    if (!alert.eventId || !p) {
+      setLocalError("Enter a valid score.");
+      return;
+    }
+    if (reason.trim().length < 3) {
+      setLocalError("Add a short reason (this goes on the record).");
+      return;
+    }
+    setLocalError(null);
+    setApplying(true);
+    try {
+      await applyScoreCorrection(alert.eventId, p.h, p.a, reason.trim());
+      onApplied();
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "Correction failed.");
+      setApplying(false);
+    }
+  };
+
+  // Any change to the score invalidates a stale preview.
+  const onScoreChange = (setter: (v: string) => void) => (v: string) => {
+    setter(v.replace(/[^0-9]/g, "").slice(0, 2));
+    setPreview(null);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-2xl border border-white/15 bg-[#0a1411] p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-['Barlow_Condensed'] text-xl font-bold uppercase tracking-[0.03em] text-white">
+              Correct score
+            </h2>
+            <p className="mt-1 text-xs text-white/55">{alert.match}</p>
+            <p className="mt-0.5 text-[0.7rem] text-white/40">
+              Recorded {alert.recorded} · football-data {alert.footballData}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1 text-white/55 hover:bg-white/5 hover:text-white"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <p className="mt-4 text-[0.72rem] font-medium uppercase tracking-[0.12em] text-white/45">
+          Real full-time score
+        </p>
+        <div className="mt-1.5 flex items-center gap-2">
+          <input
+            inputMode="numeric"
+            value={home}
+            onChange={(e) => onScoreChange(setHome)(e.target.value)}
+            className="w-16 rounded-md border border-white/15 bg-black/40 px-3 py-2 text-center text-lg font-bold text-white outline-none focus:border-amber-400/60"
+            aria-label="Home score"
+          />
+          <span className="text-white/40">–</span>
+          <input
+            inputMode="numeric"
+            value={away}
+            onChange={(e) => onScoreChange(setAway)(e.target.value)}
+            className="w-16 rounded-md border border-white/15 bg-black/40 px-3 py-2 text-center text-lg font-bold text-white outline-none focus:border-amber-400/60"
+            aria-label="Away score"
+          />
+          <button
+            type="button"
+            onClick={runPreview}
+            disabled={previewing}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-white/[0.06] px-3 py-2 text-sm font-medium text-white/80 hover:bg-white/10 disabled:opacity-50"
+          >
+            {previewing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Preview"}
+          </button>
+        </div>
+
+        {preview && (
+          <div className="mt-4 rounded-xl border border-white/10 bg-black/30 p-3">
+            {preview.outcomeAlreadyRight ? (
+              <p className="text-sm text-emerald-300">
+                The stored result is already {preview.stored}. Nothing to change.
+              </p>
+            ) : (
+              <>
+                <p className="text-[0.72rem] text-white/50">
+                  {preview.changedCount === 0
+                    ? "No player's points change with this score."
+                    : `${preview.changedCount} player${preview.changedCount === 1 ? "" : "s"} would be re-scored:`}
+                </p>
+                {preview.changedCount > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {preview.changes
+                      .filter((c) => c.changed)
+                      .map((c, i) => (
+                        <li key={i} className="flex items-center justify-between text-[0.8rem]">
+                          <span className="truncate text-white/80">
+                            {c.name} <span className="text-white/35">({c.pick})</span>
+                          </span>
+                          <span className="flex-shrink-0 font-semibold text-white">
+                            {c.oldPoints ?? "—"} <span className="text-white/40">→</span>{" "}
+                            <span
+                              className={cn(
+                                c.newPoints > (c.oldPoints ?? 0)
+                                  ? "text-emerald-300"
+                                  : "text-rose-300",
+                              )}
+                            >
+                              {c.newPoints}
+                            </span>
+                          </span>
+                        </li>
+                      ))}
+                  </ul>
+                )}
+                {preview.anySettled && (
+                  <p className="mt-2 text-[0.7rem] text-rose-300">
+                    A pool on this match has already settled — it can't be corrected here.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {preview && !preview.outcomeAlreadyRight && !preview.anySettled && (
+          <div className="mt-4">
+            <p className="text-[0.72rem] font-medium uppercase tracking-[0.12em] text-white/45">
+              Reason (goes on the record)
+            </p>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={2}
+              placeholder="e.g. VAR disallowed a late goal; official FT is 2-1"
+              className="mt-1.5 w-full resize-none rounded-md border border-white/15 bg-black/40 px-2.5 py-2 text-[0.85rem] text-white outline-none focus:border-amber-400/60 placeholder:text-white/30"
+            />
+          </div>
+        )}
+
+        {localError && <p className="mt-3 text-xs text-rose-300">{localError}</p>}
+
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-white/15 bg-white/5 px-3 py-1.5 text-sm text-white/75 hover:bg-white/10"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={apply}
+            disabled={applying || !preview || preview.outcomeAlreadyRight || preview.anySettled}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold",
+              "bg-amber-500/90 text-black hover:bg-amber-400 disabled:opacity-40",
+            )}
+          >
+            {applying ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Applying
+              </>
+            ) : (
+              "Apply correction"
+            )}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

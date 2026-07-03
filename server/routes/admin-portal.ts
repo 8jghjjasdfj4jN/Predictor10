@@ -34,13 +34,18 @@ retention requirement.
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { hash } from "@node-rs/argon2";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db";
 import { users } from "../db/schema/users";
 import { poolEntries, pools } from "../db/schema/pools";
-import { competitions, stages } from "../db/schema/sports";
+import { competitions, stages, events } from "../db/schema/sports";
 import { leagues } from "../db/schema/leagues";
 import { auditLog } from "../db/schema/compliance";
+import {
+  previewCorrection,
+  applyCorrection,
+  CorrectionError,
+} from "../lib/outcome-correction";
 import { requireAuth } from "../lib/auth-middleware";
 import { writeAudit } from "../lib/audit";
 // ── WC CHAT (temporary) ── start — remove after WC (docs/wc-chat-teardown.md)
@@ -116,6 +121,10 @@ router.get(
 // different result than the one already recorded. Read-only: the actual fix is
 // applied deliberately via server/scripts/correct-outcome.ts. An alert is
 // "resolved" once a later admin correction for the same event is recorded.
+// Scoped (step 3b.15): only divergences on a LIVE pool (open/locked) are
+// surfaced, with their competition + Round. No-pool and settled-pool
+// divergences are hidden — the former isn't actionable, the latter needs the
+// separate settled-correction pass.
 router.get(
   "/score-alerts",
   requireAuth,
@@ -137,8 +146,9 @@ router.get(
       .limit(100);
 
     const corrections = rows.filter((r) => {
-      const md = (r.metadata ?? {}) as { tool?: string };
+      const md = (r.metadata ?? {}) as { tool?: string; kind?: string };
       return (
+        md.kind === "outcome_correction" ||
         r.ipAddress === "admin-shell-outcome-correction" ||
         md.tool === "server/scripts/correct-outcome.ts"
       );
@@ -146,25 +156,186 @@ router.get(
 
     const alerts = rows.filter((r) => ((r.metadata ?? {}) as { kind?: string }).kind === "outcome_divergence");
 
-    const payload = alerts.map((a) => {
-      const md = (a.metadata ?? {}) as { match?: string };
-      const before = (a.before ?? {}) as { homeScore?: number; awayScore?: number };
-      const after = (a.after ?? {}) as { homeScore?: number; awayScore?: number };
-      // Resolved if a correction for the same event was recorded after this alert.
-      const resolved = corrections.some(
-        (c) => c.entityId === a.entityId && c.createdAt > a.createdAt,
+    // Resolve each alert's event → Round → competition, plus the status of the
+    // pool(s) on that Round. Only divergences on a LIVE pool (open or locked)
+    // are surfaced (step 3b.15): a match with no pool, or whose pool has already
+    // settled, is hidden — the former isn't actionable at all, the latter needs
+    // the separate, deliberate settled-correction pass, not this panel.
+    const alertEventIds = Array.from(
+      new Set(alerts.map((a) => a.entityId).filter((id): id is string => Boolean(id))),
+    );
+
+    type Ctx = { competition: string; round: string; statuses: string[] };
+    const ctxByEvent = new Map<string, Ctx>();
+    if (alertEventIds.length > 0) {
+      const evRows = await db
+        .select({
+          eventId: events.id,
+          stageId: events.stageId,
+          roundName: stages.name,
+          competitionName: competitions.name,
+        })
+        .from(events)
+        .innerJoin(stages, eq(events.stageId, stages.id))
+        .innerJoin(competitions, eq(stages.competitionId, competitions.id))
+        .where(inArray(events.id, alertEventIds));
+
+      const stageIds = Array.from(
+        new Set(evRows.map((e) => e.stageId).filter((s): s is string => Boolean(s))),
       );
-      return {
-        id: a.id,
-        match: md.match ?? "Unknown match",
-        recorded: `${before.homeScore ?? "?"}-${before.awayScore ?? "?"}`,
-        footballData: `${after.homeScore ?? "?"}-${after.awayScore ?? "?"}`,
-        detectedAt: a.createdAt.toISOString(),
-        resolved,
-      };
-    });
+      const poolRows = stageIds.length
+        ? await db
+            .select({ stageId: pools.stageId, status: pools.status })
+            .from(pools)
+            .where(inArray(pools.stageId, stageIds))
+        : [];
+      const statusesByStage = new Map<string, string[]>();
+      for (const p of poolRows) {
+        const arr = statusesByStage.get(p.stageId) ?? [];
+        arr.push(p.status);
+        statusesByStage.set(p.stageId, arr);
+      }
+      for (const e of evRows) {
+        ctxByEvent.set(e.eventId, {
+          competition: e.competitionName,
+          round: e.roundName,
+          statuses: e.stageId ? (statusesByStage.get(e.stageId) ?? []) : [],
+        });
+      }
+    }
+
+    const isLive = (s: string[]) => s.includes("open") || s.includes("locked");
+    const liveLabel = (s: string[]) =>
+      s.includes("open") ? "open" : s.includes("locked") ? "locked" : (s[0] ?? "none");
+
+    const payload = alerts
+      .map((a) => {
+        const md = (a.metadata ?? {}) as { match?: string };
+        const before = (a.before ?? {}) as { homeScore?: number; awayScore?: number };
+        const after = (a.after ?? {}) as { homeScore?: number; awayScore?: number };
+        // Resolved if a correction for the same event was recorded after this alert.
+        const resolved = corrections.some(
+          (c) => c.entityId === a.entityId && c.createdAt > a.createdAt,
+        );
+        const ctx = a.entityId ? ctxByEvent.get(a.entityId) : undefined;
+        return {
+          id: a.id,
+          eventId: a.entityId ?? null,
+          match: md.match ?? "Unknown match",
+          competition: ctx?.competition ?? null,
+          round: ctx?.round ?? null,
+          poolStatus: ctx ? liveLabel(ctx.statuses) : "none",
+          live: ctx ? isLive(ctx.statuses) : false,
+          recorded: `${before.homeScore ?? "?"}-${before.awayScore ?? "?"}`,
+          footballData: `${after.homeScore ?? "?"}-${after.awayScore ?? "?"}`,
+          // Pre-fill the correction modal with football-data's current figures.
+          suggestedHome: typeof after.homeScore === "number" ? after.homeScore : null,
+          suggestedAway: typeof after.awayScore === "number" ? after.awayScore : null,
+          detectedAt: a.createdAt.toISOString(),
+          resolved,
+        };
+      })
+      // Surface only divergences that affect a live pool.
+      .filter((a) => a.live);
 
     res.json({ alerts: payload });
+  },
+);
+
+// ─── POST /score-alerts/preview ─────────────────────────────────────────
+//
+// Dry-run a score correction: given a match and a proposed correct score, show
+// which predictions would change (old → new points) WITHOUT writing anything.
+// In-panel equivalent of the CLI dry-run; both share server/lib/outcome-
+// correction.ts so they can't drift.
+const correctionPreviewSchema = z.object({
+  eventId: z.string().uuid(),
+  home: z.number().int().min(0).max(99),
+  away: z.number().int().min(0).max(99),
+});
+
+router.post(
+  "/score-alerts/preview",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response): Promise<void> => {
+    const parsed = correctionPreviewSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid payload." });
+      return;
+    }
+    try {
+      const preview = await previewCorrection(parsed.data.eventId, parsed.data.home, parsed.data.away);
+      res.json({
+        match: preview.match,
+        stored: `${preview.storedHome ?? "?"}-${preview.storedAway ?? "?"}`,
+        hasStoredOutcome: preview.hasStoredOutcome,
+        outcomeAlreadyRight: preview.outcomeAlreadyRight,
+        anySettled: preview.anySettled,
+        changedCount: preview.changedCount,
+        changes: preview.changes.map((c) => ({
+          name: c.name,
+          pick: c.pick,
+          oldPoints: c.oldPoints,
+          newPoints: c.newPoints,
+          changed: c.changed,
+        })),
+      });
+    } catch (err) {
+      if (err instanceof CorrectionError) {
+        res.status(err.code === "NOT_FOUND" ? 404 : 400).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
+  },
+);
+
+// ─── POST /score-alerts/correct ─────────────────────────────────────────
+//
+// Apply a score correction from the admin panel: a deliberate, human-initiated,
+// audited correction (NOT a silent auto-overwrite). Re-scores every prediction
+// on the match via the live scoring engine; the league table self-corrects.
+// Never forces past a settled pool from the panel (409) — that needs the
+// separate settled-correction pass.
+const correctionApplySchema = z.object({
+  eventId: z.string().uuid(),
+  home: z.number().int().min(0).max(99),
+  away: z.number().int().min(0).max(99),
+  reason: z.string().trim().min(3, "A reason is required.").max(500),
+});
+
+router.post(
+  "/score-alerts/correct",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response): Promise<void> => {
+    const parsed = correctionApplySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid payload." });
+      return;
+    }
+    try {
+      const result = await applyCorrection({
+        eventId: parsed.data.eventId,
+        correctHome: parsed.data.home,
+        correctAway: parsed.data.away,
+        reason: parsed.data.reason,
+        force: false,
+        actorUserId: req.user!.id,
+        actorLabel: req.user!.email,
+        source: "admin-panel",
+      });
+      res.json({ ok: true, match: result.match, rescored: result.rescored });
+    } catch (err) {
+      if (err instanceof CorrectionError) {
+        const status =
+          err.code === "NOT_FOUND" ? 404 : err.code === "SETTLED" || err.code === "NO_OUTCOME" ? 409 : 400;
+        res.status(status).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
   },
 );
 

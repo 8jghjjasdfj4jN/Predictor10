@@ -656,12 +656,89 @@ export async function voidAdminPoolEntry(entryId: string, reason: string): Promi
 
 export type ScoreAlert = {
   id: string;
+  eventId: string | null; // the match to correct (null if unknown)
   match: string;
+  competition: string | null; // e.g. "World Cup 2026"
+  round: string | null; // e.g. "Round 1"
+  poolStatus: string; // "open" | "locked" | "settled" | "none"
+  live: boolean; // affects a live (open/locked) pool — always true for surfaced alerts
   recorded: string; // what we have stored, e.g. "5-0"
   footballData: string; // what football-data now reports, e.g. "4-0"
+  suggestedHome: number | null; // football-data's figures, to pre-fill the correction
+  suggestedAway: number | null;
   detectedAt: string;
   resolved: boolean;
 };
+
+export type CorrectionChangeRow = {
+  name: string;
+  pick: string; // "2-1"
+  oldPoints: number | null;
+  newPoints: number;
+  changed: boolean;
+};
+
+export type CorrectionPreviewResult = {
+  match: string;
+  stored: string;
+  hasStoredOutcome: boolean;
+  outcomeAlreadyRight: boolean;
+  anySettled: boolean;
+  changedCount: number;
+  changes: CorrectionChangeRow[];
+};
+
+export async function previewScoreCorrection(
+  eventId: string,
+  home: number,
+  away: number,
+): Promise<CorrectionPreviewResult> {
+  const res = await fetch("/api/admin-portal/score-alerts/preview", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ eventId, home, away }),
+  });
+  notify401IfNeeded(res);
+  if (!res.ok) {
+    let message = `Preview failed (${res.status}).`;
+    try {
+      const d = await res.json();
+      if (d?.error) message = d.error;
+    } catch {
+      /* non-JSON */
+    }
+    throw new Error(message);
+  }
+  return (await res.json()) as CorrectionPreviewResult;
+}
+
+export async function applyScoreCorrection(
+  eventId: string,
+  home: number,
+  away: number,
+  reason: string,
+): Promise<{ match: string; rescored: number }> {
+  const res = await fetch("/api/admin-portal/score-alerts/correct", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ eventId, home, away, reason }),
+  });
+  notify401IfNeeded(res);
+  if (!res.ok) {
+    let message = `Correction failed (${res.status}).`;
+    try {
+      const d = await res.json();
+      if (d?.error) message = d.error;
+    } catch {
+      /* non-JSON */
+    }
+    throw new Error(message);
+  }
+  const d = (await res.json()) as { match: string; rescored: number };
+  return { match: d.match, rescored: d.rescored };
+}
 
 export async function fetchScoreAlerts(): Promise<ScoreAlert[]> {
   const res = await fetch("/api/admin-portal/score-alerts", { credentials: "include" });

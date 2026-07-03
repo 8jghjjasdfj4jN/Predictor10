@@ -4,7 +4,7 @@
 
 ---
 
-# Predictor10 build — picking up after step 3b.14 (admin "Remove from pool" = audited entry void; outcome-recording integrity from 3b.13; tsc baseline 0)
+# Predictor10 build — picking up after step 3b.16 (in-panel score correction, deliberate + audited; score-alerts scoped to live pools; remove-from-pool void; tsc baseline 0)
 
 I'm a solo developer building Predictor10, a UK football score-prediction pool betting product. 3-person business forming around it. Targeting UKGC general pool betting licence (likely 2027 grant). **Build the real flow, mock the money** — payments table has `mode='mock'` until licence flip, then becomes `'live'`. Same code paths flip; no rewrites.
 
@@ -581,6 +581,31 @@ The first player-removal tool, built licence-clean from the start. Prompted by t
 
 Files this step: `server/db/schema/pools.ts` (3 void columns — **`pnpm db:push` done**), `server/lib/portal-data.ts` (8 read sites), `server/lib/pool-settle.ts` (scoring/ranking gather), `server/routes/admin-portal.ts` (2 new routes), `client/src/lib/portal-api.ts` (`fetchAdminUserEntries` + `voidAdminPoolEntry`), `client/src/pages/portal/AdminPage.tsx` ("Remove from pool" button + modal). tsc **0** throughout, build exit 0, crossorigin intact (`vite.config.ts`/`index.html` untouched). No seed.
 
+### Step 3b.15 — Score-alerts scoped to live pools + after-settlement correction gap named (22 June 2026)
+
+The divergence detector (3b.13) was firing on a season-over PL fixture (Man City v Aston Villa, stored 2-2 vs football-data 1-2) that no live pool cared about, because the checker polls every `isActive` competition and the detector had **no pool-relevance check**. Fixed:
+
+- **Detector** (`maybeRaiseOutcomeDivergence`, `server/lib/outcome-sync.ts`): only raises when the match's Round has a pool (open/locked/settled). A fixture with no pool is silently ignored.
+- **Panel** (`GET /score-alerts`, `server/routes/admin-portal.ts`): surfaces **only divergences on a live pool (open/locked)**, now resolving each alert's competition + Round and the pool status; no-pool and settled-pool alerts are hidden (settled still logged for the audit trail). Payload gained `competition` / `round` / `poolStatus` / `live`.
+- **Card** (`AdminPage.tsx` `ScoreAlertsPanel`): shows competition · Round · "live pool" and a plain "affects a live pool — correct before it settles" line; intro now explains a correction re-scores every player (points up and down) and the table self-updates.
+
+Also **named, not built** (arch §24.2, pre-launch §3): correcting a result re-scores all players and the table self-heals **before settlement**, but there is **no after-settlement reversal** (recompute ranks + reverse payouts) — `correct-outcome.ts` refuses a settled pool unless `--force`, and forced it still won't unwind a payout. Fine for free play; a **pre-licence-grant task** for real money.
+
+Code-only (no schema, no seed). tsc **0**, build exit 0, crossorigin intact. Confirmed behaviour: the WC pool (open) still shows real divergences; the dead PL one is gone.
+
+### Step 3b.16 — In-panel score correction (deliberate, audited) (22 June 2026)
+
+Correcting a recorded score no longer needs Render Shell — it can be done **from the admin panel**. This came from a real need: live WC divergences (Portugal recorded 2-2/feed 2-1, Belgium 3-2/feed 2-2) with no phone-friendly way to fix them.
+
+- **Shared lib** `server/lib/outcome-correction.ts` (`previewCorrection` + `applyCorrection`): one implementation for both the panel and the CLI, so the re-score can't drift. Re-scores via the live `scorePrediction`; transaction + audit row; refuses no-outcome (NO_OUTCOME) and settled-without-force (SETTLED). The CLI (`correct-outcome.ts`) was **refactored onto this lib** (its inline apply removed; behaviour identical; unused imports pruned).
+- **Routes** (`admin-portal.ts`): `POST /score-alerts/preview` (dry-run — which predictions change, no write) + `POST /score-alerts/correct` (apply; `force:false`; actor = req.user). Alert payload gained `eventId` + `suggestedHome`/`suggestedAway`.
+- **UI** (`AdminPage.tsx`): each live-pool alert has a **"Correct score"** button → two-step modal (enter real score → Preview shows per-player old→new points → required reason → Apply). Panel refreshes on success.
+- **Not a silent overwrite** — human-initiated, previewed, reasoned, audited. The locked §24 rule stands. Correction audit rows carry `metadata.kind: "outcome_correction"` (`source: "admin-panel"` | `"admin-shell"`), which also drives "resolved" detection in the alerts panel.
+
+Files: `server/lib/outcome-correction.ts` (NEW), `server/routes/admin-portal.ts`, `server/scripts/correct-outcome.ts` (refactored), `client/src/lib/portal-api.ts`, `client/src/pages/portal/AdminPage.tsx`. Code-only, no schema/seed. tsc **0**, build exit 0, crossorigin intact.
+
+> **Note:** this handles **live-pool** corrections cleanly (re-score + table self-heals). The **after-settlement** reversal (recompute ranks + reverse payouts) is still the named pre-licence gap — arch §24.2, pre-launch §3.
+
 ## Decisions made in earlier chats — DO NOT relitigate
 
 From arch doc Decided Rules §13 + decisions made in build chats:
@@ -775,6 +800,8 @@ Server admin endpoints:
 | `PATCH /api/admin-portal/users/:id/paid` | Session + `is_admin=true` | Toggle the WC off-platform paid flag (audit-logged) |
 | `GET /api/admin-portal/users/:id/entries` | Session + `is_admin=true` | List a player's current (live, non-voided) entries for the removal UI (step 3b.14) |
 | `POST /api/admin-portal/entries/:entryId/void` | Session + `is_admin=true` | Remove a player from a pool — voids the entry (reason required; 409 if settled; audited). Pot/standings/scoring self-correct; nothing deleted (step 3b.14, arch §25) |
+| `POST /api/admin-portal/score-alerts/preview` | Session + `is_admin=true` | Dry-run a score correction — which predictions change (old→new), no write (step 3b.16) |
+| `POST /api/admin-portal/score-alerts/correct` | Session + `is_admin=true` | Apply a deliberate, audited score correction; re-scores all predictions; 409 if settled (step 3b.16, arch §24.2) |
 | `PATCH /api/account/nickname` | Session (any user) | User updates their own nickname (audit-logged) |
 | `GET /api/pools/:poolId/entries/:entryId/predictions` | Public when settled; session + entrant when live | Lock-gated read of one entrant's picks (step 3a.18). Unlocked picks omitted from payload |
 | `GET /api/pools/:id/distribution` | Public when settled; session + entrant when live | Pick distribution (step 3a.19). Locked events only; returns entrant count + per-event home/draw/away + top scorelines |
